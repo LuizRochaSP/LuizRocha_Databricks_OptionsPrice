@@ -357,7 +357,25 @@ print(f"Forward teórico interpolado:  {forward_for_option:,.2f} pontos")
 
 # COMMAND ----------
 
-# Comentário: cria o MarketData usando os valores interpolados; requer a biblioteca do projeto instalada.
+# Comentário: localiza automaticamente o código-fonte do projeto e importa o motor de precificação.
+import sys
+from pathlib import Path
+
+candidate_src_paths = [
+    Path.cwd().parent / "src",  # execução a partir da pasta databricks
+    Path.cwd() / "src",         # execução a partir da raiz do projeto
+]
+
+src_path = next((path for path in candidate_src_paths if path.exists()), None)
+if src_path is None:
+    raise FileNotFoundError(
+        "A pasta src do projeto não foi encontrada. "
+        "Confirme que este notebook está dentro de ibov-barrier-option-mvp/databricks."
+    )
+
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+
 from ibov_barrier.pricing import (
     BarrierContract,
     MarketData,
