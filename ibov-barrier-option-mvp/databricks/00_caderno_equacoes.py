@@ -1,4 +1,5 @@
 # Databricks notebook source
+# MAGIC %md
 # MAGIC # Caderno de equações — Precificação de uma opção com barreira no Ibovespa
 # MAGIC 
 # MAGIC ## Do entendimento do produto à redução de variância
@@ -17,6 +18,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # Notação
 # MAGIC 
 # MAGIC | Símbolo | Significado |
@@ -39,6 +41,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 1. Entender o produto
 # MAGIC 
 # MAGIC ## 1.1 Call vanilla
@@ -82,6 +85,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 1.3 Relação entre vanilla e barreira
 # MAGIC 
 # MAGIC Para cada trajetória:
@@ -100,6 +104,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 2. Definir os dados de mercado
 # MAGIC 
 # MAGIC O vetor de entradas é:
@@ -122,6 +127,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 2.1 Desconto, taxa e carry
 # MAGIC 
 # MAGIC O fator de desconto é:
@@ -166,6 +172,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 2.2 Volatilidade
 # MAGIC 
 # MAGIC Com retornos logarítmicos diários:
@@ -186,6 +193,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 3. Calcular a vanilla por Black–Scholes
 # MAGIC 
 # MAGIC A call vanilla com dividend yield contínuo é:
@@ -218,6 +226,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 3.1 Distribuição terminal do modelo
 # MAGIC 
 # MAGIC Sob a dinâmica lognormal neutra ao risco:
@@ -246,6 +255,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 4. Definir a dinâmica neutra ao risco
 # MAGIC 
 # MAGIC Sob uma medida real \(\mathbb P\), um modelo simplificado seria:
@@ -268,6 +278,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 4.1 Solução do movimento geométrico browniano
 # MAGIC 
 # MAGIC Aplicando o lema de Itô:
@@ -302,6 +313,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 4.2 Princípio de precificação
 # MAGIC 
 # MAGIC Para um payoff \(X_T\) pago no vencimento:
@@ -331,6 +343,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 5. Simular trajetórias por Monte Carlo
 # MAGIC 
 # MAGIC Dividimos \([0,T]\) em \(M\) passos:
@@ -361,6 +374,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 5.1 Payoffs simulados
 # MAGIC 
 # MAGIC O indicador discreto de sobrevivência seria:
@@ -401,6 +415,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 5.2 Erro padrão e intervalo de confiança
 # MAGIC 
 # MAGIC Variância amostral:
@@ -438,6 +453,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 5.3 Probabilidade de knock-out
 # MAGIC 
 # MAGIC O estimador da probabilidade neutra ao risco de knock-out é:
@@ -459,6 +475,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 6. Brownian Bridge
 # MAGIC 
 # MAGIC Mesmo quando dois pontos consecutivos estão acima de \(H\), a trajetória contínua pode ter cruzado a barreira entre eles.
@@ -502,6 +519,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 6.1 Aplicação da Brownian Bridge
 # MAGIC 
 # MAGIC ## Método A — sorteio
@@ -546,6 +564,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 6.2 Alcance da correção
 # MAGIC 
 # MAGIC A Brownian Bridge corrige cruzamentos não observados entre os pontos da grade, dentro das hipóteses do GBM.
@@ -563,6 +582,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 7. Redução de variância com a vanilla
 # MAGIC 
 # MAGIC Usamos:
@@ -601,6 +621,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 7.1 Coeficiente ótimo
 # MAGIC 
 # MAGIC A variância da observação corrigida é:
@@ -643,6 +664,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 7.2 Intuição da correção
 # MAGIC 
 # MAGIC Se:
@@ -671,6 +693,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # 7.3 Ganho teórico
 # MAGIC 
 # MAGIC Defina:
@@ -713,6 +736,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # Encadeamento completo
 # MAGIC 
 # MAGIC ## 1 — Produto
@@ -772,6 +796,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # Exemplo do projeto
 # MAGIC 
 # MAGIC Entradas:
@@ -800,6 +825,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # Verificações de consistência
 # MAGIC 
 # MAGIC 1. A opção down-and-out deve começar viva:
@@ -834,6 +860,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # Limitações
 # MAGIC 
 # MAGIC ## Do produto
@@ -857,6 +884,7 @@
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # Conclusão
 # MAGIC 
 # MAGIC A identidade central é:
