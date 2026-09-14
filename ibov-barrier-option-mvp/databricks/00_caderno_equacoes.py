@@ -23,21 +23,21 @@
 # MAGIC 
 # MAGIC | Símbolo | Significado |
 # MAGIC |---|---|
-# MAGIC | $$S_0$$ | nível atual do Ibovespa |
-# MAGIC | $$S_t$$ | nível do Ibovespa no instante $$t$$ |
-# MAGIC | $$S_T$$ | nível no vencimento |
-# MAGIC | $$K$$ | strike ou preço de exercício |
-# MAGIC | $$H$$ | barreira inferior |
-# MAGIC | $$T$$ | prazo até o vencimento, em anos |
-# MAGIC | $$r$$ | taxa de juros continuamente composta |
-# MAGIC | $$q$$ | dividend yield ou carry contínuo |
-# MAGIC | $$\sigma$$ | volatilidade anualizada |
-# MAGIC | $$N$$ | número de trajetórias |
-# MAGIC | $$M$$ | passos no tempo por trajetória |
-# MAGIC | $$\Delta t=T/M$$ | tamanho de cada passo |
-# MAGIC | $$\Phi$$ e $$\phi$$ | distribuição acumulada e densidade da normal padrão |
-# MAGIC | $$\mathbf{1}_A$$ | indicador do evento $$A$$ |
-# MAGIC | $$\mathbb{E}^{\mathbb Q}$$ | esperança sob a medida neutra ao risco |
+# MAGIC | S₀ | nível atual do Ibovespa |
+# MAGIC | Sₜ | nível do Ibovespa no instante t |
+# MAGIC | Sₜ (vencimento) | nível no vencimento |
+# MAGIC | K | strike ou preço de exercício |
+# MAGIC | H | barreira inferior |
+# MAGIC | T | prazo até o vencimento, em anos |
+# MAGIC | r | taxa de juros continuamente composta |
+# MAGIC | q | dividend yield ou carry contínuo |
+# MAGIC | σ | volatilidade anualizada |
+# MAGIC | N | número de trajetórias |
+# MAGIC | M | passos no tempo por trajetória |
+# MAGIC | Δt = T/M | tamanho de cada passo |
+# MAGIC | Φ e φ | distribuição acumulada e densidade da normal padrão |
+# MAGIC | indicador 1₍A₎ | indicador do evento A |
+# MAGIC | E sob Q | esperança sob a medida neutra ao risco |
 
 # COMMAND ----------
 
@@ -50,7 +50,7 @@
 # MAGIC 
 # MAGIC $$X_{\mathrm{vanilla}}=(S_T-K)^+=\max(S_T-K,0)$$
 # MAGIC 
-# MAGIC Ela paga somente quando $$S_T>K$$.
+# MAGIC Ela paga somente quando Sₜ > K.
 # MAGIC 
 # MAGIC ## 1.2 Call down-and-out sem rebate
 # MAGIC 
@@ -60,13 +60,13 @@
 # MAGIC 
 # MAGIC O payoff é:
 # MAGIC 
-# MAGIC $$X_{\mathrm{barreira}} = (S_T-K)^+\mathbf{1}_{\{m_T>H\}}$$
+# MAGIC $$X_{\mathrm{barreira}}=(S_T-K)^+\mathbf{1}_{\{m_T>H\}}$$
 # MAGIC 
 # MAGIC ou:
 # MAGIC 
-# MAGIC $$X_{\mathrm{barreira}} = \begin{cases} (S_T-K)^+, & \text{se }S_t>H\text{ para todo }t\in[0,T],\\ 0, & \text{se }S_t\le H\text{ em algum instante.} \end{cases}$$
+# MAGIC $$X_{\mathrm{barreira}}=\begin{cases} (S_T-K)^+, & \text{se }S_t>H\text{ para todo }t\in[0,T],\\ 0, & \text{se }S_t\le H\text{ em algum instante.} \end{cases}$$
 # MAGIC 
-# MAGIC A opção deixa de existir quando toca ou cruza $$H$$. Como é **sem rebate**, não existe pagamento compensatório no knock-out.
+# MAGIC A opção deixa de existir quando toca ou cruza H. Como é **sem rebate**, não existe pagamento compensatório no knock-out.
 
 # COMMAND ----------
 
@@ -81,7 +81,7 @@
 # MAGIC 
 # MAGIC $$0\le V_{\mathrm{barreira}}\le C_{\mathrm{BS}}$$
 # MAGIC 
-# MAGIC A vanilla e a barreira usam o mesmo valor terminal $$S_T$$. A diferença é que a barreira multiplica o payoff por um indicador de sobrevivência. Essa relação será essencial no passo 7.
+# MAGIC A vanilla e a barreira usam o mesmo valor terminal Sₜ (vencimento). A diferença é que a barreira multiplica o payoff por um indicador de sobrevivência. Essa relação será essencial no passo 7.
 
 # COMMAND ----------
 
@@ -98,7 +98,7 @@
 # MAGIC 
 # MAGIC $$r=12\%\text{ a.a.},\quad q=0\%\text{ a.a.},\quad \sigma=22\%\text{ a.a.}$$
 # MAGIC 
-# MAGIC As taxas $$r$$ e $$q$$ precisam usar a mesma convenção. Neste capítulo elas são continuamente compostas.
+# MAGIC As taxas r e q precisam usar a mesma convenção. Neste capítulo elas são continuamente compostas.
 
 # COMMAND ----------
 
@@ -123,13 +123,13 @@
 # MAGIC 
 # MAGIC Logo, o dividend yield implícito é:
 # MAGIC 
-# MAGIC $$q_{\mathrm{impl}}(T) = r(T)-\frac{1}{T}\ln\left(\frac{F_{0,T}}{S_0}\right)$$
+# MAGIC $$q_{\mathrm{impl}}(T)=r(T)-\frac{1}{T}\ln\left(\frac{F_{0,T}}{S_0}\right)$$
 # MAGIC 
 # MAGIC ou, usando fatores de desconto:
 # MAGIC 
 # MAGIC $$F_{0,T}=S_0\frac{e^{-qT}}{e^{-rT}}$$
 # MAGIC 
-# MAGIC Na prática, uma curva $$q(T)$$ por vencimento é mais realista do que um único valor constante.
+# MAGIC Na prática, uma curva q(T) por vencimento é mais realista do que um único valor constante.
 
 # COMMAND ----------
 
@@ -142,9 +142,9 @@
 # MAGIC 
 # MAGIC uma estimativa histórica simples é:
 # MAGIC 
-# MAGIC $$\widehat{\sigma}_{\mathrm{hist}} = \operatorname{desvio\ padrão}(R_t)\sqrt{252}$$
+# MAGIC $$\widehat{\sigma}_{\mathrm{hist}}=\mathrm{DP}(R_t)\sqrt{252}$$
 # MAGIC 
-# MAGIC Para precificação, normalmente usamos volatilidade implícita compatível com prazo, strike e mercado. Uma $$\sigma$$ constante ignora smile, skew e estrutura a termo.
+# MAGIC Para precificação, normalmente usamos volatilidade implícita compatível com prazo, strike e mercado. Uma σ constante ignora smile, skew e estrutura a termo.
 
 # COMMAND ----------
 
@@ -153,11 +153,11 @@
 # MAGIC 
 # MAGIC A call vanilla com dividend yield contínuo é:
 # MAGIC 
-# MAGIC $$C_{\mathrm{BS}} = S_0e^{-qT}\Phi(d_1)-Ke^{-rT}\Phi(d_2)$$
+# MAGIC $$C_{\mathrm{BS}}=S_0e^{-qT}\Phi(d_1)-Ke^{-rT}\Phi(d_2)$$
 # MAGIC 
 # MAGIC com:
 # MAGIC 
-# MAGIC $$d_1= \frac{\ln(S_0/K)+(r-q+\tfrac12\sigma^2)T} {\sigma\sqrt T}$$
+# MAGIC $$d_1=\frac{\ln(S_0/K)+(r-q+\tfrac12\sigma^2)T} {\sigma\sqrt T}$$
 # MAGIC 
 # MAGIC $$d_2=d_1-\sigma\sqrt T$$
 # MAGIC 
@@ -176,7 +176,7 @@
 # MAGIC 
 # MAGIC Assim:
 # MAGIC 
-# MAGIC $$S_T = S_0\exp\left[ (r-q-\tfrac12\sigma^2)T+\sigma\sqrt T\,Z \right], \qquad Z\sim\mathcal N(0,1)$$
+# MAGIC $$S_T=S_0\exp\left[ (r-q-\tfrac12\sigma^2)T+\sigma\sqrt T\,Z \right], \qquad Z\sim\mathcal N(0,1)$$
 # MAGIC 
 # MAGIC A fórmula Black–Scholes fornecerá uma referência exata, dentro das hipóteses do modelo, para a vanilla.
 
@@ -185,15 +185,15 @@
 # MAGIC %md
 # MAGIC # 4. Definir a dinâmica neutra ao risco
 # MAGIC 
-# MAGIC Sob uma medida real $$\mathbb P$$, um modelo simplificado seria:
+# MAGIC Sob uma medida real P, um modelo simplificado seria:
 # MAGIC 
-# MAGIC $$\frac{dS_t}{S_t} = (\mu-q)dt+\sigma dW_t^{\mathbb P}$$
+# MAGIC $$\frac{dS_t}{S_t}=(\mu-q)dt+\sigma dW_t^{\mathbb P}$$
 # MAGIC 
-# MAGIC Para precificação por não arbitragem, utilizamos a medida neutra ao risco $$\mathbb Q$$:
+# MAGIC Para precificação por não arbitragem, utilizamos a medida neutra ao risco Q:
 # MAGIC 
-# MAGIC $$\frac{dS_t}{S_t} = (r-q)dt+\sigma dW_t^{\mathbb Q}$$
+# MAGIC $$\frac{dS_t}{S_t}=(r-q)dt+\sigma dW_t^{\mathbb Q}$$
 # MAGIC 
-# MAGIC O retorno esperado $$\mu$$ é substituído pelo carry $$r-q$$. Isso não é uma previsão de crescimento do índice; é a dinâmica usada para valorar o payoff de forma consistente com preços de mercado.
+# MAGIC O retorno esperado μ é substituído pelo carry r − q. Isso não é uma previsão de crescimento do índice; é a dinâmica usada para valorar o payoff de forma consistente com preços de mercado.
 
 # COMMAND ----------
 
@@ -202,11 +202,11 @@
 # MAGIC 
 # MAGIC Aplicando o lema de Itô:
 # MAGIC 
-# MAGIC $$d\ln S_t = \left(r-q-\frac12\sigma^2\right)dt + \sigma dW_t^{\mathbb Q}$$
+# MAGIC $$d\ln S_t=\left(r-q-\frac12\sigma^2\right)dt + \sigma dW_t^{\mathbb Q}$$
 # MAGIC 
-# MAGIC Em um intervalo $$\Delta t$$:
+# MAGIC Em um intervalo Δt:
 # MAGIC 
-# MAGIC $$S_{t+\Delta t} = S_t\exp\left[ \left(r-q-\frac12\sigma^2\right)\Delta t + \sigma\sqrt{\Delta t}\,Z \right]$$
+# MAGIC $$S_{t+\Delta t}=S_t\exp\left[ \left(r-q-\frac12\sigma^2\right)\Delta t + \sigma\sqrt{\Delta t}\,Z \right]$$
 # MAGIC 
 # MAGIC com:
 # MAGIC 
@@ -219,7 +219,7 @@
 # MAGIC %md
 # MAGIC # 4.2 Princípio de precificação
 # MAGIC 
-# MAGIC Para um payoff $$X_T$$ pago no vencimento:
+# MAGIC Para um payoff Xₜ pago no vencimento:
 # MAGIC 
 # MAGIC $$V_0=e^{-rT}\mathbb E^{\mathbb Q}[X_T]$$
 # MAGIC 
@@ -229,7 +229,7 @@
 # MAGIC 
 # MAGIC Para a down-and-out call:
 # MAGIC 
-# MAGIC $$V_0^{\mathrm{DOC}} = e^{-rT}\mathbb E^{\mathbb Q} \left[ (S_T-K)^+\mathbf{1}_{\{m_T>H\}} \right]$$
+# MAGIC $$V_0^{\mathrm{DOC}}=e^{-rT}\mathbb E^{\mathbb Q} \left[ (S_T-K)^+\mathbf{1}_{\{m_T>H\}} \right]$$
 # MAGIC 
 # MAGIC É essa esperança que o Monte Carlo aproximará.
 
@@ -238,13 +238,13 @@
 # MAGIC %md
 # MAGIC # 5. Simular trajetórias por Monte Carlo
 # MAGIC 
-# MAGIC Dividimos $$[0,T]$$ em $$M$$ passos:
+# MAGIC Dividimos [0,T] em M passos:
 # MAGIC 
 # MAGIC $$t_j=j\Delta t,\qquad \Delta t=\frac{T}{M},\qquad j=0,\ldots,M$$
 # MAGIC 
-# MAGIC Para a trajetória $$i=1,\ldots,N$$:
+# MAGIC Para a trajetória i = 1,…,N:
 # MAGIC 
-# MAGIC $$S_{i,j+1} = S_{i,j}\exp\left[ \left(r-q-\frac12\sigma^2\right)\Delta t + \sigma\sqrt{\Delta t}\,Z_{i,j} \right]$$
+# MAGIC $$S_{i,j+1}=S_{i,j}\exp\left[ \left(r-q-\frac12\sigma^2\right)\Delta t + \sigma\sqrt{\Delta t}\,Z_{i,j} \right]$$
 # MAGIC 
 # MAGIC $$Z_{i,j}\overset{\mathrm{iid}}{\sim}\mathcal N(0,1), \qquad S_{i,0}=S_0$$
 # MAGIC 
@@ -257,7 +257,7 @@
 # MAGIC 
 # MAGIC O indicador discreto de sobrevivência seria:
 # MAGIC 
-# MAGIC $$I_i^{\mathrm{disc}} = \mathbf{1}_{\{\min_{j=0,\ldots,M}S_{i,j}>H\}}$$
+# MAGIC $$I_i^{\mathrm{disc}}=\mathbf{1}_{\{\min_{j=0,\ldots,M}S_{i,j}>H\}}$$
 # MAGIC 
 # MAGIC Payoff descontado da barreira:
 # MAGIC 
@@ -284,7 +284,7 @@
 # MAGIC 
 # MAGIC Variância amostral:
 # MAGIC 
-# MAGIC $$s_X^2 = \frac{1}{N-1}\sum_{i=1}^N(X_i-\overline X)^2$$
+# MAGIC $$s_X^2=\frac{1}{N-1}\sum_{i=1}^N(X_i-\overline X)^2$$
 # MAGIC 
 # MAGIC Erro padrão da média:
 # MAGIC 
@@ -292,7 +292,7 @@
 # MAGIC 
 # MAGIC Intervalo aproximado de 95%:
 # MAGIC 
-# MAGIC $$IC_{95\%} = \left[ \overline X-1{,}96SE,\, \overline X+1{,}96SE \right]$$
+# MAGIC $$IC_{95\%}=\left[ \overline X-1{,}96SE,\, \overline X+1{,}96SE \right]$$
 # MAGIC 
 # MAGIC Como:
 # MAGIC 
@@ -307,34 +307,34 @@
 # MAGIC 
 # MAGIC O estimador da probabilidade neutra ao risco de knock-out é:
 # MAGIC 
-# MAGIC $$\widehat p_{\mathrm{KO}} = \frac1N\sum_{i=1}^N \mathbf{1}_{\{\text{trajetória }i\text{ atingiu }H\}}$$
+# MAGIC $$\widehat p_{\mathrm{KO}}=\frac1N\sum_{i=1}^N \mathbf{1}_{\{\text{trajetória }i\text{ atingiu }H\}}$$
 # MAGIC 
 # MAGIC A probabilidade de sobrevivência é:
 # MAGIC 
 # MAGIC $$\widehat p_{\mathrm{surv}}=1-\widehat p_{\mathrm{KO}}$$
 # MAGIC 
-# MAGIC Essas probabilidades estão sob $$\mathbb Q$$. Elas não são automaticamente previsões de risco real sob $$\mathbb P$$.
+# MAGIC Essas probabilidades estão sob Q. Elas não são automaticamente previsões de risco real sob P.
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # 6. Brownian Bridge
 # MAGIC 
-# MAGIC Mesmo quando dois pontos consecutivos estão acima de $$H$$, a trajetória contínua pode ter cruzado a barreira entre eles.
+# MAGIC Mesmo quando dois pontos consecutivos estão acima de H, a trajetória contínua pode ter cruzado a barreira entre eles.
 # MAGIC 
 # MAGIC Defina:
 # MAGIC 
 # MAGIC $$x_j=\ln S_{i,j},\qquad x_{j+1}=\ln S_{i,j+1},\qquad h=\ln H$$
 # MAGIC 
-# MAGIC Se $$S_{i,j}>H$$ e $$S_{i,j+1}>H$$, a probabilidade condicional de cruzamento é:
+# MAGIC Se Sᵢⱼ > H e Sᵢ,ⱼ₊₁ > H, a probabilidade condicional de cruzamento é:
 # MAGIC 
-# MAGIC $$p_{i,j}^{\mathrm{hit}} = \exp\left[ -\frac{2(x_j-h)(x_{j+1}-h)} {\sigma^2\Delta t} \right]$$
+# MAGIC $$p_{i,j}^{\mathrm{hit}}=\exp\left[ -\frac{2(x_j-h)(x_{j+1}-h)} {\sigma^2\Delta t} \right]$$
 # MAGIC 
 # MAGIC Forma equivalente:
 # MAGIC 
-# MAGIC $$p_{i,j}^{\mathrm{hit}} = \exp\left[ -\frac{ 2\ln(S_{i,j}/H)\ln(S_{i,j+1}/H) }{ \sigma^2\Delta t } \right]$$
+# MAGIC $$p_{i,j}^{\mathrm{hit}}=\exp\left[ -\frac{ 2\ln(S_{i,j}/H)\ln(S_{i,j+1}/H) }{ \sigma^2\Delta t } \right]$$
 # MAGIC 
-# MAGIC Se algum extremo for menor ou igual a $$H$$:
+# MAGIC Se algum extremo for menor ou igual a H:
 # MAGIC 
 # MAGIC $$p_{i,j}^{\mathrm{hit}}=1$$
 
@@ -361,11 +361,11 @@
 # MAGIC 
 # MAGIC Para a trajetória completa:
 # MAGIC 
-# MAGIC $$P_i^{\mathrm{surv}} = \prod_{j=0}^{M-1}(1-p_{i,j}^{\mathrm{hit}})$$
+# MAGIC $$P_i^{\mathrm{surv}}=\prod_{j=0}^{M-1}(1-p_{i,j}^{\mathrm{hit}})$$
 # MAGIC 
 # MAGIC Payoff suavizado:
 # MAGIC 
-# MAGIC $$X_i^{\mathrm{BB}} = e^{-rT}(S_{i,M}-K)^+P_i^{\mathrm{surv}}$$
+# MAGIC $$X_i^{\mathrm{BB}}=e^{-rT}(S_{i,M}-K)^+P_i^{\mathrm{surv}}$$
 # MAGIC 
 # MAGIC O método por peso costuma introduzir menos ruído do que novos sorteios uniformes.
 
@@ -404,13 +404,13 @@
 # MAGIC 
 # MAGIC definimos a observação corrigida:
 # MAGIC 
-# MAGIC $$X_i^{\mathrm{CV}} = X_i-\beta(Y_i-C_{\mathrm{BS}})$$
+# MAGIC $$X_i^{\mathrm{CV}}=X_i-\beta(Y_i-C_{\mathrm{BS}})$$
 # MAGIC 
 # MAGIC e o estimador final:
 # MAGIC 
-# MAGIC $$\widehat V_{\mathrm{CV}} = \overline X-\widehat\beta(\overline Y-C_{\mathrm{BS}})$$
+# MAGIC $$\widehat V_{\mathrm{CV}}=\overline X-\widehat\beta(\overline Y-C_{\mathrm{BS}})$$
 # MAGIC 
-# MAGIC O símbolo $$\widehat{\phantom V}$$ indica uma estimativa calculada com amostra finita.
+# MAGIC O símbolo acento circunflexo indica uma estimativa calculada com amostra finita.
 
 # COMMAND ----------
 
@@ -419,19 +419,19 @@
 # MAGIC 
 # MAGIC A variância da observação corrigida é:
 # MAGIC 
-# MAGIC $$\operatorname{Var}(X-\beta Y) = \operatorname{Var}(X) +\beta^2\operatorname{Var}(Y) -2\beta\operatorname{Cov}(X,Y)$$
+# MAGIC $$\operatorname{Var}(X-\beta Y)=\operatorname{Var}(X) +\beta^2\operatorname{Var}(Y) -2\beta\operatorname{Cov}(X,Y)$$
 # MAGIC 
-# MAGIC Derivando em relação a $$\beta$$ e igualando a zero:
+# MAGIC Derivando em relação a β e igualando a zero:
 # MAGIC 
 # MAGIC $$2\beta\operatorname{Var}(Y) -2\operatorname{Cov}(X,Y)=0$$
 # MAGIC 
 # MAGIC Logo:
 # MAGIC 
-# MAGIC $$\beta^* = \frac{\operatorname{Cov}(X,Y)} {\operatorname{Var}(Y)}$$
+# MAGIC $$\beta^*=\frac{\operatorname{Cov}(X,Y)} {\operatorname{Var}(Y)}$$
 # MAGIC 
 # MAGIC Na amostra:
 # MAGIC 
-# MAGIC $$\widehat\beta = \frac{ \sum_{i=1}^N(X_i-\overline X)(Y_i-\overline Y) }{ \sum_{i=1}^N(Y_i-\overline Y)^2 }$$
+# MAGIC $$\widehat\beta=\frac{ \sum_{i=1}^N(X_i-\overline X)(Y_i-\overline Y) }{ \sum_{i=1}^N(Y_i-\overline Y)^2 }$$
 
 # COMMAND ----------
 
@@ -442,7 +442,7 @@
 # MAGIC 
 # MAGIC $$\overline Y>C_{\mathrm{BS}}$$
 # MAGIC 
-# MAGIC a vanilla simulada ficou acima do valor exato. Com correlação positiva e $$\widehat\beta>0$$, retiramos parte desse excesso da barreira.
+# MAGIC a vanilla simulada ficou acima do valor exato. Com correlação positiva e β estimado > 0, retiramos parte desse excesso da barreira.
 # MAGIC 
 # MAGIC Se:
 # MAGIC 
@@ -454,7 +454,7 @@
 # MAGIC 
 # MAGIC $$\overline Y-C_{\mathrm{BS}}$$
 # MAGIC 
-# MAGIC Como vanilla e barreira usam os mesmos caminhos, parte desse ruído também está em $$\overline X$$. A variável de controle procura removê-lo.
+# MAGIC Como vanilla e barreira usam os mesmos caminhos, parte desse ruído também está em média de X. A variável de controle procura removê-lo.
 
 # COMMAND ----------
 
@@ -463,21 +463,21 @@
 # MAGIC 
 # MAGIC Defina:
 # MAGIC 
-# MAGIC $$\rho_{XY} = \frac{\operatorname{Cov}(X,Y)} {\sqrt{\operatorname{Var}(X)\operatorname{Var}(Y)}}$$
+# MAGIC $$\rho_{XY}=\frac{\operatorname{Cov}(X,Y)} {\sqrt{\operatorname{Var}(X)\operatorname{Var}(Y)}}$$
 # MAGIC 
 # MAGIC Com o coeficiente ótimo:
 # MAGIC 
-# MAGIC $$\operatorname{Var}(X^{\mathrm{CV}}) = \operatorname{Var}(X)(1-\rho_{XY}^2)$$
+# MAGIC $$\operatorname{Var}(X^{\mathrm{CV}})=\operatorname{Var}(X)(1-\rho_{XY}^2)$$
 # MAGIC 
-# MAGIC Quanto mais próximo $$|\rho_{XY}|$$ estiver de 1, maior tende a ser a redução de variância.
+# MAGIC Quanto mais próximo |ρXY| estiver de 1, maior tende a ser a redução de variância.
 # MAGIC 
 # MAGIC O erro padrão corrigido é:
 # MAGIC 
-# MAGIC $$s_{\mathrm{CV}}^2 = \frac1{N-1}\sum_{i=1}^N (X_i^{\mathrm{CV}}-\overline{X^{\mathrm{CV}}})^2$$
+# MAGIC $$s_{\mathrm{CV}}^2=\frac1{N-1}\sum_{i=1}^N (X_i^{\mathrm{CV}}-\overline{X^{\mathrm{CV}}})^2$$
 # MAGIC 
 # MAGIC $$SE_{\mathrm{CV}}=\frac{s_{\mathrm{CV}}}{\sqrt N}$$
 # MAGIC 
-# MAGIC $$IC_{95\%}^{\mathrm{CV}} = \widehat V_{\mathrm{CV}}\pm1{,}96SE_{\mathrm{CV}}$$
+# MAGIC $$IC_{95\%}^{\mathrm{CV}}=\widehat V_{\mathrm{CV}}\pm1{,}96SE_{\mathrm{CV}}$$
 
 # COMMAND ----------
 
@@ -486,7 +486,7 @@
 # MAGIC 
 # MAGIC ## 1 — Produto
 # MAGIC 
-# MAGIC $$X_{\mathrm{barreira}} = (S_T-K)^+\mathbf{1}_{\{\min_{0\le t\le T}S_t>H\}}$$
+# MAGIC $$X_{\mathrm{barreira}}=(S_T-K)^+\mathbf{1}_{\{\min_{0\le t\le T}S_t>H\}}$$
 # MAGIC 
 # MAGIC ## 2 — Mercado
 # MAGIC 
@@ -494,7 +494,7 @@
 # MAGIC 
 # MAGIC ## 3 — Vanilla analítica
 # MAGIC 
-# MAGIC $$C_{\mathrm{BS}} = S_0e^{-qT}\Phi(d_1)-Ke^{-rT}\Phi(d_2)$$
+# MAGIC $$C_{\mathrm{BS}}=S_0e^{-qT}\Phi(d_1)-Ke^{-rT}\Phi(d_2)$$
 # MAGIC 
 # MAGIC ## 4 — Dinâmica neutra ao risco
 # MAGIC 
@@ -502,15 +502,15 @@
 # MAGIC 
 # MAGIC ## 5 — Monte Carlo
 # MAGIC 
-# MAGIC $$S_{t+\Delta t} = S_t\exp[(r-q-\tfrac12\sigma^2)\Delta t+\sigma\sqrt{\Delta t}Z]$$
+# MAGIC $$S_{t+\Delta t}=S_t\exp[(r-q-\tfrac12\sigma^2)\Delta t+\sigma\sqrt{\Delta t}Z]$$
 # MAGIC 
 # MAGIC ## 6 — Brownian Bridge
 # MAGIC 
-# MAGIC $$p_{\mathrm{hit}} = \exp\left[ -\frac{2\ln(S_t/H)\ln(S_{t+\Delta t}/H)} {\sigma^2\Delta t} \right]$$
+# MAGIC $$p_{\mathrm{hit}}=\exp\left[ -\frac{2\ln(S_t/H)\ln(S_{t+\Delta t}/H)} {\sigma^2\Delta t} \right]$$
 # MAGIC 
 # MAGIC ## 7 — Variável de controle
 # MAGIC 
-# MAGIC $$\widehat V_{\mathrm{CV}} = \overline X-\widehat\beta(\overline Y-C_{\mathrm{BS}})$$
+# MAGIC $$\widehat V_{\mathrm{CV}}=\overline X-\widehat\beta(\overline Y-C_{\mathrm{BS}})$$
 
 # COMMAND ----------
 
@@ -558,7 +558,7 @@
 # MAGIC 5. Convergência estatística:
 # MAGIC $$SE\propto1/\sqrt N$$
 # MAGIC 
-# MAGIC 6. Ao aumentar $$M$$, o preço deve estabilizar. A Brownian Bridge deve reduzir a sensibilidade ao número de passos.
+# MAGIC 6. Ao aumentar M, o preço deve estabilizar. A Brownian Bridge deve reduzir a sensibilidade ao número de passos.
 # MAGIC 
 # MAGIC 7. Mesmos parâmetros e mesma semente devem reproduzir o resultado.
 
@@ -595,10 +595,10 @@
 # MAGIC 
 # MAGIC Para a opção com barreira:
 # MAGIC 
-# MAGIC $$V_0^{\mathrm{DOC}} = e^{-rT}\mathbb E^{\mathbb Q} \left[ (S_T-K)^+\mathbf{1}_{\{\min S_t>H\}} \right]$$
+# MAGIC $$V_0^{\mathrm{DOC}}=e^{-rT}\mathbb E^{\mathbb Q} \left[ (S_T-K)^+\mathbf{1}_{\{\min S_t>H\}} \right]$$
 # MAGIC 
 # MAGIC O Monte Carlo aproxima essa esperança; a Brownian Bridge trata cruzamentos entre os pontos da grade; e a vanilla remove parte do ruído comum:
 # MAGIC 
-# MAGIC $$\boxed{ \widehat V_{\mathrm{CV}} = \overline X-\widehat\beta(\overline Y-C_{\mathrm{BS}}) }$$
+# MAGIC $$\boxed{ \widehat V_{\mathrm{CV}}=\overline X-\widehat\beta(\overline Y-C_{\mathrm{BS}}) }$$
 # MAGIC 
-# MAGIC Os sete passos constituem um processo único: **definir o contrato, calibrar o mercado, obter uma referência analítica, modelar sob $$\mathbb Q$$, simular, tratar a barreira e aumentar a eficiência estatística**.
+# MAGIC Os sete passos constituem um processo único: **definir o contrato, calibrar o mercado, obter uma referência analítica, modelar sob Q, simular, tratar a barreira e aumentar a eficiência estatística**.
