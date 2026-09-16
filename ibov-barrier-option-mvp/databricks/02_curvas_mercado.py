@@ -21,7 +21,7 @@
 # MAGIC 
 # MAGIC $$q(T)=r(T)-\frac{1}{T}\ln\left(\frac{F_{0,T}}{S_0}\right)$$
 # MAGIC 
-# MAGIC > Os dados iniciais deste notebook são **ilustrativos**. Eles permitem validar toda a mecânica antes da conexão com fontes reais.
+# MAGIC > Este notebook lê diretamente os arquivos públicos da B3 armazenados em `data/AAAA-MM-DD`. O arquivo **IR** fornece o IBOV à vista e o arquivo **SPRD** fornece os ajustes de DI1 e IND.
 
 # COMMAND ----------
 
@@ -47,8 +47,11 @@
 
 # COMMAND ----------
 
-# Comentário: imports usados na construção, interpolação e visualização das curvas.
-from datetime import date
+# Comentário: importa apenas bibliotecas padrão e pacotes já disponíveis no Databricks.
+from datetime import date, timedelta
+from pathlib import Path
+from xml.etree import ElementTree as ET
+from zipfile import ZipFile
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -56,29 +59,343 @@ import pandas as pd
 
 # COMMAND ----------
 
-# Comentário: parâmetros gerais e dados de mercado ilustrativos; substitua apenas esta tabela quando tivermos dados reais.
-valuation_date = date(2026, 9, 14)
-spot_ibov = 150_000.0
+# MAGIC %md
+# MAGIC # 0. Leitura dos arquivos reais da B3
+# MAGIC
+# MAGIC Para cada data de mercado, o notebook utiliza:
+# MAGIC
+# MAGIC | Arquivo | Conteúdo usado |
+# MAGIC |---|---|
+# MAGIC | IR | fechamento do índice IBOV |
+# MAGIC | SPRD | taxa de ajuste dos futuros DI1 e preço de ajuste dos futuros IND |
+# MAGIC | IN | cadastro completo dos instrumentos; fica arquivado, mas não precisa ser lido nesta etapa |
+# MAGIC
+# MAGIC O fluxo é:
+# MAGIC
+# MAGIC 1. escolher a data;
+# MAGIC 2. abrir os ZIPs sem extrair manualmente;
+# MAGIC 3. retirar o spot do IBOV;
+# MAGIC 4. montar a curva DI1;
+# MAGIC 5. associar a taxa DI ao vencimento de cada futuro IND;
+# MAGIC 6. calcular o dividend yield implícito.
 
-market_quotes = pd.DataFrame(
-    {
-        "maturity_date": pd.to_datetime(
-            [
-                "2026-10-14",
-                "2026-12-16",
-                "2027-02-17",
-                "2027-04-14",
-                "2027-06-16",
-            ]
-        ),
-        # Taxas zero efetivas anuais ilustrativas, em formato decimal.
-        "zero_rate_effective": [0.1450, 0.1430, 0.1400, 0.1380, 0.1360],
-        # Preços futuros ilustrativos do Ibovespa, em pontos.
-        "ibov_future": [151_180.0, 153_580.0, 155_780.0, 157_710.0, 159_740.0],
-    }
+# COMMAND ----------
+
+# Comentário: escolha aqui a fotografia de mercado; use None para selecionar automaticamente a última pasta completa.
+MARKET_DATE = "2026-09-15"
+
+# Prazo da opção usado adiante no notebook, em anos ACT/365.
+option_maturity = 0.5
+
+# COMMAND ----------
+
+# Comentário: localiza a raiz do projeto independentemente de o notebook rodar na raiz ou na pasta databricks.
+def find_project_root() -> Path:
+    candidates = [Path.cwd(), *Path.cwd().parents]
+    for candidate in candidates:
+        if (candidate / "data").exists() and (candidate / "src").exists():
+            return candidate
+    raise FileNotFoundError(
+        "Não encontrei a raiz do projeto. Confirme que existem as pastas data e src."
+    )
+
+
+project_root = find_project_root()
+data_root = project_root / "data"
+
+
+def complete_market_folders(root: Path) -> list[Path]:
+    return sorted(
+        folder
+        for folder in root.iterdir()
+        if folder.is_dir()
+        and list(folder.glob("IR*.zip"))
+        and list(folder.glob("SPRD*.zip"))
+    )
+
+
+available_folders = complete_market_folders(data_root)
+if not available_folders:
+    raise FileNotFoundError(
+        f"Nenhuma pasta completa foi encontrada em {data_root}. "
+        "São necessários pelo menos um IR*.zip e um SPRD*.zip."
+    )
+
+market_folder = (
+    data_root / MARKET_DATE
+    if MARKET_DATE is not None
+    else available_folders[-1]
 )
 
-display(market_quotes)
+if market_folder not in available_folders:
+    available_dates = [folder.name for folder in available_folders]
+    raise FileNotFoundError(
+        f"A pasta {market_folder.name} não contém IR e SPRD. "
+        f"Datas completas disponíveis: {available_dates}"
+    )
+
+valuation_date = date.fromisoformat(market_folder.name)
+ir_zip = sorted(market_folder.glob("IR*.zip"))[-1]
+sprd_zip = sorted(market_folder.glob("SPRD*.zip"))[-1]
+
+display(
+    pd.DataFrame(
+        {
+            "item": ["Data de avaliação", "Pasta", "Arquivo IR", "Arquivo SPRD"],
+            "valor": [
+                valuation_date.isoformat(),
+                str(market_folder),
+                ir_zip.name,
+                sprd_zip.name,
+            ],
+        }
+    )
+)
+
+# COMMAND ----------
+
+# Comentário: remove os namespaces do XML e transforma as folhas de cada registro em um dicionário simples.
+def local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def flatten_element(element) -> dict:
+    row = {}
+    for child in element.iter():
+        value = (child.text or "").strip()
+        if value:
+            row.setdefault(local_name(child.tag), value)
+    return row
+
+
+def read_latest_xml(zip_path: Path):
+    with ZipFile(zip_path) as archive:
+        xml_members = [
+            info for info in archive.infolist()
+            if info.filename.lower().endswith(".xml")
+        ]
+        if not xml_members:
+            raise ValueError(f"Nenhum XML encontrado em {zip_path.name}.")
+
+        # Alguns ZIPs trazem mais de uma publicação. Usamos a mais recente.
+        latest_member = max(xml_members, key=lambda info: info.date_time)
+        xml_bytes = archive.read(latest_member)
+        return ET.fromstring(xml_bytes), latest_member.filename
+
+
+def rows_from_tag(root, record_tag: str) -> list[dict]:
+    return [
+        flatten_element(element)
+        for element in root.iter()
+        if local_name(element.tag) == record_tag
+    ]
+
+
+ir_root, ir_xml_name = read_latest_xml(ir_zip)
+sprd_root, sprd_xml_name = read_latest_xml(sprd_zip)
+
+print(f"XML usado para o índice:     {ir_xml_name}")
+print(f"XML usado para derivativos:  {sprd_xml_name}")
+
+# COMMAND ----------
+
+# Comentário: extrai o fechamento oficial do IBOV do relatório de índices BVBG.087.01.
+index_rows = pd.DataFrame(rows_from_tag(ir_root, "IndxInf"))
+
+ibov_rows = index_rows.loc[index_rows["TckrSymb"].eq("IBOV")].copy()
+if len(ibov_rows) != 1:
+    raise ValueError(
+        f"Esperava exatamente um registro IBOV no IR; encontrei {len(ibov_rows)}."
+    )
+
+spot_field = "ClsgPric" if "ClsgPric" in ibov_rows.columns else "IndxVal"
+spot_ibov = float(ibov_rows.iloc[0][spot_field])
+
+display(
+    ibov_rows[
+        [
+            column
+            for column in [
+                "TckrSymb",
+                "OpngPric",
+                "MinPric",
+                "MaxPric",
+                "ClsgPric",
+                "IndxVal",
+                "OscnVal",
+            ]
+            if column in ibov_rows.columns
+        ]
+    ]
+)
+
+print(f"Spot do Ibovespa em {valuation_date:%d/%m/%Y}: {spot_ibov:,.2f} pontos")
+
+# COMMAND ----------
+
+# Comentário: extrai os registros DI1 e IND do relatório simplificado de derivativos BVBG.187.01.
+price_report = pd.DataFrame(rows_from_tag(sprd_root, "PricRpt"))
+
+di_quotes = price_report.loc[
+    price_report["TckrSymb"].str.startswith("DI1", na=False)
+].copy()
+ind_quotes = price_report.loc[
+    price_report["TckrSymb"].str.startswith("IND", na=False)
+].copy()
+
+# A taxa de ajuste do DI1 vem em percentual ao ano; o ajuste do IND vem em pontos.
+di_quotes["zero_rate_effective"] = pd.to_numeric(
+    di_quotes["AdjstdQtTax"], errors="coerce"
+) / 100.0
+ind_quotes["ibov_future"] = pd.to_numeric(
+    ind_quotes["AdjstdQt"], errors="coerce"
+)
+
+di_quotes = (
+    di_quotes.dropna(subset=["zero_rate_effective"])
+    .drop_duplicates("TckrSymb", keep="last")
+)
+ind_quotes = (
+    ind_quotes.dropna(subset=["ibov_future"])
+    .drop_duplicates("TckrSymb", keep="last")
+)
+
+if di_quotes.empty:
+    raise ValueError("Nenhuma taxa de ajuste DI1 foi encontrada no SPRD.")
+if ind_quotes.empty:
+    raise ValueError("Nenhum preço de ajuste IND foi encontrado no SPRD.")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Datas de vencimento dos contratos
+# MAGIC
+# MAGIC O código da B3 contém uma letra para o mês e dois dígitos para o ano.
+# MAGIC
+# MAGIC - DI1: primeiro dia útil do mês de vencimento;
+# MAGIC - IND: quarta-feira mais próxima do dia 15 do mês de vencimento.
+# MAGIC
+# MAGIC Nesta versão, “dia útil” considera segunda a sexta-feira. O uso do calendário
+# MAGIC oficial da B3 será o próximo refinamento.
+
+# COMMAND ----------
+
+# Comentário: converte códigos como DI1F27 e INDZ26 em datas de vencimento.
+MONTH_CODES = {
+    "F": 1,
+    "G": 2,
+    "H": 3,
+    "J": 4,
+    "K": 5,
+    "M": 6,
+    "N": 7,
+    "Q": 8,
+    "U": 9,
+    "V": 10,
+    "X": 11,
+    "Z": 12,
+}
+
+
+def first_weekday(year: int, month: int) -> date:
+    maturity = date(year, month, 1)
+    while maturity.weekday() >= 5:
+        maturity += timedelta(days=1)
+    return maturity
+
+
+def nearest_wednesday_to_15(year: int, month: int) -> date:
+    candidates = [
+        date(year, month, day)
+        for day in range(12, 19)
+        if date(year, month, day).weekday() == 2
+    ]
+    return min(candidates, key=lambda maturity: abs(maturity.day - 15))
+
+
+def contract_maturity(ticker: str) -> date:
+    month_code = ticker[-3]
+    year = 2000 + int(ticker[-2:])
+    month = MONTH_CODES[month_code]
+
+    if ticker.startswith("DI1"):
+        return first_weekday(year, month)
+    if ticker.startswith("IND"):
+        return nearest_wednesday_to_15(year, month)
+    raise ValueError(f"Contrato não reconhecido: {ticker}")
+
+
+di_quotes["maturity_date"] = pd.to_datetime(
+    di_quotes["TckrSymb"].map(contract_maturity)
+)
+ind_quotes["maturity_date"] = pd.to_datetime(
+    ind_quotes["TckrSymb"].map(contract_maturity)
+)
+
+valuation_ts = pd.Timestamp(valuation_date)
+di_quotes = di_quotes.loc[di_quotes["maturity_date"] > valuation_ts].sort_values(
+    "maturity_date"
+)
+ind_quotes = ind_quotes.loc[ind_quotes["maturity_date"] > valuation_ts].sort_values(
+    "maturity_date"
+)
+
+display(
+    di_quotes[
+        ["TckrSymb", "maturity_date", "zero_rate_effective", "AdjstdQtTax"]
+    ].style.format({"zero_rate_effective": "{:.4%}"})
+)
+display(
+    ind_quotes[
+        ["TckrSymb", "maturity_date", "ibov_future"]
+    ].style.format({"ibov_future": "{:,.2f}"})
+)
+
+# COMMAND ----------
+
+# Comentário: interpola a curva DI nos vencimentos dos futuros IND e monta a tabela usada pelo restante do notebook.
+di_days = (di_quotes["maturity_date"] - valuation_ts).dt.days.to_numpy()
+di_rates = di_quotes["zero_rate_effective"].to_numpy(dtype=float)
+
+ind_quotes["days"] = (ind_quotes["maturity_date"] - valuation_ts).dt.days
+inside_di_curve = ind_quotes["days"].between(di_days.min(), di_days.max())
+excluded_ind = ind_quotes.loc[~inside_di_curve].copy()
+ind_quotes = ind_quotes.loc[inside_di_curve].copy()
+
+if ind_quotes.empty:
+    raise ValueError(
+        "Nenhum vencimento IND ficou dentro do intervalo coberto pela curva DI1."
+    )
+
+ind_quotes["zero_rate_effective"] = np.interp(
+    ind_quotes["days"].to_numpy(),
+    di_days,
+    di_rates,
+)
+
+market_quotes = ind_quotes[
+    [
+        "TckrSymb",
+        "maturity_date",
+        "zero_rate_effective",
+        "ibov_future",
+    ]
+].rename(columns={"TckrSymb": "future_ticker"})
+
+display(
+    market_quotes.style.format(
+        {
+            "zero_rate_effective": "{:.4%}",
+            "ibov_future": "{:,.2f}",
+        }
+    )
+)
+
+if not excluded_ind.empty:
+    print(
+        "Contratos IND fora do intervalo da curva DI e não utilizados:",
+        excluded_ind["TckrSymb"].tolist(),
+    )
 
 # COMMAND ----------
 
@@ -244,7 +561,7 @@ ax.plot(curve["T"], 100 * curve["r_continuous"], marker="o", label="Taxa zero co
 ax.plot(curve["T"], 100 * curve["implied_q"], marker="o", label="Dividend yield q(T)")
 ax.plot(curve["T"], 100 * curve["net_carry"], marker="o", label="Carry líquido r(T) − q(T)")
 
-ax.set_title("Curvas de mercado — dados ilustrativos")
+ax.set_title(f"Curvas de mercado B3 — {valuation_date:%d/%m/%Y}")
 ax.set_xlabel("Prazo em anos")
 ax.set_ylabel("Taxa anual contínua (%)")
 ax.grid(alpha=0.3)
@@ -281,9 +598,6 @@ def interpolate_curve(target_T: float, tenors, values, curve_name: str) -> float
 
     return float(np.interp(target_T, tenors, values))
 
-
-# Prazo da opção usada no projeto: seis meses.
-option_maturity = 0.5
 
 rate_for_option = interpolate_curve(
     option_maturity,
@@ -420,18 +734,16 @@ display(
 # MAGIC %md
 # MAGIC # 6. Limitações e próximos aprimoramentos
 # MAGIC 
-# MAGIC Esta primeira versão já conecta corretamente a lógica de curvas ao modelo, mas ainda utiliza dados ilustrativos.
+# MAGIC Esta versão já lê spot, DI1 e IND diretamente dos arquivos reais da B3 armazenados no projeto.
 # MAGIC 
 # MAGIC Próximas etapas:
 # MAGIC 
-# MAGIC 1. importar a curva DI/zero de uma fonte real;
-# MAGIC 2. importar spot e futuros de Ibovespa por vencimento;
-# MAGIC 3. aplicar calendário de dias úteis e convenções da B3;
-# MAGIC 4. tratar preços ausentes, liquidez e contratos pouco negociados;
-# MAGIC 5. comparar interpolação em taxas com interpolação em fatores de desconto;
-# MAGIC 6. armazenar a fotografia diária das curvas;
-# MAGIC 7. permitir r(t) e q(t) variáveis ao longo da simulação;
-# MAGIC 8. criar controles de qualidade e alertas de arbitragem.
+# MAGIC 1. substituir o calendário simplificado pelo calendário oficial da B3;
+# MAGIC 2. validar vencimentos contra o cadastro IN;
+# MAGIC 3. aplicar filtros de liquidez aos contratos futuros;
+# MAGIC 4. comparar interpolação em taxas com interpolação em fatores de desconto;
+# MAGIC 5. permitir r(t) e q(t) variáveis ao longo da simulação;
+# MAGIC 6. criar controles de qualidade e alertas de arbitragem.
 # MAGIC 
 # MAGIC ## Controle essencial
 # MAGIC 
@@ -439,4 +751,4 @@ display(
 # MAGIC 
 # MAGIC $$F_{0,T}=S_0e^{(r(T)-q(T))T}$$
 # MAGIC 
-# MAGIC A curva não deve ser considerada “de mercado” enquanto spot, taxas e futuros continuarem ilustrativos.
+# MAGIC A curva agora é construída com dados de mercado, mas ainda depende de convenções simplificadas de calendário e de interpolação.
