@@ -6,7 +6,6 @@
 #   "lxml",
 # ]
 # ///
-
 # MAGIC %md
 # MAGIC # Validação e qualidade dos dados e da superfície de volatilidade
 # MAGIC
