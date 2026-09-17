@@ -1,4 +1,11 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# dependencies = [
+#   "lxml",
+# ]
+# ///
 # MAGIC %md
 # MAGIC # Superfície de volatilidade implícita das opções de Ibovespa
 # MAGIC
@@ -24,6 +31,31 @@
 # MAGIC | $q$ | dividend yield implícito para o prazo $T$ |
 # MAGIC | $\sigma$ | volatilidade implícita procurada |
 # MAGIC | $V_{mercado}$ | prêmio observado no PriceReport |
+
+# COMMAND ----------
+
+# Comentário: verifica se o lxml está disponível; instala e reinicia somente quando necessário.
+import importlib.util
+import subprocess
+import sys
+
+if importlib.util.find_spec("lxml") is None:
+    print("lxml não encontrado. Iniciando a instalação...")
+
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "lxml>=6.0"]
+    )
+
+    print("lxml instalado. Reiniciando o Python...")
+    dbutils.library.restartPython()
+
+else:
+    import lxml
+    from lxml import etree
+
+    print("Python:", sys.version.split()[0])
+    print("lxml instalado:", lxml.__version__)
+    print("Importação do etree: OK")
 
 # COMMAND ----------
 
@@ -597,20 +629,37 @@ else:
     interpolation_method = "linear"
 
 surface_result = pd.DataFrame({
-    "parameter": [
-        "Spot", "Strike alvo", "Prazo alvo", "Forward alvo",
-        "Log-moneyness alvo", "Taxa r(T)", "Dividend yield q(T)",
-        "Volatilidade implícita", "Método de interpolação",
+    "Parâmetro": [
+        "Spot",
+        "Strike alvo",
+        "Prazo alvo",
+        "Forward alvo",
+        "Log-moneyness alvo",
+        "Taxa r(T)",
+        "Dividend yield q(T)",
+        "Volatilidade implícita",
+        "Método de interpolação",
     ],
-    "value": [
-        spot, TARGET_STRIKE, TARGET_MATURITY, target_forward,
-        target_k, target_r[0], target_q[0], target_iv, interpolation_method,
+    "Valor": [
+        f"{spot:,.2f}",
+        f"{TARGET_STRIKE:,.2f}",
+        f"{TARGET_MATURITY:.4f}",
+        f"{target_forward:,.2f}",
+        f"{target_k:.6f}",
+        f"{100 * target_r[0]:.4f}% a.a.",
+        f"{100 * target_q[0]:.4f}% a.a.",
+        f"{100 * target_iv:.4f}% a.a.",
+        interpolation_method,
     ],
 })
+
 display(surface_result)
 
-print(f"Volatilidade fixa anterior:     {22.0:.2f}% a.a.")
-print(f"Volatilidade obtida da superfície: {100 * target_iv:.2f}% a.a.")
+print(f"Volatilidade fixa anterior: {22.0:.2f}% a.a.")
+print(
+    f"Volatilidade obtida da superfície: "
+    f"{100 * target_iv:.2f}% a.a."
+)
 
 # COMMAND ----------
 
