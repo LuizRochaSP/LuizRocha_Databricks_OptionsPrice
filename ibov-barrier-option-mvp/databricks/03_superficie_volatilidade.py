@@ -3,7 +3,7 @@
 # [tool.databricks.environment]
 # environment_version = "5"
 # dependencies = [
-#   "lxml",
+#   "lxml>=6.0",
 # ]
 # ///
 # MAGIC %md
@@ -18,44 +18,19 @@
 # MAGIC 5. calcular a volatilidade implícita por Black–Scholes;
 # MAGIC 6. construir smiles por vencimento e uma primeira superfície.
 # MAGIC
-# MAGIC A volatilidade implícita é o valor de $\sigma$ que resolve:
+# MAGIC A volatilidade implícita é o valor de σ que resolve:
 # MAGIC
 # MAGIC $$V_{BS}(S_0,K,T,r,q,\sigma)=V_{mercado}$$
 # MAGIC
 # MAGIC | Símbolo | Descrição |
 # MAGIC |---|---|
-# MAGIC | $S_0$ | nível do Ibovespa na data de avaliação |
-# MAGIC | $K$ | strike da opção |
-# MAGIC | $T$ | prazo até o vencimento, em anos |
-# MAGIC | $r$ | taxa contínua livre de risco para o prazo $T$ |
-# MAGIC | $q$ | dividend yield implícito para o prazo $T$ |
-# MAGIC | $\sigma$ | volatilidade implícita procurada |
-# MAGIC | $V_{mercado}$ | prêmio observado no PriceReport |
-
-# COMMAND ----------
-
-# Comentário: verifica se o lxml está disponível; instala e reinicia somente quando necessário.
-import importlib.util
-import subprocess
-import sys
-
-if importlib.util.find_spec("lxml") is None:
-    print("lxml não encontrado. Iniciando a instalação...")
-
-    subprocess.check_call(
-        [sys.executable, "-m", "pip", "install", "lxml>=6.0"]
-    )
-
-    print("lxml instalado. Reiniciando o Python...")
-    dbutils.library.restartPython()
-
-else:
-    import lxml
-    from lxml import etree
-
-    print("Python:", sys.version.split()[0])
-    print("lxml instalado:", lxml.__version__)
-    print("Importação do etree: OK")
+# MAGIC | S₀ | nível do Ibovespa na data de avaliação |
+# MAGIC | K | strike da opção |
+# MAGIC | T | prazo até o vencimento, em anos |
+# MAGIC | r | taxa contínua livre de risco para o prazo T |
+# MAGIC | q | dividend yield implícito para o prazo T |
+# MAGIC | σ | volatilidade implícita procurada |
+# MAGIC | V_mercado | prêmio observado no PriceReport |
 
 # COMMAND ----------
 
@@ -348,7 +323,7 @@ options["T"] = (options["maturity_date"] - valuation_ts).dt.days / 365.0
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 4. Reconstrução das curvas $r(T)$ e $q(T)$
+# MAGIC ## 4. Reconstrução das curvas r(T) e q(T)
 # MAGIC
 # MAGIC O futuro do Ibovespa obedece a:
 # MAGIC
@@ -358,7 +333,7 @@ options["T"] = (options["maturity_date"] - valuation_ts).dt.days / 365.0
 # MAGIC
 # MAGIC $$q(T)=r(T)-\frac{1}{T}\ln\left(\frac{F_{0,T}}{S_0}\right)$$
 # MAGIC
-# MAGIC O `IR` fornece $S_0$, o DI1 fornece $r(T)$ e o futuro IND fornece $F_{0,T}$.
+# MAGIC O `IR` fornece S₀, o DI1 fornece r(T) e o futuro IND fornece F₀,T.
 
 # COMMAND ----------
 
@@ -584,11 +559,11 @@ display(
 # MAGIC
 # MAGIC $$k=\ln\left(\frac{K}{F_{0,T}}\right)$$
 # MAGIC
-# MAGIC | Valor de $k$ | Interpretação |
+# MAGIC | Valor de k | Interpretação |
 # MAGIC |---|---|
-# MAGIC | $k<0$ | strike abaixo do forward |
-# MAGIC | $k=0$ | opção aproximadamente at-the-money forward |
-# MAGIC | $k>0$ | strike acima do forward |
+# MAGIC | k < 0 | strike abaixo do forward |
+# MAGIC | k = 0 | opção aproximadamente at-the-money forward |
+# MAGIC | k > 0 | strike acima do forward |
 
 # COMMAND ----------
 

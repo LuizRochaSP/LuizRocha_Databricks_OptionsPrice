@@ -3,7 +3,7 @@
 # [tool.databricks.environment]
 # environment_version = "5"
 # dependencies = [
-#   "lxml",
+#   "lxml>=6.0",
 # ]
 # ///
 # MAGIC %md
