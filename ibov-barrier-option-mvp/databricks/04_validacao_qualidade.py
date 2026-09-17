@@ -1,4 +1,12 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# dependencies = [
+#   "lxml",
+# ]
+# ///
+
 # MAGIC %md
 # MAGIC # Validação e qualidade dos dados e da superfície de volatilidade
 # MAGIC
@@ -219,7 +227,7 @@ if not wide_spreads.empty:
 # MAGIC
 # MAGIC $$F_{0,T}=S_0e^{[r(T)-q(T)]T}$$
 # MAGIC
-# MAGIC O controle reconstrói o futuro a partir de $S_0$, $r(T)$ e $q(T)$. Como $q(T)$ foi
+# MAGIC O controle reconstrói o futuro a partir de S₀, r(T) e q(T). Como q(T) foi
 # MAGIC inferido dessa identidade, o erro deve ser apenas numérico.
 
 # COMMAND ----------
@@ -276,7 +284,7 @@ display(curve_validation.style.format({
 # MAGIC
 # MAGIC $$\max(0,Ke^{-rT}-S_0e^{-qT})\leq P\leq Ke^{-rT}$$
 # MAGIC
-# MAGIC Depois da inversão, o Black–Scholes com $\hat\sigma$ precisa reconstruir o preço de
+# MAGIC Depois da inversão, o Black–Scholes com σ̂ precisa reconstruir o preço de
 # MAGIC mercado dentro da tolerância numérica.
 
 # COMMAND ----------
@@ -343,7 +351,7 @@ if not repricing_failures.empty:
 # MAGIC
 # MAGIC $$C-P=S_0e^{-qT}-Ke^{-rT}$$
 # MAGIC
-# MAGIC Para calls de mesmo vencimento, o preço deve ser decrescente e convexo em $K$. Esses
+# MAGIC Para calls de mesmo vencimento, o preço deve ser decrescente e convexo em K. Esses
 # MAGIC testes são diagnósticos: cotações assíncronas ou último negócio podem produzir alertas
 # MAGIC sem que isso represente uma arbitragem realmente executável.
 
@@ -560,7 +568,7 @@ if STRICT_MODE and n_fail:
 # MAGIC superfície. Depois de integrar esses parâmetros ao preço da opção com barreira,
 # MAGIC acrescentaremos controles específicos do modelo:
 # MAGIC
-# MAGIC 1. $0 \leq V_{barreira} \leq V_{vanilla}$;
+# MAGIC 1. 0 ≤ V_barreira ≤ V_vanilla;
 # MAGIC 2. intervalo de confiança e erro-padrão de Monte Carlo;
 # MAGIC 3. convergência por número de caminhos e passos;
 # MAGIC 4. comparação entre monitoramento discreto e Brownian Bridge;
