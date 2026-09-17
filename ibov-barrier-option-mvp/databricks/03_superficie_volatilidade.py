@@ -698,3 +698,76 @@ print(
 # MAGIC    volatilidade no strike da opção é uma primeira aproximação, não o modelo final.
 # MAGIC 7. Uma evolução profissional pode usar SVI/SABR, pesos por liquidez e calibração
 # MAGIC    conjunta de calls e puts por preço forward.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 8. Persistência dos resultados para validação
+# MAGIC
+# MAGIC O notebook de qualidade não recalcula a superfície. Esta etapa salva um pacote CSV
+# MAGIC datado com os objetos necessários para que o notebook 04 valide exatamente esta execução.
+
+# COMMAND ----------
+
+# Comentário: salva os resultados fora da Git Folder, com data e hora de execução de São Paulo.
+import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+execution_timestamp = datetime.now(ZoneInfo("America/Sao_Paulo"))
+results_root = project_root.parents[1] / "ibov-barrier-results"
+results_root.mkdir(parents=True, exist_ok=True)
+
+result_filename = (
+    f"RESULTS_superficieVol_{execution_timestamp:%Y%m%d_%H%M%S}.csv"
+)
+result_path = results_root / result_filename
+
+result_metadata = {
+    "schema_version": 1,
+    "execution_timestamp": execution_timestamp.isoformat(),
+    "market_date": MARKET_DATE,
+    "spot": float(spot),
+    "target_strike": float(TARGET_STRIKE),
+    "target_maturity": float(TARGET_MATURITY),
+    "target_r": float(target_r[0]),
+    "target_q": float(target_q[0]),
+    "target_iv": float(target_iv),
+    "interpolation_method": interpolation_method,
+    "min_trades": int(MIN_TRADES),
+    "min_open_interest": int(MIN_OPEN_INTEREST),
+    "min_iv": float(MIN_IV),
+    "max_iv": float(MAX_IV),
+    "in_zip": in_zip.name,
+    "ir_zip": ir_zip.name,
+    "sprd_zip": sprd_zip.name,
+    "pr_zip": pr_zip.name,
+}
+
+result_frames = {
+    "catalog": catalog,
+    "prices": prices,
+    "options": options,
+    "curve": curve,
+    "filtered": filtered,
+    "iv_data": iv_data,
+    "surface_data": surface_data,
+}
+
+bundle_rows = [{
+    "object_name": "metadata",
+    "object_type": "json",
+    "payload_json": json.dumps(result_metadata, ensure_ascii=False),
+}]
+bundle_rows.extend({
+    "object_name": name,
+    "object_type": "dataframe",
+    "payload_json": frame.reset_index(drop=True).to_json(orient="table", date_format="iso"),
+} for name, frame in result_frames.items())
+
+pd.DataFrame(bundle_rows).to_csv(result_path, index=False)
+
+print(f"✓ Resultado do notebook 03 salvo em: {result_path}")
+print(f"✓ Data de execução: {execution_timestamp:%d/%m/%Y %H:%M:%S}")
+print(f"✓ Data de mercado: {valuation_date:%d/%m/%Y}")
+

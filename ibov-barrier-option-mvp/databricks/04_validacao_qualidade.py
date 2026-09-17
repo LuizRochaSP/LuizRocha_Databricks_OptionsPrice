@@ -21,13 +21,202 @@
 # MAGIC | `WARN` | resultado utilizável com ressalva e investigação |
 # MAGIC | `FAIL` | falha material; não se deve promover o resultado sem correção |
 # MAGIC
-# MAGIC O notebook `03_superficie_volatilidade` continua sendo a fonte única da leitura e
-# MAGIC transformação dos dados. Este notebook apenas valida seus objetos e resultados.
+# MAGIC O notebook `03_superficie_volatilidade` é a fonte única da leitura e transformação
+# MAGIC dos dados. Este notebook exige um resultado gerado pelo 03 na data corrente e interrompe
+# MAGIC imediatamente se esse pré-requisito não for atendido.
 
 # COMMAND ----------
 
-# DBTITLE 1,Executa notebook 03
-# MAGIC %run ./03_superficie_volatilidade
+# DBTITLE 1,Carrega a última execução do notebook 03
+# Comentário: interrompe imediatamente se o notebook 03 não tiver gerado resultado hoje.
+import json
+import re
+from datetime import date, datetime
+from io import StringIO
+from pathlib import Path
+from zipfile import ZipFile
+from zoneinfo import ZoneInfo
+
+import numpy as np
+import pandas as pd
+from scipy.stats import norm
+
+
+def find_project_root() -> Path:
+    for candidate in [Path.cwd(), *Path.cwd().parents]:
+        if (candidate / "data").exists() and (candidate / "src").exists():
+            return candidate
+    raise FileNotFoundError(
+        "Não encontrei a raiz do projeto contendo as pastas data e src."
+    )
+
+
+project_root = find_project_root()
+results_root = project_root.parents[1] / "ibov-barrier-results"
+result_pattern = re.compile(
+    r"^RESULTS_superficieVol_(\d{8})_(\d{6})\.csv$"
+)
+
+result_candidates = []
+if results_root.exists():
+    for path in results_root.glob("RESULTS_superficieVol_*.csv"):
+        match = result_pattern.match(path.name)
+        if match:
+            timestamp = datetime.strptime(
+                "".join(match.groups()), "%Y%m%d%H%M%S"
+            )
+            result_candidates.append((timestamp, path))
+
+if not result_candidates:
+    raise RuntimeError(
+        "ERRO: nenhum resultado do notebook 03 foi encontrado. "
+        "Execute primeiro o notebook 03_superficie_volatilidade."
+    )
+
+latest_result_timestamp, latest_result_path = max(
+    result_candidates, key=lambda item: item[0]
+)
+today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+
+if latest_result_timestamp.date() != today:
+    raise RuntimeError(
+        "ERRO: o notebook 03 ainda não foi executado hoje. "
+        f"Último resultado disponível: {latest_result_timestamp:%d/%m/%Y %H:%M:%S}. "
+        "Execute o notebook 03_superficie_volatilidade antes do notebook 04."
+    )
+
+result_bundle = pd.read_csv(latest_result_path)
+required_objects = {
+    "metadata", "catalog", "prices", "options", "curve",
+    "filtered", "iv_data", "surface_data",
+}
+available_objects = set(result_bundle["object_name"])
+missing_objects = sorted(required_objects - available_objects)
+if missing_objects:
+    raise RuntimeError(
+        "ERRO: o resultado mais recente do notebook 03 está incompleto. "
+        f"Objetos ausentes: {missing_objects}. Execute novamente o notebook 03."
+    )
+
+
+def bundle_payload(name: str) -> str:
+    rows = result_bundle.loc[result_bundle["object_name"].eq(name), "payload_json"]
+    if len(rows) != 1:
+        raise RuntimeError(
+            f"ERRO: objeto {name!r} ausente ou duplicado no resultado do notebook 03."
+        )
+    return rows.iloc[0]
+
+
+result_metadata = json.loads(bundle_payload("metadata"))
+if result_metadata.get("schema_version") != 1:
+    raise RuntimeError(
+        "ERRO: versão incompatível do resultado do notebook 03. "
+        "Execute novamente o notebook 03_superficie_volatilidade."
+    )
+
+metadata_execution_date = datetime.fromisoformat(
+    result_metadata["execution_timestamp"]
+).date()
+if metadata_execution_date != today:
+    raise RuntimeError(
+        "ERRO: a data interna do resultado não corresponde a hoje. "
+        "Execute novamente o notebook 03_superficie_volatilidade."
+    )
+
+frames = {
+    name: pd.read_json(StringIO(bundle_payload(name)), orient="table")
+    for name in required_objects - {"metadata"}
+}
+
+catalog = frames["catalog"]
+prices = frames["prices"]
+options = frames["options"]
+curve = frames["curve"]
+filtered = frames["filtered"]
+iv_data = frames["iv_data"]
+surface_data = frames["surface_data"]
+
+MARKET_DATE = result_metadata["market_date"]
+valuation_date = date.fromisoformat(MARKET_DATE)
+market_folder = project_root / "data" / MARKET_DATE
+
+required_prefixes = ("IN", "IR", "SPRD", "PR")
+complete_market_folders = [
+    folder for folder in (project_root / "data").iterdir()
+    if folder.is_dir()
+    and all(any(folder.glob(f"{prefix}*.zip")) for prefix in required_prefixes)
+]
+if not complete_market_folders:
+    raise RuntimeError("ERRO: não existe nenhuma pasta de mercado completa.")
+
+latest_complete_market_folder = max(complete_market_folders, key=lambda p: p.name)
+if market_folder.name != latest_complete_market_folder.name:
+    raise RuntimeError(
+        "ERRO: o resultado de hoje não usa a última fotografia completa da B3. "
+        f"Resultado do 03: {market_folder.name}; "
+        f"última pasta completa: {latest_complete_market_folder.name}. "
+        "Execute novamente o notebook 03_superficie_volatilidade."
+    )
+
+in_zip = market_folder / result_metadata["in_zip"]
+ir_zip = market_folder / result_metadata["ir_zip"]
+sprd_zip = market_folder / result_metadata["sprd_zip"]
+pr_zip = market_folder / result_metadata["pr_zip"]
+
+spot = float(result_metadata["spot"])
+TARGET_STRIKE = float(result_metadata["target_strike"])
+TARGET_MATURITY = float(result_metadata["target_maturity"])
+target_r = np.array([float(result_metadata["target_r"])])
+target_q = np.array([float(result_metadata["target_q"])])
+target_iv = float(result_metadata["target_iv"])
+interpolation_method = result_metadata["interpolation_method"]
+MIN_TRADES = int(result_metadata["min_trades"])
+MIN_OPEN_INTEREST = int(result_metadata["min_open_interest"])
+MIN_IV = float(result_metadata["min_iv"])
+MAX_IV = float(result_metadata["max_iv"])
+
+valid_spread = (
+    options["best_bid"].notna()
+    & options["best_ask"].notna()
+    & options["best_bid"].gt(0)
+    & options["best_ask"].ge(options["best_bid"])
+)
+
+
+def black_scholes_price(
+    option_type, spot_value, strike, maturity, rate, dividend_yield, volatility
+):
+    sqrt_t = np.sqrt(maturity)
+    d1 = (
+        np.log(spot_value / strike)
+        + (rate - dividend_yield + 0.5 * volatility**2) * maturity
+    ) / (volatility * sqrt_t)
+    d2 = d1 - volatility * sqrt_t
+    discounted_spot = spot_value * np.exp(-dividend_yield * maturity)
+    discounted_strike = strike * np.exp(-rate * maturity)
+    if option_type == "CALL":
+        return float(
+            discounted_spot * norm.cdf(d1)
+            - discounted_strike * norm.cdf(d2)
+        )
+    return float(
+        discounted_strike * norm.cdf(-d2)
+        - discounted_spot * norm.cdf(-d1)
+    )
+
+
+def arbitrage_bounds(row):
+    discounted_spot = spot * np.exp(-row["q"] * row["T"])
+    discounted_strike = row["strike"] * np.exp(-row["r"] * row["T"])
+    if row["option_type"] == "CALL":
+        return max(discounted_spot - discounted_strike, 0.0), discounted_spot
+    return max(discounted_strike - discounted_spot, 0.0), discounted_strike
+
+
+print(f"✓ Resultado carregado: {latest_result_path.name}")
+print(f"✓ Executado hoje às {latest_result_timestamp:%H:%M:%S}")
+print(f"✓ Data de mercado validada: {valuation_date:%d/%m/%Y}")
 
 # COMMAND ----------
 
