@@ -26,6 +26,19 @@
 
 # COMMAND ----------
 
+# DBTITLE 1,Instalar dependências
+# Comentário: verifica se lxml está instalado; se não, instala e reinicia o Python.
+try:
+    import lxml
+    print("✓ lxml já está instalado")
+except ImportError:
+    print("⚠ lxml não encontrado — instalando...")
+    %pip install lxml
+    dbutils.library.restartPython()
+
+# COMMAND ----------
+
+# DBTITLE 1,Executa notebook 03
 # MAGIC %run ./03_superficie_volatilidade
 
 # COMMAND ----------

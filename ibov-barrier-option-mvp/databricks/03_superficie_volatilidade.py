@@ -34,6 +34,18 @@
 
 # COMMAND ----------
 
+# DBTITLE 1,Instalar dependências
+# Comentário: verifica se lxml está instalado; se não, instala e reinicia o Python.
+try:
+    import lxml
+    print("✓ lxml já está instalado")
+except ImportError:
+    print("⚠ lxml não encontrado — instalando...")
+    %pip install lxml
+    dbutils.library.restartPython()
+
+# COMMAND ----------
+
 # Comentário: importa as bibliotecas usadas para XML, curvas, inversão de Black–Scholes e gráficos.
 from datetime import date, timedelta
 from pathlib import Path
@@ -698,3 +710,11 @@ print(
 # MAGIC    volatilidade no strike da opção é uma primeira aproximação, não o modelo final.
 # MAGIC 7. Uma evolução profissional pode usar SVI/SABR, pesos por liquidez e calibração
 # MAGIC    conjunta de calls e puts por preço forward.
+
+# COMMAND ----------
+
+# DBTITLE 1,Marca data de execução
+# Comentário: marca a data de execução deste notebook para evitar re-execuções desnecessárias.
+from datetime import date
+SURFACE_RUN_DATE = date.today()
+print(f"✓ Superfície calculada em {SURFACE_RUN_DATE}")
