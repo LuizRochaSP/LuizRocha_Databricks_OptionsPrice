@@ -5,29 +5,29 @@
 # ///
 # MAGIC %md
 # MAGIC # Curvas de mercado para a opção com barreira no Ibovespa
-# MAGIC 
+# MAGIC
 # MAGIC ## Curva de juros e dividend yield implícito
-# MAGIC 
+# MAGIC
 # MAGIC Este notebook transforma preços do Ibovespa à vista, taxas de juros e futuros de Ibovespa nos dois parâmetros exigidos pelo modelo:
-# MAGIC 
+# MAGIC
 # MAGIC - **r(T):** taxa zero livre de risco para o vencimento da opção;
 # MAGIC - **q(T):** dividend yield ou carry implícito para o mesmo vencimento.
-# MAGIC 
+# MAGIC
 # MAGIC A relação central é:
-# MAGIC 
+# MAGIC
 # MAGIC $$F_{0,T}=S_0e^{(r(T)-q(T))T}$$
-# MAGIC 
+# MAGIC
 # MAGIC Isolando o dividend yield implícito:
-# MAGIC 
+# MAGIC
 # MAGIC $$q(T)=r(T)-\frac{1}{T}\ln\left(\frac{F_{0,T}}{S_0}\right)$$
-# MAGIC 
+# MAGIC
 # MAGIC > Este notebook lê diretamente os arquivos públicos da B3 armazenados em `data/AAAA-MM-DD`. O arquivo **IR** fornece o IBOV à vista e o arquivo **SPRD** fornece os ajustes de DI1 e IND.
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Fluxo do notebook
-# MAGIC 
+# MAGIC
 # MAGIC 1. Definir a data de avaliação e o spot;
 # MAGIC 2. Informar vencimentos, taxas zero e futuros;
 # MAGIC 3. Converter as taxas para capitalização contínua;
@@ -36,9 +36,9 @@
 # MAGIC 6. verificar a reconstrução dos futuros;
 # MAGIC 7. interpolar r(T) e q(T) no prazo da opção;
 # MAGIC 8. enviar os parâmetros ao modelo de barreira.
-# MAGIC 
+# MAGIC
 # MAGIC ## Convenções desta primeira versão
-# MAGIC 
+# MAGIC
 # MAGIC - contagem de tempo: ACT/365;
 # MAGIC - taxa de entrada: efetiva anual;
 # MAGIC - interpolação: linear nas taxas continuamente compostas;
@@ -82,7 +82,7 @@ import pandas as pd
 # COMMAND ----------
 
 # Comentário: escolha aqui a fotografia de mercado; use None para selecionar automaticamente a última pasta completa.
-MARKET_DATE = "2026-09-15"
+MARKET_DATE = None
 
 # Prazo da opção usado adiante no notebook, em anos ACT/365.
 option_maturity = 0.5
@@ -401,17 +401,17 @@ if not excluded_ind.empty:
 
 # MAGIC %md
 # MAGIC # 1. Prazo e conversão da curva de juros
-# MAGIC 
+# MAGIC
 # MAGIC Para cada vencimento i, o prazo ACT/365 é:
-# MAGIC 
+# MAGIC
 # MAGIC $$T_i=\frac{\text{dias corridos entre avaliação e vencimento}}{365}$$
-# MAGIC 
+# MAGIC
 # MAGIC A taxa efetiva anual é convertida para taxa continuamente composta:
-# MAGIC 
+# MAGIC
 # MAGIC $$r_i=\ln(1+r_{i,\mathrm{efetiva}})$$
-# MAGIC 
+# MAGIC
 # MAGIC O fator de desconto é:
-# MAGIC 
+# MAGIC
 # MAGIC $$D(0,T_i)=e^{-r_iT_i}$$
 
 # COMMAND ----------
@@ -457,19 +457,19 @@ display(
 
 # MAGIC %md
 # MAGIC # 2. Extração do carry implícito
-# MAGIC 
+# MAGIC
 # MAGIC Do custo de carregamento:
-# MAGIC 
+# MAGIC
 # MAGIC $$F_{0,T}=S_0e^{(r-q)T}$$
-# MAGIC 
+# MAGIC
 # MAGIC obtemos:
-# MAGIC 
+# MAGIC
 # MAGIC $$q_i=r_i-\frac{\ln(F_{0,T_i}/S_0)}{T_i}$$
-# MAGIC 
+# MAGIC
 # MAGIC Também definimos o carry líquido:
-# MAGIC 
+# MAGIC
 # MAGIC $$b_i=r_i-q_i$$
-# MAGIC 
+# MAGIC
 # MAGIC O modelo de Black–Scholes e o movimento browniano geométrico utilizam exatamente esse carry no drift neutro ao risco.
 
 # COMMAND ----------
@@ -509,15 +509,15 @@ display(
 
 # MAGIC %md
 # MAGIC # 3. Verificação de consistência
-# MAGIC 
+# MAGIC
 # MAGIC Reconstruímos cada futuro usando as curvas calculadas:
-# MAGIC 
+# MAGIC
 # MAGIC $$\widehat F_{0,T_i}=S_0e^{(r_i-q_i)T_i}$$
-# MAGIC 
+# MAGIC
 # MAGIC O erro de reconstrução é:
-# MAGIC 
+# MAGIC
 # MAGIC $$\varepsilon_i=\widehat F_{0,T_i}-F_{0,T_i}$$
-# MAGIC 
+# MAGIC
 # MAGIC Como q foi extraído da própria equação do futuro, o erro deve ser praticamente zero, salvo arredondamento numérico.
 
 # COMMAND ----------
@@ -572,15 +572,15 @@ plt.show()
 
 # MAGIC %md
 # MAGIC # 4. Interpolação para o prazo da opção
-# MAGIC 
+# MAGIC
 # MAGIC A opção pode vencer entre dois vértices disponíveis. Nesta primeira versão, usamos interpolação linear nas taxas contínuas.
-# MAGIC 
+# MAGIC
 # MAGIC Se Ta ≤ T ≤ Tb:
-# MAGIC 
+# MAGIC
 # MAGIC $$r(T)=r(T_a)+\frac{T-T_a}{T_b-T_a}\left[r(T_b)-r(T_a)\right]$$
-# MAGIC 
+# MAGIC
 # MAGIC A mesma expressão é aplicada a q(T).
-# MAGIC 
+# MAGIC
 # MAGIC > Não fazemos extrapolação silenciosa: o prazo da opção precisa estar dentro do intervalo coberto pela curva.
 
 # COMMAND ----------
@@ -656,17 +656,17 @@ print(f"Forward teórico interpolado:  {forward_for_option:,.2f} pontos")
 
 # MAGIC %md
 # MAGIC # 5. Integração com o modelo de barreira
-# MAGIC 
+# MAGIC
 # MAGIC O motor atual recebe parâmetros constantes até o vencimento. Portanto, resumimos cada curva pelo valor interpolado no prazo da opção:
-# MAGIC 
+# MAGIC
 # MAGIC $$r=r(T_{\mathrm{opção}})$$
-# MAGIC 
+# MAGIC
 # MAGIC $$q=q(T_{\mathrm{opção}})$$
-# MAGIC 
+# MAGIC
 # MAGIC A dinâmica usada na simulação passa a ser:
-# MAGIC 
+# MAGIC
 # MAGIC $$\frac{dS_t}{S_t}=(r(T)-q(T))dt+\sigma dW_t^{\mathbb Q}$$
-# MAGIC 
+# MAGIC
 # MAGIC Esta é uma melhora importante em relação à escolha arbitrária de q = 0, mas ainda é uma aproximação. Uma evolução futura permitirá taxas determinísticas variáveis ao longo de cada passo da trajetória.
 
 # COMMAND ----------
@@ -733,22 +733,22 @@ display(
 
 # MAGIC %md
 # MAGIC # 6. Limitações e próximos aprimoramentos
-# MAGIC 
+# MAGIC
 # MAGIC Esta versão já lê spot, DI1 e IND diretamente dos arquivos reais da B3 armazenados no projeto.
-# MAGIC 
+# MAGIC
 # MAGIC Próximas etapas:
-# MAGIC 
+# MAGIC
 # MAGIC 1. substituir o calendário simplificado pelo calendário oficial da B3;
 # MAGIC 2. validar vencimentos contra o cadastro IN;
 # MAGIC 3. aplicar filtros de liquidez aos contratos futuros;
 # MAGIC 4. comparar interpolação em taxas com interpolação em fatores de desconto;
 # MAGIC 5. permitir r(t) e q(t) variáveis ao longo da simulação;
 # MAGIC 6. criar controles de qualidade e alertas de arbitragem.
-# MAGIC 
+# MAGIC
 # MAGIC ## Controle essencial
-# MAGIC 
+# MAGIC
 # MAGIC O preço futuro reconstruído deve permanecer compatível com os dados de entrada:
-# MAGIC 
+# MAGIC
 # MAGIC $$F_{0,T}=S_0e^{(r(T)-q(T))T}$$
-# MAGIC 
+# MAGIC
 # MAGIC A curva agora é construída com dados de mercado, mas ainda depende de convenções simplificadas de calendário e de interpolação.

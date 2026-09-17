@@ -75,7 +75,7 @@ from scipy.stats import norm
 # COMMAND ----------
 
 # Comentário: escolha a fotografia de mercado e os filtros mínimos da amostra.
-MARKET_DATE = "2026-09-15"
+MARKET_DATE = None
 MIN_TRADES = 1
 MIN_OPEN_INTEREST = 1
 MIN_IV = 0.01
@@ -109,8 +109,56 @@ def find_project_root() -> Path:
     raise FileNotFoundError("Não encontrei a raiz contendo as pastas data e src.")
 
 
+# Comentário: localiza a pasta solicitada ou seleciona automaticamente
+# a pasta mais recente que contenha os quatro arquivos necessários.
+
 project_root = find_project_root()
-market_folder = project_root / "data" / MARKET_DATE
+data_root = project_root / "data"
+
+required_patterns = (
+    "IN*.zip",
+    "IR*.zip",
+    "SPRD*.zip",
+    "PR*.zip",
+)
+
+if MARKET_DATE is None:
+    candidate_folders = sorted(
+        [
+            folder
+            for folder in data_root.iterdir()
+            if folder.is_dir()
+        ],
+        key=lambda folder: folder.name,
+        reverse=True,
+    )
+
+    market_folder = next(
+        (
+            folder
+            for folder in candidate_folders
+            if all(any(folder.glob(pattern)) for pattern in required_patterns)
+        ),
+        None,
+    )
+
+    if market_folder is None:
+        raise FileNotFoundError(
+            "Nenhuma pasta contém simultaneamente os arquivos IN, IR, SPRD e PR."
+        )
+
+    MARKET_DATE = market_folder.name
+
+else:
+    market_folder = data_root / MARKET_DATE
+
+    if not market_folder.exists():
+        raise FileNotFoundError(
+            f"A pasta de mercado não foi encontrada: {market_folder}"
+        )
+
+print("Data de mercado selecionada:", MARKET_DATE)
+print("Pasta selecionada:", market_folder)
 
 
 def one_file(pattern: str) -> Path:
