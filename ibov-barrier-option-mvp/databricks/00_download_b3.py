@@ -34,8 +34,8 @@
 from datetime import date, timedelta
 
 # Data única ou intervalo. Para uma única data, use START_DATE = END_DATE.
-START_DATE = "2026-09-15"
-END_DATE = "2026-09-17"
+START_DATE = "2026-09-18"
+END_DATE = "2026-09-18"
 
 # Sobrescrever datas já baixadas.
 OVERWRITE = False
