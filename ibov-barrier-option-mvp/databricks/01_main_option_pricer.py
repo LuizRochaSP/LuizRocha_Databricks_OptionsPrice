@@ -705,7 +705,7 @@ print(
 # MAGIC ## 8. Persistência dos resultados para validação
 # MAGIC
 # MAGIC O notebook de qualidade não recalcula a superfície. Esta etapa salva um pacote CSV
-# MAGIC datado com os objetos necessários para que o notebook 04 valide exatamente esta execução.
+# MAGIC datado com os objetos necessários para que o notebook 02_validacao_pos_pricing valide exatamente esta execução.
 
 # COMMAND ----------
 
@@ -767,7 +767,7 @@ bundle_rows.extend({
 
 pd.DataFrame(bundle_rows).to_csv(result_path, index=False)
 
-print(f"✓ Resultado do notebook 03 salvo em: {result_path}")
+print(f"✓ Resultado do notebook 01_main_option_pricer salvo em: {result_path}")
 print(f"✓ Data de execução: {execution_timestamp:%d/%m/%Y %H:%M:%S}")
 print(f"✓ Data de mercado: {valuation_date:%d/%m/%Y}")
 

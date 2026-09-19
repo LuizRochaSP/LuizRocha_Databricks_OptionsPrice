@@ -21,14 +21,14 @@
 # MAGIC | `WARN` | resultado utilizável com ressalva e investigação |
 # MAGIC | `FAIL` | falha material; não se deve promover o resultado sem correção |
 # MAGIC
-# MAGIC O notebook `03_superficie_volatilidade` é a fonte única da leitura e transformação
-# MAGIC dos dados. Este notebook exige um resultado gerado pelo 03 na data corrente e interrompe
+# MAGIC O notebook `01_main_option_pricer` é a fonte única da leitura e transformação
+# MAGIC dos dados. Este notebook exige um resultado gerado pelo 01_main_option_pricer na data corrente e interrompe
 # MAGIC imediatamente se esse pré-requisito não for atendido.
 
 # COMMAND ----------
 
-# DBTITLE 1,Carrega a última execução do notebook 03
-# Comentário: interrompe imediatamente se o notebook 03 não tiver gerado resultado hoje.
+# DBTITLE 1,Carrega a última execução do notebook 01_main_option_pricer
+# Comentário: interrompe imediatamente se o notebook 01_main_option_pricer não tiver gerado resultado hoje.
 import json
 import re
 from datetime import date, datetime
@@ -69,8 +69,8 @@ if results_root.exists():
 
 if not result_candidates:
     raise RuntimeError(
-        "ERRO: nenhum resultado do notebook 03 foi encontrado. "
-        "Execute primeiro o notebook 03_superficie_volatilidade."
+        "ERRO: nenhum resultado do notebook 01_main_option_pricer foi encontrado. "
+        "Execute primeiro o notebook 01_main_option_pricer."
     )
 
 latest_result_timestamp, latest_result_path = max(
@@ -80,9 +80,9 @@ today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
 
 if latest_result_timestamp.date() != today:
     raise RuntimeError(
-        "ERRO: o notebook 03 ainda não foi executado hoje. "
+        "ERRO: o notebook 01_main_option_pricer ainda não foi executado hoje. "
         f"Último resultado disponível: {latest_result_timestamp:%d/%m/%Y %H:%M:%S}. "
-        "Execute o notebook 03_superficie_volatilidade antes do notebook 04."
+        "Execute o notebook 01_main_option_pricer antes do notebook 02_validacao_pos_pricing."
     )
 
 result_bundle = pd.read_csv(latest_result_path)
@@ -94,8 +94,8 @@ available_objects = set(result_bundle["object_name"])
 missing_objects = sorted(required_objects - available_objects)
 if missing_objects:
     raise RuntimeError(
-        "ERRO: o resultado mais recente do notebook 03 está incompleto. "
-        f"Objetos ausentes: {missing_objects}. Execute novamente o notebook 03."
+        "ERRO: o resultado mais recente do notebook 01_main_option_pricer está incompleto. "
+        f"Objetos ausentes: {missing_objects}. Execute novamente o notebook 01_main_option_pricer."
     )
 
 
@@ -103,7 +103,7 @@ def bundle_payload(name: str) -> str:
     rows = result_bundle.loc[result_bundle["object_name"].eq(name), "payload_json"]
     if len(rows) != 1:
         raise RuntimeError(
-            f"ERRO: objeto {name!r} ausente ou duplicado no resultado do notebook 03."
+            f"ERRO: objeto {name!r} ausente ou duplicado no resultado do notebook 01_main_option_pricer."
         )
     return rows.iloc[0]
 
@@ -111,8 +111,8 @@ def bundle_payload(name: str) -> str:
 result_metadata = json.loads(bundle_payload("metadata"))
 if result_metadata.get("schema_version") != 1:
     raise RuntimeError(
-        "ERRO: versão incompatível do resultado do notebook 03. "
-        "Execute novamente o notebook 03_superficie_volatilidade."
+        "ERRO: versão incompatível do resultado do notebook 01_main_option_pricer. "
+        "Execute novamente o notebook 01_main_option_pricer."
     )
 
 metadata_execution_date = datetime.fromisoformat(
@@ -121,7 +121,7 @@ metadata_execution_date = datetime.fromisoformat(
 if metadata_execution_date != today:
     raise RuntimeError(
         "ERRO: a data interna do resultado não corresponde a hoje. "
-        "Execute novamente o notebook 03_superficie_volatilidade."
+        "Execute novamente o notebook 01_main_option_pricer."
     )
 
 frames = {
@@ -154,9 +154,9 @@ latest_complete_market_folder = max(complete_market_folders, key=lambda p: p.nam
 if market_folder.name != latest_complete_market_folder.name:
     raise RuntimeError(
         "ERRO: o resultado de hoje não usa a última fotografia completa da B3. "
-        f"Resultado do 03: {market_folder.name}; "
+        f"Resultado do 01_main_option_pricer: {market_folder.name}; "
         f"última pasta completa: {latest_complete_market_folder.name}. "
-        "Execute novamente o notebook 03_superficie_volatilidade."
+        "Execute novamente o notebook 01_main_option_pricer."
     )
 
 in_zip = market_folder / result_metadata["in_zip"]

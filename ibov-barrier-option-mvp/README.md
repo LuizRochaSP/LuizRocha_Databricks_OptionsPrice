@@ -53,14 +53,41 @@ Para uma execução rápida:
 python -m ibov_barrier.cli --paths 100000 --seed 42
 ```
 
-## Estrutura
+## Estrutura do Projeto
 
-```text
-src/ibov_barrier/pricing.py       motor de precificação e gregas
-src/ibov_barrier/cli.py           exemplo executável
-databricks/01_barrier_pricing.py  notebook importável no Databricks
-tests/test_pricing.py              testes de consistência financeira (unittest)
+### Fluxo operacional diário
+
+Notebooks para execução operacional (ordem de execução):
+
+1. **`00_coleta_dados_b3.py`** — Download automático dos arquivos diários da B3 (IN, IR, PR, SPRD)
+2. **`01_main_option_pricer.py`** — Pipeline principal: leitura de dados B3, construção de curvas de mercado, superfície de volatilidade implícita e geração do resultado diário (`RESULTS_superficieVol_YYYYMMDD_HHMMSS.csv`)
+3. **`02_validacao_pos_pricing.py`** — Validação de qualidade dos dados e resultados do pricer. Exige execução do `01_main_option_pricer` no mesmo dia.
+
+### Material explicativo e de desenvolvimento
+
+Notebooks de referência (não precisam ser executados no fluxo operacional):
+
+- **`caderno_equacoes_completo.py`** — Referência completa de equações e fundamentos teóricos
+- **`caderno_equacoes_barrier_pricing.py`** — Monte Carlo para opções com barreira, variáveis de controle, Brownian Bridge
+- **`caderno_equacoes_curvas_mercado.py`** — Construção de curvas DI e dividend yield implícito
+
+### Saída do pipeline
+
+O notebook `01_main_option_pricer` gera e salva automaticamente o arquivo:
+
 ```
+/Workspace/Users/<username>/ibov-barrier-results/RESULTS_superficieVol_YYYYMMDD_HHMMSS.csv
+```
+
+Este arquivo contém:
+- Metadata da execução (spot, target strike/maturity, taxas r/q, volatilidade interpolada)
+- Catálogo de opções, preços, curvas, filtros aplicados, volatilidades implícitas e pontos da superfície
+
+O notebook `02_validacao_pos_pricing`:
+- Lê automaticamente o resultado mais recente
+- Valida que foi gerado **hoje**
+- Verifica integridade dos dados, curvas, preços e superfície
+- Interrompe a execução se o `01_main_option_pricer` não foi executado no dia corrente
 
 ## Validações implementadas
 
@@ -72,8 +99,8 @@ tests/test_pricing.py              testes de consistência financeira (unittest)
 
 ## Próximas etapas
 
-1. Calibrar a curva DI e o carry implícito com futuro de Ibovespa.
-2. Calibrar volatilidade pela superfície de opções.
-3. Acrescentar fórmula fechada de Reiner–Rubinstein como benchmark.
-4. Implementar rebate, knock-in, up-and-out e paridade in/out.
-5. Gerar P&L explain, cenários de estresse e tabelas Delta para Databricks.
+1. ✅ Calibrar a curva DI e o carry implícito com futuro de Ibovespa
+2. ✅ Calibrar volatilidade pela superfície de opções
+3. Acrescentar fórmula fechada de Reiner–Rubinstein como benchmark
+4. Implementar rebate, knock-in, up-and-out e paridade in/out
+5. Gerar P&L explain, cenários de estresse e tabelas Delta para Databricks
