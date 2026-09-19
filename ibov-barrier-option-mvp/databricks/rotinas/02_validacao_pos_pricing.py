@@ -27,6 +27,27 @@
 
 # COMMAND ----------
 
+# Verifica se o lxml está disponível; instala somente se necessário.
+import importlib.util
+import subprocess
+import sys
+
+if importlib.util.find_spec("lxml") is None:
+    print("lxml não encontrado. Instalando...")
+    subprocess.check_call([
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "lxml>=6.0",
+    ])
+    importlib.invalidate_caches()
+    print("lxml instalado com sucesso.")
+else:
+    print("lxml já está instalado.")
+
+# COMMAND ----------
+
 # DBTITLE 1,Carrega a última execução do notebook 01_main_option_pricer
 # Comentário: interrompe imediatamente se o notebook 01_main_option_pricer não tiver gerado resultado hoje.
 import json

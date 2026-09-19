@@ -34,6 +34,27 @@
 
 # COMMAND ----------
 
+# Verifica se o lxml está disponível; instala somente se necessário.
+import importlib.util
+import subprocess
+import sys
+
+if importlib.util.find_spec("lxml") is None:
+    print("lxml não encontrado. Instalando...")
+    subprocess.check_call([
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "lxml>=6.0",
+    ])
+    importlib.invalidate_caches()
+    print("lxml instalado com sucesso.")
+else:
+    print("lxml já está instalado.")
+
+# COMMAND ----------
+
 # Comentário: importa as bibliotecas usadas para XML, curvas, inversão de Black–Scholes e gráficos.
 from datetime import date, timedelta
 from pathlib import Path
@@ -770,4 +791,3 @@ pd.DataFrame(bundle_rows).to_csv(result_path, index=False)
 print(f"✓ Resultado do notebook 01_main_option_pricer salvo em: {result_path}")
 print(f"✓ Data de execução: {execution_timestamp:%d/%m/%Y %H:%M:%S}")
 print(f"✓ Data de mercado: {valuation_date:%d/%m/%Y}")
-
