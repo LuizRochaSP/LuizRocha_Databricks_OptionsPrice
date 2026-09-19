@@ -55,21 +55,35 @@ python -m ibov_barrier.cli --paths 100000 --seed 42
 
 ## Estrutura do Projeto
 
-### Fluxo operacional diário
+Os notebooks estão organizados em duas subpastas dentro de `databricks/`:
+
+```text
+databricks/
+├── rotinas/                        # fluxo operacional diário
+│   ├── 00_coleta_dados_b3.py
+│   ├── 01_main_option_pricer.py
+│   └── 02_validacao_pos_pricing.py
+└── cadernos/                       # material explicativo (não operacional)
+    ├── caderno_equacoes_completo.py
+    ├── caderno_equacoes_barrier_pricing.py
+    └── caderno_equacoes_curvas_mercado.py
+```
+
+### Fluxo operacional diário (`databricks/rotinas/`)
 
 Notebooks para execução operacional (ordem de execução):
 
-1. **`00_coleta_dados_b3.py`** — Download automático dos arquivos diários da B3 (IN, IR, PR, SPRD)
-2. **`01_main_option_pricer.py`** — Pipeline principal: leitura de dados B3, construção de curvas de mercado, superfície de volatilidade implícita e geração do resultado diário (`RESULTS_superficieVol_YYYYMMDD_HHMMSS.csv`)
-3. **`02_validacao_pos_pricing.py`** — Validação de qualidade dos dados e resultados do pricer. Exige execução do `01_main_option_pricer` no mesmo dia.
+1. **`rotinas/00_coleta_dados_b3.py`** — Download automático dos arquivos diários da B3 (IN, IR, PR, SPRD)
+2. **`rotinas/01_main_option_pricer.py`** — Pipeline principal: leitura de dados B3, construção de curvas de mercado, superfície de volatilidade implícita e geração do resultado diário (`RESULTS_superficieVol_YYYYMMDD_HHMMSS.csv`)
+3. **`rotinas/02_validacao_pos_pricing.py`** — Validação de qualidade dos dados e resultados do pricer. Exige execução do `rotinas/01_main_option_pricer` no mesmo dia.
 
-### Material explicativo e de desenvolvimento
+### Material explicativo e de desenvolvimento (`databricks/cadernos/`)
 
 Notebooks de referência (não precisam ser executados no fluxo operacional):
 
-- **`caderno_equacoes_completo.py`** — Referência completa de equações e fundamentos teóricos
-- **`caderno_equacoes_barrier_pricing.py`** — Monte Carlo para opções com barreira, variáveis de controle, Brownian Bridge
-- **`caderno_equacoes_curvas_mercado.py`** — Construção de curvas DI e dividend yield implícito
+- **`cadernos/caderno_equacoes_completo.py`** — Referência completa de equações e fundamentos teóricos
+- **`cadernos/caderno_equacoes_barrier_pricing.py`** — Monte Carlo para opções com barreira, variáveis de controle, Brownian Bridge
+- **`cadernos/caderno_equacoes_curvas_mercado.py`** — Construção de curvas DI e dividend yield implícito
 
 ### Saída do pipeline
 
