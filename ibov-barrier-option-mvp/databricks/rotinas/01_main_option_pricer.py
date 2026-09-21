@@ -81,6 +81,19 @@ MAX_IV = 2.00
 TARGET_STRIKE = 155_000.0
 TARGET_MATURITY = 0.5
 
+# --- Parâmetros configuráveis do MVP: barreira e simulação MC ---
+# Barreira down-and-out (pontos do IBOV). Deve ser positiva e inferior ao spot.
+TARGET_BARRIER = 140_000.0
+# Número de caminhos de Monte Carlo (mais caminhos = menor erro-padrão).
+MC_PATHS = 100_000
+# Número de passos discretos no caminho (resolução temporal da simulação).
+MC_STEPS = 126
+# Semente fixa para reprodutibilidade dos resultados.
+MC_SEED = 42
+# Método de monitoramento: "brownian_bridge" detecta cruzamentos entre passos;
+# "discrete" verifica somente nos pontos discretos.
+MC_MONITORING = "brownian_bridge"
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -175,6 +188,22 @@ display(pd.DataFrame({
     "fonte": ["IN", "IR", "SPRD", "PR"],
     "arquivo": [in_zip.name, ir_zip.name, sprd_zip.name, pr_zip.name],
 }))
+
+# COMMAND ----------
+
+# DBTITLE 1,Importação do motor de barrier pricing
+# Comentário: torna o diretório src/ importável sem reinstalar o pacote.
+import sys
+
+SRC_PATH = project_root / "src"
+if str(SRC_PATH) not in sys.path:
+    sys.path.insert(0, str(SRC_PATH))
+
+# Importa somente as classes e funções necessárias do motor centralizado.
+from ibov_barrier import BarrierContract, MarketData, price_down_and_out_call
+
+print(f"Motor de precificação importado de: {SRC_PATH}")
+print("API disponível: MarketData, BarrierContract, price_down_and_out_call")
 
 # COMMAND ----------
 
@@ -722,6 +751,192 @@ print(
 
 # COMMAND ----------
 
+# DBTITLE 1,Precificação final da opção com barreira
+# MAGIC %md
+# MAGIC ## 7. Precificação final da opção com barreira
+# MAGIC
+# MAGIC Os parâmetros de mercado (spot, taxa livre de risco, dividend yield e volatilidade
+# MAGIC implícita) foram obtidos das publicações da B3. A call vanilla europeia serve
+# MAGIC como benchmark de valor. A down-and-out call é precificada por Monte Carlo com
+# MAGIC variável de controle (vanilla). O monitoramento Brownian Bridge trata cruzamentos
+# MAGIC da barreira entre datas discretas, aproximando o monitoramento contínuo. O modelo
+# MAGIC utiliza semente fixa para reprodutibilidade, e o resultado inclui erro-padrão e
+# MAGIC intervalo de confiança a 95%.
+
+# COMMAND ----------
+
+# DBTITLE 1,Construção e precificação da barreira
+# Comentário: constrói os objetos MarketData e BarrierContract com os valores
+# calculados pelo notebook a partir dos dados da B3.
+market = MarketData(
+    spot=float(spot),
+    rate=float(target_r[0]),
+    dividend_yield=float(target_q[0]),
+    volatility=float(target_iv),
+)
+
+contract = BarrierContract(
+    strike=TARGET_STRIKE,
+    barrier=TARGET_BARRIER,
+    maturity=TARGET_MATURITY,
+)
+
+print(f"MarketData: spot={market.spot:,.2f}, r={market.rate:.4%}, q={market.dividend_yield:.4%}, σ={market.volatility:.4%}")
+print(f"BarrierContract: K={contract.strike:,.2f}, H={contract.barrier:,.2f}, T={contract.maturity:.4f}")
+
+# Precifica a down-and-out call por Monte Carlo com Brownian Bridge.
+barrier_result = price_down_and_out_call(
+    market,
+    contract,
+    paths=MC_PATHS,
+    steps=MC_STEPS,
+    seed=MC_SEED,
+    monitoring=MC_MONITORING,
+)
+
+print(f"\n✓ Precificação concluída em {MC_PATHS:,} caminhos × {MC_STEPS} passos")
+print(f"  Preço vanilla (BS):      {barrier_result.vanilla_price:,.2f}")
+print(f"  Preço down-and-out (MC): {barrier_result.price:,.2f}")
+print(f"  Erro-padrão:             {barrier_result.standard_error:,.2f}")
+print(f"  IC 95%: [{barrier_result.ci_low:,.2f}, {barrier_result.ci_high:,.2f}]")
+print(f"  P(knock-out):            {barrier_result.knock_out_probability:.4%}")
+
+# COMMAND ----------
+
+# DBTITLE 1,Validação dos resultados da barreira
+# Comentário: controles mínimos antes de persistir o resultado.
+import math
+
+validation_errors = []
+
+# Todos os inputs devem ser finitos.
+for name_, value in [
+    ("spot", market.spot),
+    ("rate", market.rate),
+    ("dividend_yield", market.dividend_yield),
+    ("volatility", market.volatility),
+    ("strike", contract.strike),
+    ("barrier", contract.barrier),
+    ("maturity", contract.maturity),
+]:
+    if not math.isfinite(value):
+        validation_errors.append(f"{name_} não é finito: {value}")
+
+# Barreira deve ser positiva e inferior ao spot.
+if TARGET_BARRIER <= 0:
+    validation_errors.append(f"TARGET_BARRIER deve ser positivo: {TARGET_BARRIER}")
+if TARGET_BARRIER >= spot:
+    validation_errors.append(f"TARGET_BARRIER ({TARGET_BARRIER}) deve ser inferior ao spot ({spot:,.2f})")
+
+# Preço com barreira deve ser finito e não negativo.
+if not math.isfinite(barrier_result.price):
+    validation_errors.append(f"Preço com barreira não é finito: {barrier_result.price}")
+if barrier_result.price < 0:
+    validation_errors.append(f"Preço com barreira é negativo: {barrier_result.price}")
+
+# Preço vanilla deve ser finito e não negativo.
+if not math.isfinite(barrier_result.vanilla_price):
+    validation_errors.append(f"Preço vanilla não é finito: {barrier_result.vanilla_price}")
+if barrier_result.vanilla_price < 0:
+    validation_errors.append(f"Preço vanilla é negativo: {barrier_result.vanilla_price}")
+
+# Preço com barreira não deve superar o vanilla além de tolerância numérica.
+# Tolerância: 5 erros-padrão (justificado pela variância do MC com variável de controle).
+tolerance = 5.0 * barrier_result.standard_error if barrier_result.standard_error > 0 else 1.0
+if barrier_result.price > barrier_result.vanilla_price + tolerance:
+    validation_errors.append(
+        f"Preço com barreira ({barrier_result.price:,.2f}) supera o vanilla "
+        f"({barrier_result.vanilla_price:,.2f}) além da tolerância ({tolerance:,.2f})"
+    )
+
+# Erro-padrão deve ser finito e não negativo.
+if not math.isfinite(barrier_result.standard_error):
+    validation_errors.append(f"Erro-padrão não é finito: {barrier_result.standard_error}")
+if barrier_result.standard_error < 0:
+    validation_errors.append(f"Erro-padrão é negativo: {barrier_result.standard_error}")
+
+# Probabilidade de knock-out deve estar em [0, 1].
+if not (0.0 <= barrier_result.knock_out_probability <= 1.0):
+    validation_errors.append(
+        f"P(knock-out) fora de [0,1]: {barrier_result.knock_out_probability}"
+    )
+
+# IC deve conter o preço.
+if not (barrier_result.ci_low <= barrier_result.price <= barrier_result.ci_high):
+    validation_errors.append(
+        f"Preço ({barrier_result.price:,.2f}) fora do IC [{barrier_result.ci_low:,.2f}, {barrier_result.ci_high:,.2f}]"
+    )
+
+if validation_errors:
+    print("❌ VALIDAÇÃO FALHOU — não persistindo o resultado:")
+    for error in validation_errors:
+        print(f"   • {error}")
+    raise ValueError(f"{len(validation_errors)} erro(s) de validação. Veja acima.")
+else:
+    print("✓ Todas as validações passaram. Resultado pronto para persistência.")
+
+# COMMAND ----------
+
+# DBTITLE 1,Tabela resumo da precificação
+# Comentário: tabela final com todos os parâmetros e resultados da precificação.
+barrier_discount_abs = barrier_result.vanilla_price - barrier_result.price
+barrier_discount_pct = (
+    barrier_discount_abs / barrier_result.vanilla_price
+    if barrier_result.vanilla_price > 0 else 0.0
+)
+
+summary_table = pd.DataFrame([{
+    "data_mercado": MARKET_DATE,
+    "spot": spot,
+    "strike": TARGET_STRIKE,
+    "barreira": TARGET_BARRIER,
+    "prazo_anos": TARGET_MATURITY,
+    "r": target_r[0],
+    "q": target_q[0],
+    "forward": target_forward,
+    "volatilidade": target_iv,
+    "preco_vanilla": barrier_result.vanilla_price,
+    "preco_down_and_out": barrier_result.price,
+    "desconto_barreira_abs": barrier_discount_abs,
+    "desconto_barreira_pct": barrier_discount_pct,
+    "prob_knock_out": barrier_result.knock_out_probability,
+    "erro_padrao": barrier_result.standard_error,
+    "ic_inf_95": barrier_result.ci_low,
+    "ic_sup_95": barrier_result.ci_high,
+    "num_caminhos": MC_PATHS,
+    "num_passos": MC_STEPS,
+    "seed": MC_SEED,
+    "monitoramento": MC_MONITORING,
+}])
+
+display(
+    summary_table.style.format({
+        "spot": "{:,.2f}",
+        "strike": "{:,.2f}",
+        "barreira": "{:,.2f}",
+        "prazo_anos": "{:.4f}",
+        "r": "{:.4%}",
+        "q": "{:.4%}",
+        "forward": "{:,.2f}",
+        "volatilidade": "{:.4%}",
+        "preco_vanilla": "{:,.2f}",
+        "preco_down_and_out": "{:,.2f}",
+        "desconto_barreira_abs": "{:,.2f}",
+        "desconto_barreira_pct": "{:.2%}",
+        "prob_knock_out": "{:.4%}",
+        "erro_padrao": "{:,.2f}",
+        "ic_inf_95": "{:,.2f}",
+        "ic_sup_95": "{:,.2f}",
+        "num_caminhos": "{:,}",
+        "num_passos": "{:,}",
+        "seed": "{}",
+    })
+)
+
+print("\nTabela resumo exibida acima.")
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## 8. Persistência dos resultados para validação
 # MAGIC
@@ -730,6 +945,7 @@ print(
 
 # COMMAND ----------
 
+# DBTITLE 1,Persistência dos resultados
 # Comentário: salva os resultados fora da Git Folder, com data e hora de execução de São Paulo.
 import json
 from datetime import datetime
@@ -785,6 +1001,51 @@ bundle_rows.extend({
     "object_type": "dataframe",
     "payload_json": frame.reset_index(drop=True).to_json(orient="table", date_format="iso"),
 } for name, frame in result_frames.items())
+
+# --- Seção pricing_result: metadados da precificação da barreira ---
+pricing_result = {
+    "contract": {
+        "strike": float(TARGET_STRIKE),
+        "barrier": float(TARGET_BARRIER),
+        "maturity": float(TARGET_MATURITY),
+    },
+    "market": {
+        "spot": float(spot),
+        "rate": float(target_r[0]),
+        "dividend_yield": float(target_q[0]),
+        "volatility": float(target_iv),
+        "forward": float(target_forward),
+        "interpolation_method": interpolation_method,
+    },
+    "vanilla_price": float(barrier_result.vanilla_price),
+    "barrier_price": float(barrier_result.price),
+    "barrier_discount_abs": float(barrier_discount_abs),
+    "barrier_discount_pct": float(barrier_discount_pct),
+    "knock_out_probability": float(barrier_result.knock_out_probability),
+    "standard_error": float(barrier_result.standard_error),
+    "ci_low_95": float(barrier_result.ci_low),
+    "ci_high_95": float(barrier_result.ci_high),
+}
+bundle_rows.append({
+    "object_name": "pricing_result",
+    "object_type": "json",
+    "payload_json": json.dumps(pricing_result, ensure_ascii=False),
+})
+
+# --- Seção simulation_diagnostics: parâmetros da simulação MC ---
+simulation_diagnostics = {
+    "paths": int(MC_PATHS),
+    "steps": int(MC_STEPS),
+    "seed": int(MC_SEED),
+    "monitoring": MC_MONITORING,
+    "execution_timestamp": execution_timestamp.isoformat(),
+    "market_date": MARKET_DATE,
+}
+bundle_rows.append({
+    "object_name": "simulation_diagnostics",
+    "object_type": "json",
+    "payload_json": json.dumps(simulation_diagnostics, ensure_ascii=False),
+})
 
 pd.DataFrame(bundle_rows).to_csv(result_path, index=False)
 
