@@ -961,7 +961,7 @@ result_filename = (
 result_path = results_root / result_filename
 
 result_metadata = {
-    "schema_version": 1,
+    "schema_version": 2,
     "execution_timestamp": execution_timestamp.isoformat(),
     "market_date": MARKET_DATE,
     "spot": float(spot),

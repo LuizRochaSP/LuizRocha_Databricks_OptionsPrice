@@ -130,7 +130,7 @@ def bundle_payload(name: str) -> str:
 
 
 result_metadata = json.loads(bundle_payload("metadata"))
-if result_metadata.get("schema_version") != 1:
+if result_metadata.get("schema_version") != 2:
     raise RuntimeError(
         "ERRO: versão incompatível do resultado do notebook 01_main_option_pricer. "
         "Execute novamente o notebook 01_main_option_pricer."
@@ -242,7 +242,6 @@ print(f"✓ Data de mercado validada: {valuation_date:%d/%m/%Y}")
 # COMMAND ----------
 
 # Comentário: configura tolerâncias transparentes dos controles de qualidade.
-STRICT_MODE = False
 MAX_RELATIVE_SPREAD = 0.30
 MAX_REPRICING_ERROR = 0.01
 MAX_PARITY_ERROR_PCT_SPOT = 0.005
@@ -711,18 +710,17 @@ display(smile_coverage.style.format({
 
 # DBTITLE 1,Seção 9 — Validação da barreira
 # MAGIC %md
-# MAGIC ## 9. Validação independente da precificação com barreira
+# MAGIC ## 9. Validação e replay determinístico da precificação com barreira
 # MAGIC
 # MAGIC Esta seção lê os resultados de `pricing_result` e `simulation_diagnostics`
 # MAGIC persistidos pelo notebook 01, valida domínios, reconcilia aritmética,
-# MAGIC reprecifica independentemente com o motor oficial `ibov_barrier.pricing` e
+# MAGIC repete deterministicamente o cálculo com o motor oficial `ibov_barrier.pricing` e
 # MAGIC consolida tudo em um painel de controles financeiros. Os controles abaixo são
 # MAGIC adicionados ao mesmo `quality_checks` usado pela superfície de volatilidade,
 # MAGIC garantindo uma decisão final unificada.
 
 # COMMAND ----------
 
-# DBTITLE 1,Dependência e leitura (A/B)
 # DBTITLE 1,Dependência e leitura das seções de barreira (A/B)
 # Comentário: localiza o arquivo de resultado mais recente do notebook 01,
 # já carregado pela célula de dependência. Desserializa pricing_result e
@@ -819,7 +817,6 @@ print(f"  Chaves em simulation_diagnostics: {list(simulation_diagnostics_data.ke
 
 # COMMAND ----------
 
-# DBTITLE 1,Validações de domínio (C)
 # DBTITLE 1,Validações de presença e domínio (C)
 # Comentário: verifica presença, finitude e domínio de todos os campos persistidos.
 import math
@@ -831,6 +828,64 @@ sd = simulation_diagnostics_data
 # Mapeia todos os campos esperados.
 pr_contract = pr.get("contract", {})
 pr_market = pr.get("market", {})
+
+# Reconcilia as três representações persistidas para detectar divergências internas.
+_CROSS_TOL = 1e-10
+_cross_pairs = [
+    ("spot", result_metadata.get("spot"), pr_market.get("spot")),
+    ("strike", result_metadata.get("target_strike"), pr_contract.get("strike")),
+    ("maturity", result_metadata.get("target_maturity"), pr_contract.get("maturity")),
+    ("rate", result_metadata.get("target_r"), pr_market.get("rate")),
+    ("dividend_yield", result_metadata.get("target_q"), pr_market.get("dividend_yield")),
+    ("volatility", result_metadata.get("target_iv"), pr_market.get("volatility")),
+]
+for _field, _metadata_value, _pricing_value in _cross_pairs:
+    try:
+        _cross_diff = abs(float(_metadata_value) - float(_pricing_value))
+        _cross_ok = math.isfinite(_cross_diff) and _cross_diff <= _CROSS_TOL
+    except (TypeError, ValueError):
+        _cross_diff = float("nan")
+        _cross_ok = False
+    add_barrier_check(
+        "Consistência interna", f"metadata × pricing_result: {_field}",
+        f"metadata={_metadata_value}; pricing={_pricing_value}",
+        "valores idênticos", f"{_CROSS_TOL:.0e}",
+        "PASS" if _cross_ok else "FAIL",
+        f"Diferença={_cross_diff}" if _cross_ok else "As seções persistidas divergem.",
+    )
+
+_market_date_ok = result_metadata.get("market_date") == sd.get("market_date")
+add_barrier_check(
+    "Consistência interna", "market_date entre seções",
+    f"metadata={result_metadata.get('market_date')}; diagnostics={sd.get('market_date')}",
+    "datas idênticas", "N/A", "PASS" if _market_date_ok else "FAIL",
+    "Datas de mercado conciliadas." if _market_date_ok else "Datas de mercado divergentes.",
+)
+
+_timestamp_ok = result_metadata.get("execution_timestamp") == sd.get("execution_timestamp")
+add_barrier_check(
+    "Consistência interna", "execution_timestamp entre seções",
+    f"metadata={result_metadata.get('execution_timestamp')}; diagnostics={sd.get('execution_timestamp')}",
+    "timestamps idênticos", "N/A", "PASS" if _timestamp_ok else "FAIL",
+    "Timestamps conciliados." if _timestamp_ok else "Timestamps divergentes.",
+)
+
+try:
+    _internal_timestamp = datetime.fromisoformat(str(sd.get("execution_timestamp")))
+    _filename_delta = abs(
+        (_internal_timestamp.replace(tzinfo=None) - latest_result_timestamp).total_seconds()
+    )
+    _filename_timestamp_ok = _filename_delta < 1.0
+except (TypeError, ValueError):
+    _filename_delta = float("nan")
+    _filename_timestamp_ok = False
+add_barrier_check(
+    "Consistência interna", "timestamp do nome × conteúdo",
+    f"diferença={_filename_delta} segundo(s)", "diferença < 1 segundo", "1s",
+    "PASS" if _filename_timestamp_ok else "FAIL",
+    "Nome e conteúdo identificam a mesma execução."
+    if _filename_timestamp_ok else "Timestamp do nome diverge do conteúdo.",
+)
 
 barrier_fields = {
     "market_date": sd.get("market_date"),
@@ -1019,7 +1074,6 @@ print("✓ Validações de presença e domínio concluídas.")
 # COMMAND ----------
 
 # DBTITLE 1,Reconciliação aritmética (D)
-# DBTITLE 1,Reconciliação aritmética independente (D)
 # Comentário: recalcula descontos, IC e forward a partir dos valores persistidos,
 # comparando com as figuras armazenadas. Tolerâncias documentadas abaixo.
 # Tolerâncias: 1e-6 para razões/percentuais, 1e-2 para preços (ponto flutuante + arredondamento).
@@ -1120,8 +1174,7 @@ display(reconciliation_table.style.format({
 
 # COMMAND ----------
 
-# DBTITLE 1,Reprecificação independente (E)
-# DBTITLE 1,Reprecificação independente (E)
+# DBTITLE 1,Reexecução determinística (E)
 # Comentário: importa o motor oficial ibov_barrier.pricing, reconstrói os objetos
 # de mercado e contrato a partir dos dados persistidos, e recalcula os preços.
 # Não copia nem reimplementa o motor dentro deste notebook.
@@ -1154,7 +1207,7 @@ print(f"MarketData: spot={_repr_market.spot:,.2f}, r={_repr_market.rate:.6%}, q=
 print(f"BarrierContract: K={_repr_contract.strike:,.2f}, H={_repr_contract.barrier:,.2f}, T={_repr_contract.maturity:.4f}")
 print()
 
-# Reprecifica com os mesmos parâmetros persistidos em simulation_diagnostics.
+# Repete o cálculo com os mesmos parâmetros persistidos em simulation_diagnostics.
 _repr_result = price_down_and_out_call(
     _repr_market,
     _repr_contract,
@@ -1239,27 +1292,17 @@ add_barrier_check(
     "IC reproduzido." if _max_ci_reprice_diff <= _TOL_REPRICE_CI else f"Divergência={_max_ci_reprice_diff:.8f} excede tolerância.",
 )
 
-print("✓ Reprecificação independente concluída.")
+print("✓ Reexecução determinística concluída.")
 
 # COMMAND ----------
 
-# DBTITLE 1,Controles financeiros (F)
 # DBTITLE 1,Controles financeiros (F)
 # Comentário: controles financeiros sobre os preços e a estrutura da barreira.
 # A tolerância estatística para o limite superior é 5× erro-padrão do MC,
 # justificada pela variância do estimador com variável de controle.
 _FIN_TOL_DISCOUNT = 1e-2  # tolerância para desconto absoluto (ponto flutuante)
 
-# 1. 0 <= preço com barreira
-add_barrier_check(
-    "Financeiro", "0 <= preço com barreira",
-    f"{_barrier:,.2f}", "barrier_price >= 0",
-    "N/A",
-    "PASS" if _barrier >= 0 else "FAIL",
-    "Preço com barreira não-negativo." if _barrier >= 0 else "Preço com barreira é negativo.",
-)
-
-# 2. preço com barreira <= preço vanilla + tolerância estatística
+# Preço com barreira <= preço vanilla + tolerância estatística
 _stat_tol = 5.0 * _se if _se > 0 else 1.0
 _upper_limit = _vanilla + _stat_tol
 add_barrier_check(
@@ -1271,7 +1314,7 @@ add_barrier_check(
     "Barreira não supera vanilla além da tolerância estatística." if _barrier <= _upper_limit else "Barreira supera vanilla materialmente.",
 )
 
-# 3. limite inferior do IC <= preço estimado <= limite superior
+# Limite inferior do IC <= preço estimado <= limite superior
 _stored_ci_low_val = float(barrier_fields["ci_low_95"])
 _stored_ci_high_val = float(barrier_fields["ci_high_95"])
 _ic_ok = _stored_ci_low_val <= _barrier <= _stored_ci_high_val
@@ -1284,7 +1327,7 @@ add_barrier_check(
     "Preço dentro do IC 95%." if _ic_ok else "Preço fora do IC 95%.",
 )
 
-# 4. desconto absoluto não negativo (com tolerância numérica)
+# Desconto absoluto não negativo (com tolerância numérica)
 _discount_ok = _recalc_discount_abs >= -_FIN_TOL_DISCOUNT
 add_barrier_check(
     "Financeiro", "desconto absoluto >= 0",
@@ -1295,29 +1338,7 @@ add_barrier_check(
     "Desconto não-negativo." if _discount_ok else "Desconto é negativo além da tolerância.",
 )
 
-# 5. desconto percentual coerente com os preços
-_pct_ok = abs(_recalc_discount_pct - (_recalc_discount_abs / _vanilla if _vanilla > 0 else 0.0)) < _TOL_RATIO
-add_barrier_check(
-    "Financeiro", "desconto percentual coerente",
-    f"{_recalc_discount_pct:.8f}",
-    f"discount_abs / vanilla = {(_recalc_discount_abs / _vanilla if _vanilla > 0 else 0.0):.8f}",
-    f"{_TOL_RATIO:.0e}",
-    "PASS" if _pct_ok else "FAIL",
-    "Desconto percentual coerente." if _pct_ok else "Desconto percentual incoerente.",
-)
-
-# 6. barreira abaixo do spot (já validado em C, mas repetido como controle financeiro)
-_barrier_below_spot = float(pr_contract["barrier"]) < float(pr_market["spot"])
-add_barrier_check(
-    "Financeiro", "barreira < spot",
-    f"{float(pr_contract['barrier']):,.2f} < {float(pr_market['spot']):,.2f}",
-    "barrier < spot",
-    "N/A",
-    "PASS" if _barrier_below_spot else "FAIL",
-    "Barreira abaixo do spot." if _barrier_below_spot else "Barreira acima do spot — inválido para down-and-out.",
-)
-
-# 7. Brownian Bridge identificado corretamente quando configurado
+# Brownian Bridge identificado corretamente quando configurado
 _mon_config = str(sd["monitoring"])
 _bb_ok = (_mon_config == "brownian_bridge") and (_mon_config in {"discrete", "brownian_bridge"})
 add_barrier_check(
@@ -1328,21 +1349,10 @@ add_barrier_check(
     "Brownian Bridge configurado e identificado." if _mon_config == "brownian_bridge" else f"Método {_mon_config} — Brownian Bridge esperado.",
 )
 
-# 8. P(knock-out) compatível com [0,1] (já validado em C, repetido como controle financeiro)
-_ko_ok = 0.0 <= _stored_ko <= 1.0
-add_barrier_check(
-    "Financeiro", "P(knock-out) em [0,1]",
-    f"{_stored_ko:.6%}", "0 <= P(knock-out) <= 1",
-    "N/A",
-    "PASS" if _ko_ok else "FAIL",
-    "Probabilidade em [0,1]." if _ko_ok else "Probabilidade fora de [0,1].",
-)
-
 print("✓ Controles financeiros concluídos.")
 
 # COMMAND ----------
 
-# DBTITLE 1,Diagnósticos da simulação (G)
 # DBTITLE 1,Diagnósticos da simulação (G)
 # Comentário: tabela-resumo com parâmetros da simulação e resultado da reprecificação.
 _se_relative = (_repr_result.standard_error / _repr_result.price * 100) if _repr_result.price > 0 else float("nan")
@@ -1380,7 +1390,6 @@ display(diagnostics_table.style.format({
 
 # COMMAND ----------
 
-# DBTITLE 1,Tabela consolidada (H)
 # DBTITLE 1,Tabela consolidada de controles da barreira (H)
 # Comentário: tabela final com uma linha por controle da barreira.
 barrier_report = pd.DataFrame(barrier_checks)
@@ -1408,8 +1417,8 @@ print(f"\nResumo da barreira: {_barrier_n_pass} PASS, {_barrier_n_warn} WARN, {_
 # MAGIC - **APROVADO COM RESSALVAS:** nenhum `FAIL`, mas há `WARN`;
 # MAGIC - **REPROVADO:** existe ao menos um `FAIL`.
 # MAGIC
-# MAGIC `STRICT_MODE=True` interrompe a execução quando houver falha material. No modo padrão,
-# MAGIC o notebook mostra todo o diagnóstico sem interromper a análise.
+# MAGIC O relatório é exibido por completo e, em seguida, qualquer `FAIL` interrompe a
+# MAGIC execução para impedir que um resultado reprovado seja interpretado como sucesso.
 
 # COMMAND ----------
 
@@ -1458,20 +1467,9 @@ print(f"Data de mercado: {valuation_date:%d/%m/%Y}")
 print(f"Decisão final: {final_decision}")
 print(final_message)
 
-if STRICT_MODE and n_fail:
+if n_fail:
     failed_names = quality_report.loc[quality_report["status"].eq("FAIL"), "controle"].tolist()
     raise AssertionError(f"Controles materiais reprovados: {failed_names}")
-
-# Seção I — Decisão da barreira: sempre interromper em caso de FAIL material.
-_barrier_fail_names = [
-    r["controle"] for r in barrier_checks if r["status"] == "FAIL"
-] if barrier_checks else []
-if _barrier_fail_names:
-    print(f"\n❌ FALHA MATERIAL nos controles da barreira: {_barrier_fail_names}")
-    raise AssertionError(
-        f"Controles da barreira reprovados: {_barrier_fail_names}. "
-        "Uma execução reprovada não pode ser interpretada como sucesso."
-    )
 
 # COMMAND ----------
 
@@ -1485,8 +1483,8 @@ if _barrier_fail_names:
 # MAGIC
 # MAGIC 1. 0 <= V_barreira <= V_vanilla (com tolerância estatística de 5×SE);
 # MAGIC 2. intervalo de confiança e erro-padrão de Monte Carlo;
-# MAGIC 3. reprodutibilidade determinística com semente fixa (reprecificação independente);
-# MAGIC 4. comparação entre monitoramento discreto e Brownian Bridge;
+# MAGIC 3. reprodutibilidade determinística com semente fixa (reexecução do mesmo motor);
+# MAGIC 4. identificação e validação do método de monitoramento configurado;
 # MAGIC 5. reconciliação aritmética de descontos, IC e forward;
 # MAGIC 6. validação de domínio para todos os 22 campos persistidos.
 # MAGIC

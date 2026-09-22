@@ -182,6 +182,42 @@ class PricingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             price_down_and_out_call(MARKET, CONTRACT, paths=1000, steps=10, seed=42, monitoring="invalid")
 
+    def test_non_finite_market_parameters_raise_error(self):
+        """NaN e infinito nos parâmetros de mercado devem ser rejeitados."""
+        invalid_markets = [
+            MarketData(spot=math.nan, rate=0.12, dividend_yield=0.0, volatility=0.22),
+            MarketData(spot=150_000, rate=math.inf, dividend_yield=0.0, volatility=0.22),
+            MarketData(spot=150_000, rate=0.12, dividend_yield=-math.inf, volatility=0.22),
+            MarketData(spot=150_000, rate=0.12, dividend_yield=0.0, volatility=math.nan),
+        ]
+        for market in invalid_markets:
+            with self.subTest(market=market), self.assertRaises(ValueError):
+                price_down_and_out_call(market, CONTRACT, paths=1000, steps=10, seed=42)
+
+    def test_non_finite_contract_parameters_raise_error(self):
+        """NaN e infinito nos parâmetros do contrato devem ser rejeitados."""
+        invalid_contracts = [
+            BarrierContract(strike=math.nan, barrier=120_000, maturity=0.5),
+            BarrierContract(strike=155_000, barrier=math.inf, maturity=0.5),
+            BarrierContract(strike=155_000, barrier=120_000, maturity=math.nan),
+        ]
+        for contract in invalid_contracts:
+            with self.subTest(contract=contract), self.assertRaises(ValueError):
+                price_down_and_out_call(MARKET, contract, paths=1000, steps=10, seed=42)
+
+    def test_black_scholes_rejects_invalid_domain(self):
+        """A função pública Black-Scholes deve rejeitar domínio inválido."""
+        with self.assertRaises(ValueError):
+            black_scholes_call(
+                MarketData(spot=math.nan, rate=0.12, dividend_yield=0.0, volatility=0.22),
+                CONTRACT,
+            )
+        with self.assertRaises(ValueError):
+            black_scholes_call(
+                MarketData(spot=150_000, rate=0.12, dividend_yield=0.0, volatility=-0.01),
+                CONTRACT,
+            )
+
     # ========================================================================
     # 6. Shapes de números externos
     # ========================================================================
@@ -217,6 +253,33 @@ class PricingTests(unittest.TestCase):
             normals=normals, uniforms=uniforms, monitoring="brownian_bridge"
         )
         self.assertTrue(math.isfinite(result.price))
+
+    def test_non_finite_normals_raise_error(self):
+        """Choques normais externos não podem conter NaN ou infinito."""
+        normals = np.zeros((1000, 10))
+        normals[0, 0] = np.nan
+        with self.assertRaises(ValueError):
+            price_down_and_out_call(
+                MARKET, CONTRACT, paths=1000, steps=10, seed=42, normals=normals
+            )
+
+    def test_invalid_uniforms_raise_error(self):
+        """Uniformes externos devem ser finitos e pertencer a [0, 1]."""
+        normals = np.zeros((1000, 10))
+        for invalid_value in (np.nan, -0.01, 1.01):
+            uniforms = np.full((1000, 10), 0.5)
+            uniforms[0, 0] = invalid_value
+            with self.subTest(invalid_value=invalid_value), self.assertRaises(ValueError):
+                price_down_and_out_call(
+                    MARKET,
+                    CONTRACT,
+                    paths=1000,
+                    steps=10,
+                    seed=42,
+                    normals=normals,
+                    uniforms=uniforms,
+                    monitoring="brownian_bridge",
+                )
 
     # ========================================================================
     # 7. Brownian Bridge versus monitoramento discreto
