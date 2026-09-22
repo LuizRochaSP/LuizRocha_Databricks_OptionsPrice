@@ -51,6 +51,7 @@ else:
 # DBTITLE 1,Carrega a última execução do notebook 01_main_option_pricer
 # Comentário: interrompe imediatamente se o notebook 01_main_option_pricer não tiver gerado resultado hoje.
 import json
+import hashlib
 import re
 from datetime import date, datetime
 from io import StringIO
@@ -1470,6 +1471,42 @@ print(final_message)
 if n_fail:
     failed_names = quality_report.loc[quality_report["status"].eq("FAIL"), "controle"].tolist()
     raise AssertionError(f"Controles materiais reprovados: {failed_names}")
+
+# COMMAND ----------
+
+# DBTITLE 1,Persiste evidência de aprovação para o notebook 03
+# Comentário: o notebook de risco só pode consumir o RESULTS exato aprovado aqui.
+validation_timestamp = datetime.now(ZoneInfo("America/Sao_Paulo"))
+results_sha256 = hashlib.sha256(latest_result_path.read_bytes()).hexdigest()
+validation_filename = latest_result_path.name.replace("RESULTS_", "VALIDATION_").replace(".csv", ".json")
+validation_path = results_root / validation_filename
+
+validation_payload = {
+    "schema_version": 1,
+    "validation_timestamp": validation_timestamp.isoformat(),
+    "results_file": latest_result_path.name,
+    "results_sha256": results_sha256,
+    "results_schema_version": int(result_metadata["schema_version"]),
+    "execution_timestamp": result_metadata["execution_timestamp"],
+    "market_date": MARKET_DATE,
+    "decision": final_decision,
+    "approved_for_risk": True,
+    "pass_count": int((quality_report["status"] == "PASS").sum()),
+    "warn_count": n_warn,
+    "fail_count": n_fail,
+    "warnings": quality_report.loc[
+        quality_report["status"].eq("WARN"),
+        ["bloco", "controle", "observado", "critério", "interpretação"],
+    ].to_dict(orient="records"),
+}
+validation_path.write_text(
+    json.dumps(validation_payload, ensure_ascii=False, indent=2),
+    encoding="utf-8",
+)
+
+print(f"✓ Evidência de validação salva em: {validation_path}")
+print(f"✓ RESULTS aprovado para risco: {latest_result_path.name}")
+print(f"✓ SHA-256: {results_sha256}")
 
 # COMMAND ----------
 

@@ -62,11 +62,13 @@ databricks/
 ├── rotinas/                        # fluxo operacional diário
 │   ├── 00_coleta_dados_b3.py
 │   ├── 01_main_option_pricer.py
-│   └── 02_validacao_pos_pricing.py
+│   ├── 02_validacao_pos_pricing.py
+│   └── 03_analise_risco.py
 └── cadernos/                       # material explicativo (não operacional)
     ├── caderno_equacoes_completo.py
     ├── caderno_equacoes_barrier_pricing.py
-    └── caderno_equacoes_curvas_mercado.py
+    ├── caderno_equacoes_curvas_mercado.py
+    └── caderno_equacoes_risco.py
 ```
 
 ### Fluxo operacional diário (`databricks/rotinas/`)
@@ -76,6 +78,7 @@ Notebooks para execução operacional (ordem de execução):
 1. **`rotinas/00_coleta_dados_b3.py`** — Download automático dos arquivos diários da B3 (IN, IR, PR, SPRD)
 2. **`rotinas/01_main_option_pricer.py`** — Pipeline principal: leitura de dados B3, construção de curvas de mercado, superfície de volatilidade implícita e geração do resultado diário (`RESULTS_superficieVol_YYYYMMDD_HHMMSS.csv`)
 3. **`rotinas/02_validacao_pos_pricing.py`** — Validação de qualidade dos dados e resultados do pricer. Exige execução do `rotinas/01_main_option_pricer` no mesmo dia.
+4. **`rotinas/03_analise_risco.py`** — Calcula gregas, DV01, convexidade de taxa, VaR e Expected Shortfall somente para um resultado aprovado pelo notebook 02.
 
 ### Material explicativo e de desenvolvimento (`databricks/cadernos/`)
 
@@ -84,6 +87,7 @@ Notebooks de referência (não precisam ser executados no fluxo operacional):
 - **`cadernos/caderno_equacoes_completo.py`** — Referência completa de equações e fundamentos teóricos
 - **`cadernos/caderno_equacoes_barrier_pricing.py`** — Monte Carlo para opções com barreira, variáveis de controle, Brownian Bridge
 - **`cadernos/caderno_equacoes_curvas_mercado.py`** — Construção de curvas DI e dividend yield implícito
+- **`cadernos/caderno_equacoes_risco.py`** — Convenções e equações de gregas, DV01, convexidade de taxa, VaR e Expected Shortfall
 
 ### Saída do pipeline
 
@@ -107,6 +111,19 @@ O notebook `02_validacao_pos_pricing`:
 - Repete deterministicamente a precificação com o mesmo motor e a mesma seed
 - Consolida controles em `PASS`, `WARN` e `FAIL` e interrompe a execução quando houver qualquer `FAIL`
 - Interrompe a execução se o `01_main_option_pricer` não foi executado no dia corrente
+- Persiste `VALIDATION_superficieVol_YYYYMMDD_HHMMSS.json`, com decisão, contagens de controles e SHA-256 do `RESULTS` aprovado
+
+O notebook `03_analise_risco`:
+- exige `FAIL=0` e decisão `APROVADO` ou `APROVADO COM RESSALVAS`;
+- verifica se a validação corresponde ao mesmo `RESULTS` por nome e SHA-256;
+- calcula Delta, Gamma, Vega, Theta, Rho, DV01 e convexidade de taxa;
+- calcula VaR e Expected Shortfall model-based por aproximação delta-gamma do risco de spot;
+- carrega e exibe as ressalvas de qualidade produzidas pelo notebook 02;
+- persiste `RISK_superficieVol_YYYYMMDD_HHMMSS.json` fora da Git Folder.
+
+> O VaR/ES inicial usa choques lognormais de spot e aproximação delta-gamma. Não é VaR
+> histórico e ainda não inclui choques conjuntos de volatilidade e curva. Cenários e
+> stress testing serão implementados em uma etapa posterior.
 
 ## Validações implementadas
 
