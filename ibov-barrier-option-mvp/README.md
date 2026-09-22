@@ -96,11 +96,16 @@ O notebook `01_main_option_pricer` gera e salva automaticamente o arquivo:
 Este arquivo contém:
 - Metadata da execução (spot, target strike/maturity, taxas r/q, volatilidade interpolada)
 - Catálogo de opções, preços, curvas, filtros aplicados, volatilidades implícitas e pontos da superfície
+- Resultado da call vanilla e da down-and-out, desconto da barreira, probabilidade de knock-out, erro-padrão e IC 95%
+- Diagnósticos da simulação (caminhos, passos, seed, monitoramento, timestamp e data de mercado)
 
 O notebook `02_validacao_pos_pricing`:
 - Lê automaticamente o resultado mais recente
 - Valida que foi gerado **hoje**
 - Verifica integridade dos dados, curvas, preços e superfície
+- Reconcilia `metadata`, `pricing_result` e `simulation_diagnostics`
+- Repete deterministicamente a precificação com o mesmo motor e a mesma seed
+- Consolida controles em `PASS`, `WARN` e `FAIL` e interrompe a execução quando houver qualquer `FAIL`
 - Interrompe a execução se o `01_main_option_pricer` não foi executado no dia corrente
 
 ## Validações implementadas
@@ -110,6 +115,13 @@ O notebook `02_validacao_pos_pricing`:
 - barreira muito baixa converge para a call vanilla;
 - o preço aumenta com o spot e diminui quando a barreira sobe;
 - resultados são reproduzíveis com semente fixa.
+- parâmetros não finitos e arrays aleatórios inválidos são rejeitados pelo motor;
+- metadata, resultado de pricing e diagnóstico da simulação devem ser internamente consistentes;
+- a reexecução determinística deve reproduzir preço, erro-padrão, probabilidade de knock-out e IC.
+
+> A reexecução no notebook de validação comprova integração, persistência e
+> reprodutibilidade. Ela não substitui uma validação independente do modelo. Um benchmark
+> analítico de Reiner–Rubinstein permanece como evolução planejada.
 
 ## Próximas etapas
 

@@ -130,7 +130,7 @@ def bundle_payload(name: str) -> str:
 
 
 result_metadata = json.loads(bundle_payload("metadata"))
-if result_metadata.get("schema_version") != 1:
+if result_metadata.get("schema_version") != 2:
     raise RuntimeError(
         "ERRO: versão incompatível do resultado do notebook 01_main_option_pricer. "
         "Execute novamente o notebook 01_main_option_pricer."
@@ -242,7 +242,6 @@ print(f"✓ Data de mercado validada: {valuation_date:%d/%m/%Y}")
 # COMMAND ----------
 
 # Comentário: configura tolerâncias transparentes dos controles de qualidade.
-STRICT_MODE = False
 MAX_RELATIVE_SPREAD = 0.30
 MAX_REPRICING_ERROR = 0.01
 MAX_PARITY_ERROR_PCT_SPOT = 0.005
@@ -709,6 +708,706 @@ display(smile_coverage.style.format({
 
 # COMMAND ----------
 
+# DBTITLE 1,Seção 9 — Validação da barreira
+# MAGIC %md
+# MAGIC ## 9. Validação e replay determinístico da precificação com barreira
+# MAGIC
+# MAGIC Esta seção lê os resultados de `pricing_result` e `simulation_diagnostics`
+# MAGIC persistidos pelo notebook 01, valida domínios, reconcilia aritmética,
+# MAGIC repete deterministicamente o cálculo com o motor oficial `ibov_barrier.pricing` e
+# MAGIC consolida tudo em um painel de controles financeiros. Os controles abaixo são
+# MAGIC adicionados ao mesmo `quality_checks` usado pela superfície de volatilidade,
+# MAGIC garantindo uma decisão final unificada.
+
+# COMMAND ----------
+
+# DBTITLE 1,Dependência e leitura das seções de barreira (A/B)
+# Comentário: localiza o arquivo de resultado mais recente do notebook 01,
+# já carregado pela célula de dependência. Desserializa pricing_result e
+# simulation_diagnostics, interrompendo com FAIL se houver problema.
+import json as _json_barrier
+
+barrier_checks = []  # lista separada para a tabela consolidada da seção H
+
+
+def add_barrier_check(categoria, controle, observado, esperado, tolerancia, status, mensagem):
+    """Adiciona um controle ao painel de barreira e ao quality_checks unificado."""
+    if status not in {"PASS", "WARN", "FAIL"}:
+        raise ValueError(f"Status inválido: {status}")
+    barrier_checks.append({
+        "categoria": str(categoria),
+        "controle": str(controle),
+        "valor_observado": str(observado),
+        "valor_esperado": str(esperado),
+        "tolerancia": str(tolerancia),
+        "status": status,
+        "mensagem": str(mensagem),
+    })
+    add_check(
+        block=f"Barreira-{categoria}",
+        control=controle,
+        status=status,
+        observed=observado,
+        criterion=str(esperado),
+        detail=mensagem,
+    )
+
+
+# --- Seção A: confirma dependência explícita do notebook 01 ---
+# O arquivo já foi selecionado na célula de carregamento (cell 3).
+# Aqui apenas confirmamos qual arquivo foi usado.
+barrier_result_file = latest_result_path
+barrier_execution_ts = result_metadata["execution_timestamp"]
+barrier_market_date = MARKET_DATE
+
+print(f"Arquivo de resultado analisado: {barrier_result_file.name}")
+print(f"Data de execução do notebook 01: {barrier_execution_ts}")
+print(f"Data de mercado: {barrier_market_date}")
+print()
+
+# --- Seção B: leitura robusta das novas seções ---
+_barrier_read_errors = []
+
+# pricing_result
+_pr_rows = result_bundle.loc[result_bundle["object_name"].eq("pricing_result"), "payload_json"]
+if len(_pr_rows) == 0:
+    _barrier_read_errors.append("Seção pricing_result ausente no arquivo de resultado.")
+    pricing_result_data = None
+elif len(_pr_rows) > 1:
+    _barrier_read_errors.append("Seção pricing_result duplicada no arquivo de resultado.")
+    pricing_result_data = None
+else:
+    try:
+        pricing_result_data = _json_barrier.loads(_pr_rows.iloc[0])
+    except _json_barrier.JSONDecodeError as exc:
+        _barrier_read_errors.append(f"pricing_result contém JSON inválido: {exc}")
+        pricing_result_data = None
+
+# simulation_diagnostics
+_sd_rows = result_bundle.loc[result_bundle["object_name"].eq("simulation_diagnostics"), "payload_json"]
+if len(_sd_rows) == 0:
+    _barrier_read_errors.append("Seção simulation_diagnostics ausente no arquivo de resultado.")
+    simulation_diagnostics_data = None
+elif len(_sd_rows) > 1:
+    _barrier_read_errors.append("Seção simulation_diagnostics duplicada no arquivo de resultado.")
+    simulation_diagnostics_data = None
+else:
+    try:
+        simulation_diagnostics_data = _json_barrier.loads(_sd_rows.iloc[0])
+    except _json_barrier.JSONDecodeError as exc:
+        _barrier_read_errors.append(f"simulation_diagnostics contém JSON inválido: {exc}")
+        simulation_diagnostics_data = None
+
+if _barrier_read_errors:
+    for err in _barrier_read_errors:
+        add_barrier_check(
+            "Dependência", "Leitura das seções",
+            err, "pricing_result e simulation_diagnostics presentes e válidos",
+            "N/A", "FAIL",
+            "Seção ausente ou inválida impede a validação da barreira.",
+        )
+    print("❌ FALHA: Não foi possível ler as seções de barreira.")
+    for err in _barrier_read_errors:
+        print(f"  • {err}")
+    raise RuntimeError(f"{len(_barrier_read_errors)} erro(s) na leitura das seções de barreira.")
+
+print("✓ pricing_result e simulation_diagnostics lidos com sucesso.")
+print(f"  Chaves em pricing_result: {list(pricing_result_data.keys())}")
+print(f"  Chaves em simulation_diagnostics: {list(simulation_diagnostics_data.keys())}")
+
+# COMMAND ----------
+
+# DBTITLE 1,Validações de presença e domínio (C)
+# Comentário: verifica presença, finitude e domínio de todos os campos persistidos.
+import math
+
+# Extrai valores do pricing_result e simulation_diagnostics.
+pr = pricing_result_data
+sd = simulation_diagnostics_data
+
+# Mapeia todos os campos esperados.
+pr_contract = pr.get("contract", {})
+pr_market = pr.get("market", {})
+
+# Reconcilia as três representações persistidas para detectar divergências internas.
+_CROSS_TOL = 1e-10
+_cross_pairs = [
+    ("spot", result_metadata.get("spot"), pr_market.get("spot")),
+    ("strike", result_metadata.get("target_strike"), pr_contract.get("strike")),
+    ("maturity", result_metadata.get("target_maturity"), pr_contract.get("maturity")),
+    ("rate", result_metadata.get("target_r"), pr_market.get("rate")),
+    ("dividend_yield", result_metadata.get("target_q"), pr_market.get("dividend_yield")),
+    ("volatility", result_metadata.get("target_iv"), pr_market.get("volatility")),
+]
+for _field, _metadata_value, _pricing_value in _cross_pairs:
+    try:
+        _cross_diff = abs(float(_metadata_value) - float(_pricing_value))
+        _cross_ok = math.isfinite(_cross_diff) and _cross_diff <= _CROSS_TOL
+    except (TypeError, ValueError):
+        _cross_diff = float("nan")
+        _cross_ok = False
+    add_barrier_check(
+        "Consistência interna", f"metadata × pricing_result: {_field}",
+        f"metadata={_metadata_value}; pricing={_pricing_value}",
+        "valores idênticos", f"{_CROSS_TOL:.0e}",
+        "PASS" if _cross_ok else "FAIL",
+        f"Diferença={_cross_diff}" if _cross_ok else "As seções persistidas divergem.",
+    )
+
+_market_date_ok = result_metadata.get("market_date") == sd.get("market_date")
+add_barrier_check(
+    "Consistência interna", "market_date entre seções",
+    f"metadata={result_metadata.get('market_date')}; diagnostics={sd.get('market_date')}",
+    "datas idênticas", "N/A", "PASS" if _market_date_ok else "FAIL",
+    "Datas de mercado conciliadas." if _market_date_ok else "Datas de mercado divergentes.",
+)
+
+_timestamp_ok = result_metadata.get("execution_timestamp") == sd.get("execution_timestamp")
+add_barrier_check(
+    "Consistência interna", "execution_timestamp entre seções",
+    f"metadata={result_metadata.get('execution_timestamp')}; diagnostics={sd.get('execution_timestamp')}",
+    "timestamps idênticos", "N/A", "PASS" if _timestamp_ok else "FAIL",
+    "Timestamps conciliados." if _timestamp_ok else "Timestamps divergentes.",
+)
+
+try:
+    _internal_timestamp = datetime.fromisoformat(str(sd.get("execution_timestamp")))
+    _filename_delta = abs(
+        (_internal_timestamp.replace(tzinfo=None) - latest_result_timestamp).total_seconds()
+    )
+    _filename_timestamp_ok = _filename_delta < 1.0
+except (TypeError, ValueError):
+    _filename_delta = float("nan")
+    _filename_timestamp_ok = False
+add_barrier_check(
+    "Consistência interna", "timestamp do nome × conteúdo",
+    f"diferença={_filename_delta} segundo(s)", "diferença < 1 segundo", "1s",
+    "PASS" if _filename_timestamp_ok else "FAIL",
+    "Nome e conteúdo identificam a mesma execução."
+    if _filename_timestamp_ok else "Timestamp do nome diverge do conteúdo.",
+)
+
+barrier_fields = {
+    "market_date": sd.get("market_date"),
+    "execution_timestamp": sd.get("execution_timestamp"),
+    "spot": pr_market.get("spot"),
+    "strike": pr_contract.get("strike"),
+    "barrier": pr_contract.get("barrier"),
+    "maturity": pr_contract.get("maturity"),
+    "rate": pr_market.get("rate"),
+    "dividend_yield": pr_market.get("dividend_yield"),
+    "volatility": pr_market.get("volatility"),
+    "forward": pr_market.get("forward"),
+    "vanilla_price": pr.get("vanilla_price"),
+    "barrier_price": pr.get("barrier_price"),
+    "barrier_discount_abs": pr.get("barrier_discount_abs"),
+    "barrier_discount_pct": pr.get("barrier_discount_pct"),
+    "knock_out_probability": pr.get("knock_out_probability"),
+    "standard_error": pr.get("standard_error"),
+    "ci_low_95": pr.get("ci_low_95"),
+    "ci_high_95": pr.get("ci_high_95"),
+    "paths": sd.get("paths"),
+    "steps": sd.get("steps"),
+    "seed": sd.get("seed"),
+    "monitoring": sd.get("monitoring"),
+}
+
+# --- Presença: nenhum campo pode ser None ---
+missing_fields = [name for name, val in barrier_fields.items() if val is None]
+add_barrier_check(
+    "Presença", "Todos os campos presentes",
+    f"{len(missing_fields)} ausente(s): {missing_fields}" if missing_fields else "Todos presentes",
+    "22 campos esperados",
+    "N/A",
+    "FAIL" if missing_fields else "PASS",
+    "Campos ausentes impedem validação." if missing_fields else "Todos os campos estão presentes.",
+)
+
+# Se houver campos ausentes, interrompe antes das validações de domínio.
+if missing_fields:
+    print("❌ FALHA: Campos ausentes em pricing_result/simulation_diagnostics.")
+    raise RuntimeError(f"Campos ausentes: {missing_fields}")
+
+# --- Finitude: valores numéricos devem ser finitos ---
+numeric_fields = [
+    "spot", "strike", "barrier", "maturity", "rate", "dividend_yield",
+    "volatility", "forward", "vanilla_price", "barrier_price",
+    "barrier_discount_abs", "barrier_discount_pct", "knock_out_probability",
+    "standard_error", "ci_low_95", "ci_high_95", "paths", "steps", "seed",
+]
+non_finite = []
+for name in numeric_fields:
+    val = barrier_fields[name]
+    try:
+        if not math.isfinite(float(val)):
+            non_finite.append(name)
+    except (TypeError, ValueError):
+        non_finite.append(name)
+
+add_barrier_check(
+    "Domínio", "Valores numéricos finitos",
+    f"{len(non_finite)} não-finito(s): {non_finite}" if non_finite else "Todos finitos",
+    "Todos os valores numéricos são finitos",
+    "N/A",
+    "FAIL" if non_finite else "PASS",
+    "Valores não-finitos indicam erro numérico." if non_finite else "Todos os valores são finitos.",
+)
+
+if non_finite:
+    raise RuntimeError(f"Valores não-finitos: {non_finite}")
+
+# --- Domínio: validações individuais ---
+# spot > 0
+add_barrier_check(
+    "Domínio", "spot > 0",
+    f"{float(barrier_fields['spot']):,.2f}", "spot > 0",
+    "N/A",
+    "PASS" if float(barrier_fields["spot"]) > 0 else "FAIL",
+    "Spot positivo." if float(barrier_fields["spot"]) > 0 else "Spot deve ser positivo.",
+)
+
+# strike > 0
+add_barrier_check(
+    "Domínio", "strike > 0",
+    f"{float(barrier_fields['strike']):,.2f}", "strike > 0",
+    "N/A",
+    "PASS" if float(barrier_fields["strike"]) > 0 else "FAIL",
+    "Strike positivo." if float(barrier_fields["strike"]) > 0 else "Strike deve ser positivo.",
+)
+
+# 0 < barrier < spot
+_b = float(barrier_fields["barrier"])
+_s = float(barrier_fields["spot"])
+add_barrier_check(
+    "Domínio", "0 < barreira < spot",
+    f"{_b:,.2f} < {_s:,.2f}", "0 < barreira < spot",
+    "N/A",
+    "PASS" if 0 < _b < _s else "FAIL",
+    "Barreira positiva e abaixo do spot." if 0 < _b < _s else "Barreira deve estar entre 0 e spot.",
+)
+
+# prazo > 0
+add_barrier_check(
+    "Domínio", "prazo > 0",
+    f"{float(barrier_fields['maturity']):.4f}", "prazo > 0",
+    "N/A",
+    "PASS" if float(barrier_fields["maturity"]) > 0 else "FAIL",
+    "Prazo positivo." if float(barrier_fields["maturity"]) > 0 else "Prazo deve ser positivo.",
+)
+
+# volatilidade >= 0
+add_barrier_check(
+    "Domínio", "volatilidade >= 0",
+    f"{float(barrier_fields['volatility']):.4%}", "volatilidade >= 0",
+    "N/A",
+    "PASS" if float(barrier_fields["volatility"]) >= 0 else "FAIL",
+    "Volatilidade não-negativa." if float(barrier_fields["volatility"]) >= 0 else "Volatilidade deve ser >= 0.",
+)
+
+# preço vanilla >= 0
+add_barrier_check(
+    "Domínio", "preço vanilla >= 0",
+    f"{float(barrier_fields['vanilla_price']):,.2f}", "preço vanilla >= 0",
+    "N/A",
+    "PASS" if float(barrier_fields["vanilla_price"]) >= 0 else "FAIL",
+    "Preço vanilla não-negativo." if float(barrier_fields["vanilla_price"]) >= 0 else "Preço vanilla deve ser >= 0.",
+)
+
+# preço com barreira >= 0
+add_barrier_check(
+    "Domínio", "preço com barreira >= 0",
+    f"{float(barrier_fields['barrier_price']):,.2f}", "preço com barreira >= 0",
+    "N/A",
+    "PASS" if float(barrier_fields["barrier_price"]) >= 0 else "FAIL",
+    "Preço com barreira não-negativo." if float(barrier_fields["barrier_price"]) >= 0 else "Preço com barreira deve ser >= 0.",
+)
+
+# erro-padrão >= 0
+add_barrier_check(
+    "Domínio", "erro-padrão >= 0",
+    f"{float(barrier_fields['standard_error']):,.2f}", "erro-padrão >= 0",
+    "N/A",
+    "PASS" if float(barrier_fields["standard_error"]) >= 0 else "FAIL",
+    "Erro-padrão não-negativo." if float(barrier_fields["standard_error"]) >= 0 else "Erro-padrão deve ser >= 0.",
+)
+
+# 0 <= P(knock-out) <= 1
+_ko = float(barrier_fields["knock_out_probability"])
+add_barrier_check(
+    "Domínio", "0 <= P(knock-out) <= 1",
+    f"{_ko:.4%}", "0 <= P(knock-out) <= 1",
+    "N/A",
+    "PASS" if 0 <= _ko <= 1 else "FAIL",
+    "Probabilidade em [0,1]." if 0 <= _ko <= 1 else "Probabilidade fora de [0,1].",
+)
+
+# caminhos >= 2
+add_barrier_check(
+    "Domínio", "caminhos >= 2",
+    f"{int(barrier_fields['paths']):,}", "caminhos >= 2",
+    "N/A",
+    "PASS" if int(barrier_fields["paths"]) >= 2 else "FAIL",
+    "Caminhos suficientes para MC." if int(barrier_fields["paths"]) >= 2 else "Caminhos insuficientes.",
+)
+
+# passos >= 1
+add_barrier_check(
+    "Domínio", "passos >= 1",
+    f"{int(barrier_fields['steps'])}", "passos >= 1",
+    "N/A",
+    "PASS" if int(barrier_fields["steps"]) >= 1 else "FAIL",
+    "Passos suficientes para MC." if int(barrier_fields["steps"]) >= 1 else "Passos insuficientes.",
+)
+
+# monitoring pertence a {discrete, brownian_bridge}
+_mon = str(barrier_fields["monitoring"])
+add_barrier_check(
+    "Domínio", "monitoring válido",
+    _mon, "discrete ou brownian_bridge",
+    "N/A",
+    "PASS" if _mon in {"discrete", "brownian_bridge"} else "FAIL",
+    "Método de monitoramento válido." if _mon in {"discrete", "brownian_bridge"} else "Método inválido.",
+)
+
+print("✓ Validações de presença e domínio concluídas.")
+
+# COMMAND ----------
+
+# DBTITLE 1,Reconciliação aritmética (D)
+# Comentário: recalcula descontos, IC e forward a partir dos valores persistidos,
+# comparando com as figuras armazenadas. Tolerâncias documentadas abaixo.
+# Tolerâncias: 1e-6 para razões/percentuais, 1e-2 para preços (ponto flutuante + arredondamento).
+_TOL_PRICE = 1e-2       # tolerância absoluta para preços em pontos do IBOV
+_TOL_RATIO = 1e-6       # tolerância para razões e percentuais
+_TOL_FORWARD = 1e-2    # tolerância absoluta para forward em pontos do IBOV
+
+_vanilla = float(barrier_fields["vanilla_price"])
+_barrier = float(barrier_fields["barrier_price"])
+_se = float(barrier_fields["standard_error"])
+_spot = float(barrier_fields["spot"])
+_r = float(barrier_fields["rate"])
+_q = float(barrier_fields["dividend_yield"])
+_T = float(barrier_fields["maturity"])
+
+# 1. desconto absoluto: vanilla - barrier
+_recalc_discount_abs = _vanilla - _barrier
+_stored_discount_abs = float(barrier_fields["barrier_discount_abs"])
+_diff_abs = abs(_recalc_discount_abs - _stored_discount_abs)
+add_barrier_check(
+    "Reconciliação", "desconto absoluto",
+    f"recal={_recalc_discount_abs:,.4f}; armaz={_stored_discount_abs:,.4f}",
+    f"vanilla - barrier = {_recalc_discount_abs:,.4f}",
+    f"{_TOL_PRICE:.0e}",
+    "PASS" if _diff_abs <= _TOL_PRICE else "FAIL",
+    f"Diferença={_diff_abs:.6f}" if _diff_abs <= _TOL_PRICE else f"Divergência={_diff_abs:.6f} excede tolerância.",
+)
+
+# 2. desconto percentual: discount_abs / vanilla_price
+if _vanilla > 0:
+    _recalc_discount_pct = _recalc_discount_abs / _vanilla
+else:
+    _recalc_discount_pct = 0.0
+_stored_discount_pct = float(barrier_fields["barrier_discount_pct"])
+_diff_pct = abs(_recalc_discount_pct - _stored_discount_pct)
+add_barrier_check(
+    "Reconciliação", "desconto percentual",
+    f"recal={_recalc_discount_pct:.8f}; armaz={_stored_discount_pct:.8f}",
+    f"discount_abs / vanilla = {_recalc_discount_pct:.8f}",
+    f"{_TOL_RATIO:.0e}",
+    "PASS" if _diff_pct <= _TOL_RATIO else "FAIL",
+    f"Diferença={_diff_pct:.10f}" if _diff_pct <= _TOL_RATIO else f"Divergência={_diff_pct:.10f} excede tolerância.",
+)
+
+# 3. intervalo de confiança: barrier ± 1.96 × SE
+_recalc_ci_low = _barrier - 1.96 * _se
+_recalc_ci_high = _barrier + 1.96 * _se
+_stored_ci_low = float(barrier_fields["ci_low_95"])
+_stored_ci_high = float(barrier_fields["ci_high_95"])
+_diff_ci_low = abs(_recalc_ci_low - _stored_ci_low)
+_diff_ci_high = abs(_recalc_ci_high - _stored_ci_high)
+_max_ci_diff = max(_diff_ci_low, _diff_ci_high)
+add_barrier_check(
+    "Reconciliação", "IC 95%",
+    f"recal=[{_recalc_ci_low:,.4f}, {_recalc_ci_high:,.4f}]; armaz=[{_stored_ci_low:,.4f}, {_stored_ci_high:,.4f}]",
+    f"barrier ± 1.96 × SE",
+    f"{_TOL_PRICE:.0e}",
+    "PASS" if _max_ci_diff <= _TOL_PRICE else "FAIL",
+    f"Diferença máxima={_max_ci_diff:.6f}" if _max_ci_diff <= _TOL_PRICE else f"Divergência={_max_ci_diff:.6f} excede tolerância.",
+)
+
+# 4. forward: spot × exp((r - q) × T)
+_recalc_forward = _spot * math.exp((_r - _q) * _T)
+_stored_forward = float(barrier_fields["forward"])
+_diff_forward = abs(_recalc_forward - _stored_forward)
+add_barrier_check(
+    "Reconciliação", "forward",
+    f"recal={_recalc_forward:,.4f}; armaz={_stored_forward:,.4f}",
+    f"spot × exp((r - q) × T) = {_recalc_forward:,.4f}",
+    f"{_TOL_FORWARD:.0e}",
+    "PASS" if _diff_forward <= _TOL_FORWARD else "FAIL",
+    f"Diferença={_diff_forward:.6f}" if _diff_forward <= _TOL_FORWARD else f"Divergência={_diff_forward:.6f} excede tolerância.",
+)
+
+# Exibe tabela de reconciliação
+reconciliation_table = pd.DataFrame([
+    {"controle": "desconto absoluto", "recalculado": _recalc_discount_abs, "armazenado": _stored_discount_abs,
+     "diferenca": _diff_abs, "tolerancia": _TOL_PRICE,
+     "status": "PASS" if _diff_abs <= _TOL_PRICE else "FAIL"},
+    {"controle": "desconto percentual", "recalculado": _recalc_discount_pct, "armazenado": _stored_discount_pct,
+     "diferenca": _diff_pct, "tolerancia": _TOL_RATIO,
+     "status": "PASS" if _diff_pct <= _TOL_RATIO else "FAIL"},
+    {"controle": "IC 95% (limite inferior)", "recalculado": _recalc_ci_low, "armazenado": _stored_ci_low,
+     "diferenca": _diff_ci_low, "tolerancia": _TOL_PRICE,
+     "status": "PASS" if _diff_ci_low <= _TOL_PRICE else "FAIL"},
+    {"controle": "IC 95% (limite superior)", "recalculado": _recalc_ci_high, "armazenado": _stored_ci_high,
+     "diferenca": _diff_ci_high, "tolerancia": _TOL_PRICE,
+     "status": "PASS" if _diff_ci_high <= _TOL_PRICE else "FAIL"},
+    {"controle": "forward", "recalculado": _recalc_forward, "armazenado": _stored_forward,
+     "diferenca": _diff_forward, "tolerancia": _TOL_FORWARD,
+     "status": "PASS" if _diff_forward <= _TOL_FORWARD else "FAIL"},
+])
+print("✓ Reconciliação aritmética concluída.")
+display(reconciliation_table.style.format({
+    "recalculado": "{:.6f}", "armazenado": "{:.6f}",
+    "diferenca": "{:.8f}", "tolerancia": "{:.0e}",
+}))
+
+# COMMAND ----------
+
+# DBTITLE 1,Reexecução determinística (E)
+# Comentário: importa o motor oficial ibov_barrier.pricing, reconstrói os objetos
+# de mercado e contrato a partir dos dados persistidos, e recalcula os preços.
+# Não copia nem reimplementa o motor dentro deste notebook.
+import sys as _sys_barrier
+
+_src_path = project_root / "src"
+if str(_src_path) not in _sys_barrier.path:
+    _sys_barrier.path.insert(0, str(_src_path))
+
+from ibov_barrier import BarrierContract, MarketData, price_down_and_out_call
+
+print(f"Motor de precificação importado de: {_src_path}")
+print("API: MarketData, BarrierContract, price_down_and_out_call")
+print()
+
+# Reconstrói os objetos exclusivamente a partir dos dados persistidos.
+_repr_market = MarketData(
+    spot=float(pr_market["spot"]),
+    rate=float(pr_market["rate"]),
+    dividend_yield=float(pr_market["dividend_yield"]),
+    volatility=float(pr_market["volatility"]),
+)
+_repr_contract = BarrierContract(
+    strike=float(pr_contract["strike"]),
+    barrier=float(pr_contract["barrier"]),
+    maturity=float(pr_contract["maturity"]),
+)
+
+print(f"MarketData: spot={_repr_market.spot:,.2f}, r={_repr_market.rate:.6%}, q={_repr_market.dividend_yield:.6%}, σ={_repr_market.volatility:.6%}")
+print(f"BarrierContract: K={_repr_contract.strike:,.2f}, H={_repr_contract.barrier:,.2f}, T={_repr_contract.maturity:.4f}")
+print()
+
+# Repete o cálculo com os mesmos parâmetros persistidos em simulation_diagnostics.
+_repr_result = price_down_and_out_call(
+    _repr_market,
+    _repr_contract,
+    paths=int(sd["paths"]),
+    steps=int(sd["steps"]),
+    seed=int(sd["seed"]),
+    monitoring=str(sd["monitoring"]),
+)
+
+print(f"✓ Reprecificação concluída em {int(sd['paths']):,} caminhos × {int(sd['steps'])} passos")
+print(f"  Preço vanilla recalculado:  {_repr_result.vanilla_price:,.4f}")
+print(f"  Preço barrier recalculado:   {_repr_result.price:,.4f}")
+print(f"  Erro-padrão recalculado:     {_repr_result.standard_error:,.4f}")
+print(f"  P(knock-out) recalculada:    {_repr_result.knock_out_probability:.6%}")
+print(f"  IC 95% recalculado:          [{_repr_result.ci_low:,.4f}, {_repr_result.ci_high:,.4f}]")
+print()
+
+# --- Compara recalculado vs persistido ---
+# Tolerâncias: mesma seed = reprodutibilidade determinística.
+# Usamos tolerância pequena para cobrir diferenças de ponto flutuante entre execuções.
+_TOL_REPRICE_PRICE = 1e-4      # pontos do IBOV
+_TOL_REPRICE_SE = 1e-4        # pontos do IBOV
+_TOL_REPRICE_PROB = 1e-8       # probabilidade sem dimensão
+_TOL_REPRICE_CI = 1e-4         # pontos do IBOV
+
+_stored_vanilla = float(pr["vanilla_price"])
+_stored_barrier = float(pr["barrier_price"])
+_stored_se = float(pr["standard_error"])
+_stored_ko = float(pr["knock_out_probability"])
+_stored_ci_low = float(pr["ci_low_95"])
+_stored_ci_high = float(pr["ci_high_95"])
+
+_diff_vanilla = abs(_repr_result.vanilla_price - _stored_vanilla)
+add_barrier_check(
+    "Reprecificação", "preço vanilla",
+    f"recal={_repr_result.vanilla_price:,.6f}; armaz={_stored_vanilla:,.6f}",
+    f"diferença={_diff_vanilla:.8f}",
+    f"{_TOL_REPRICE_PRICE:.0e}",
+    "PASS" if _diff_vanilla <= _TOL_REPRICE_PRICE else "FAIL",
+    "Preço vanilla reproduzido." if _diff_vanilla <= _TOL_REPRICE_PRICE else f"Divergência={_diff_vanilla:.8f} excede tolerância.",
+)
+
+_diff_barrier = abs(_repr_result.price - _stored_barrier)
+add_barrier_check(
+    "Reprecificação", "preço com barreira",
+    f"recal={_repr_result.price:,.6f}; armaz={_stored_barrier:,.6f}",
+    f"diferença={_diff_barrier:.8f}",
+    f"{_TOL_REPRICE_PRICE:.0e}",
+    "PASS" if _diff_barrier <= _TOL_REPRICE_PRICE else "FAIL",
+    "Preço com barreira reproduzido." if _diff_barrier <= _TOL_REPRICE_PRICE else f"Divergência={_diff_barrier:.8f} excede tolerância.",
+)
+
+_diff_se = abs(_repr_result.standard_error - _stored_se)
+add_barrier_check(
+    "Reprecificação", "erro-padrão",
+    f"recal={_repr_result.standard_error:,.6f}; armaz={_stored_se:,.6f}",
+    f"diferença={_diff_se:.8f}",
+    f"{_TOL_REPRICE_SE:.0e}",
+    "PASS" if _diff_se <= _TOL_REPRICE_SE else "FAIL",
+    "Erro-padrão reproduzido." if _diff_se <= _TOL_REPRICE_SE else f"Divergência={_diff_se:.8f} excede tolerância.",
+)
+
+_diff_ko = abs(_repr_result.knock_out_probability - _stored_ko)
+add_barrier_check(
+    "Reprecificação", "P(knock-out)",
+    f"recal={_repr_result.knock_out_probability:.10f}; armaz={_stored_ko:.10f}",
+    f"diferença={_diff_ko:.12f}",
+    f"{_TOL_REPRICE_PROB:.0e}",
+    "PASS" if _diff_ko <= _TOL_REPRICE_PROB else "FAIL",
+    "Probabilidade reproduzida." if _diff_ko <= _TOL_REPRICE_PROB else f"Divergência={_diff_ko:.12f} excede tolerância.",
+)
+
+_diff_ci_low = abs(_repr_result.ci_low - _stored_ci_low)
+_diff_ci_high = abs(_repr_result.ci_high - _stored_ci_high)
+_max_ci_reprice_diff = max(_diff_ci_low, _diff_ci_high)
+add_barrier_check(
+    "Reprecificação", "IC 95%",
+    f"recal=[{_repr_result.ci_low:,.6f}, {_repr_result.ci_high:,.6f}]; armaz=[{_stored_ci_low:,.6f}, {_stored_ci_high:,.6f}]",
+    f"diferença máxima={_max_ci_reprice_diff:.8f}",
+    f"{_TOL_REPRICE_CI:.0e}",
+    "PASS" if _max_ci_reprice_diff <= _TOL_REPRICE_CI else "FAIL",
+    "IC reproduzido." if _max_ci_reprice_diff <= _TOL_REPRICE_CI else f"Divergência={_max_ci_reprice_diff:.8f} excede tolerância.",
+)
+
+print("✓ Reexecução determinística concluída.")
+
+# COMMAND ----------
+
+# DBTITLE 1,Controles financeiros (F)
+# Comentário: controles financeiros sobre os preços e a estrutura da barreira.
+# A tolerância estatística para o limite superior é 5× erro-padrão do MC,
+# justificada pela variância do estimador com variável de controle.
+_FIN_TOL_DISCOUNT = 1e-2  # tolerância para desconto absoluto (ponto flutuante)
+
+# Preço com barreira <= preço vanilla + tolerância estatística
+_stat_tol = 5.0 * _se if _se > 0 else 1.0
+_upper_limit = _vanilla + _stat_tol
+add_barrier_check(
+    "Financeiro", "barrier <= vanilla + 5×SE",
+    f"{_barrier:,.2f} <= {_upper_limit:,.2f}",
+    f"barrier_price <= vanilla_price + 5×SE = {_upper_limit:,.2f}",
+    f"5×SE = {_stat_tol:,.2f}",
+    "PASS" if _barrier <= _upper_limit else "FAIL",
+    "Barreira não supera vanilla além da tolerância estatística." if _barrier <= _upper_limit else "Barreira supera vanilla materialmente.",
+)
+
+# Limite inferior do IC <= preço estimado <= limite superior
+_stored_ci_low_val = float(barrier_fields["ci_low_95"])
+_stored_ci_high_val = float(barrier_fields["ci_high_95"])
+_ic_ok = _stored_ci_low_val <= _barrier <= _stored_ci_high_val
+add_barrier_check(
+    "Financeiro", "IC contém preço estimado",
+    f"{_stored_ci_low_val:,.2f} <= {_barrier:,.2f} <= {_stored_ci_high_val:,.2f}",
+    "ci_low <= barrier_price <= ci_high",
+    "N/A",
+    "PASS" if _ic_ok else "FAIL",
+    "Preço dentro do IC 95%." if _ic_ok else "Preço fora do IC 95%.",
+)
+
+# Desconto absoluto não negativo (com tolerância numérica)
+_discount_ok = _recalc_discount_abs >= -_FIN_TOL_DISCOUNT
+add_barrier_check(
+    "Financeiro", "desconto absoluto >= 0",
+    f"{_recalc_discount_abs:,.4f}",
+    f"discount_abs >= -{_FIN_TOL_DISCOUNT:.0e}",
+    f"{_FIN_TOL_DISCOUNT:.0e}",
+    "PASS" if _discount_ok else "FAIL",
+    "Desconto não-negativo." if _discount_ok else "Desconto é negativo além da tolerância.",
+)
+
+# Brownian Bridge identificado corretamente quando configurado
+_mon_config = str(sd["monitoring"])
+_bb_ok = (_mon_config == "brownian_bridge") and (_mon_config in {"discrete", "brownian_bridge"})
+add_barrier_check(
+    "Financeiro", "monitoramento Brownian Bridge",
+    _mon_config, "brownian_bridge",
+    "N/A",
+    "PASS" if _mon_config == "brownian_bridge" else "WARN",
+    "Brownian Bridge configurado e identificado." if _mon_config == "brownian_bridge" else f"Método {_mon_config} — Brownian Bridge esperado.",
+)
+
+print("✓ Controles financeiros concluídos.")
+
+# COMMAND ----------
+
+# DBTITLE 1,Diagnósticos da simulação (G)
+# Comentário: tabela-resumo com parâmetros da simulação e resultado da reprecificação.
+_se_relative = (_repr_result.standard_error / _repr_result.price * 100) if _repr_result.price > 0 else float("nan")
+_reprice_status = "PASS" if (_diff_barrier <= _TOL_REPRICE_PRICE and _diff_vanilla <= _TOL_REPRICE_PRICE) else "FAIL"
+
+diagnostics_table = pd.DataFrame([{
+    "arquivo": barrier_result_file.name,
+    "data_execucao": str(barrier_execution_ts),
+    "data_mercado": barrier_market_date,
+    "paths": int(sd["paths"]),
+    "steps": int(sd["steps"]),
+    "seed": int(sd["seed"]),
+    "monitoring": str(sd["monitoring"]),
+    "preco_persistido": _stored_barrier,
+    "preco_recalculado": _repr_result.price,
+    "diferenca": _diff_barrier,
+    "erro_padrao": _repr_result.standard_error,
+    "erro_padrao_relativo_pct": _se_relative,
+    "ic_95": f"[{_stored_ci_low:,.2f}, {_stored_ci_high:,.2f}]",
+    "prob_knock_out": _stored_ko,
+    "desconto_barreira": _stored_discount_abs,
+    "status_reprodutibilidade": _reprice_status,
+}])
+
+print("✓ Diagnósticos da simulação:")
+display(diagnostics_table.style.format({
+    "preco_persistido": "{:,.4f}",
+    "preco_recalculado": "{:,.4f}",
+    "diferenca": "{:.8f}",
+    "erro_padrao": "{:,.4f}",
+    "erro_padrao_relativo_pct": "{:.4f}%",
+    "prob_knock_out": "{:.4%}",
+    "desconto_barreira": "{:,.4f}",
+}))
+
+# COMMAND ----------
+
+# DBTITLE 1,Tabela consolidada de controles da barreira (H)
+# Comentário: tabela final com uma linha por controle da barreira.
+barrier_report = pd.DataFrame(barrier_checks)
+if not barrier_report.empty:
+    _status_order_b = pd.CategoricalDtype(["FAIL", "WARN", "PASS"], ordered=True)
+    barrier_report["status_sort"] = barrier_report["status"].astype(_status_order_b)
+    barrier_report = barrier_report.sort_values(["status_sort", "categoria", "controle"]).drop(columns="status_sort")
+
+print("✓ Tabela consolidada de controles da barreira:")
+display(barrier_report)
+
+_barrier_n_fail = int((barrier_report["status"] == "FAIL").sum()) if not barrier_report.empty else 0
+_barrier_n_warn = int((barrier_report["status"] == "WARN").sum()) if not barrier_report.empty else 0
+_barrier_n_pass = int((barrier_report["status"] == "PASS").sum()) if not barrier_report.empty else 0
+print(f"\nResumo da barreira: {_barrier_n_pass} PASS, {_barrier_n_warn} WARN, {_barrier_n_fail} FAIL")
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## 8. Painel consolidado e decisão de uso
 # MAGIC
@@ -718,11 +1417,12 @@ display(smile_coverage.style.format({
 # MAGIC - **APROVADO COM RESSALVAS:** nenhum `FAIL`, mas há `WARN`;
 # MAGIC - **REPROVADO:** existe ao menos um `FAIL`.
 # MAGIC
-# MAGIC `STRICT_MODE=True` interrompe a execução quando houver falha material. No modo padrão,
-# MAGIC o notebook mostra todo o diagnóstico sem interromper a análise.
+# MAGIC O relatório é exibido por completo e, em seguida, qualquer `FAIL` interrompe a
+# MAGIC execução para impedir que um resultado reprovado seja interpretado como sucesso.
 
 # COMMAND ----------
 
+# DBTITLE 1,Painel consolidado e decisão
 # Comentário: consolida os testes, resume os status e determina a decisão final da fotografia.
 quality_report = pd.DataFrame(quality_checks)
 status_order = pd.CategoricalDtype(["FAIL", "WARN", "PASS"], ordered=True)
@@ -750,6 +1450,8 @@ else:
 
 decision_table = pd.DataFrame({
     "data_mercado": [valuation_date.isoformat()],
+    "arquivo": [barrier_result_file.name],
+    "data_execucao": [str(barrier_execution_ts)],
     "decisão": [final_decision],
     "PASS": [int((quality_report["status"] == "PASS").sum())],
     "WARN": [n_warn],
@@ -765,22 +1467,28 @@ print(f"Data de mercado: {valuation_date:%d/%m/%Y}")
 print(f"Decisão final: {final_decision}")
 print(final_message)
 
-if STRICT_MODE and n_fail:
+if n_fail:
     failed_names = quality_report.loc[quality_report["status"].eq("FAIL"), "controle"].tolist()
     raise AssertionError(f"Controles materiais reprovados: {failed_names}")
 
 # COMMAND ----------
 
+# DBTITLE 1,Próxima evolução
 # MAGIC %md
 # MAGIC ## Próxima evolução
 # MAGIC
-# MAGIC Este primeiro notebook de qualidade cobre a fotografia de mercado, as curvas e a
-# MAGIC superfície. Depois de integrar esses parâmetros ao preço da opção com barreira,
-# MAGIC acrescentaremos controles específicos do modelo:
+# MAGIC Este notebook agora cobre a fotografia de mercado, as curvas, a superfície de
+# MAGIC volatilidade e a precificação com barreira. Os controles da barreira implementados
+# MAGIC incluem:
 # MAGIC
-# MAGIC 1. 0 ≤ V_barreira ≤ V_vanilla;
+# MAGIC 1. 0 <= V_barreira <= V_vanilla (com tolerância estatística de 5×SE);
 # MAGIC 2. intervalo de confiança e erro-padrão de Monte Carlo;
-# MAGIC 3. convergência por número de caminhos e passos;
-# MAGIC 4. comparação entre monitoramento discreto e Brownian Bridge;
-# MAGIC 5. reprodutibilidade com semente fixa;
-# MAGIC 6. estabilidade das gregas e dos cenários de risco.
+# MAGIC 3. reprodutibilidade determinística com semente fixa (reexecução do mesmo motor);
+# MAGIC 4. identificação e validação do método de monitoramento configurado;
+# MAGIC 5. reconciliação aritmética de descontos, IC e forward;
+# MAGIC 6. validação de domínio para todos os 22 campos persistidos.
+# MAGIC
+# MAGIC Próximos passos:
+# MAGIC - convergência por número de caminhos e passos;
+# MAGIC - estabilidade das gregas e dos cenários de risco;
+# MAGIC - análise de sensibilidade da barreira.

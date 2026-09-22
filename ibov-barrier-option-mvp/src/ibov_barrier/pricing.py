@@ -35,6 +35,13 @@ class PriceResult:
 def black_scholes_call(market: MarketData, contract: BarrierContract) -> float:
     s, k, t = market.spot, contract.strike, contract.maturity
     r, q, sigma = market.rate, market.dividend_yield, market.volatility
+    parameters = np.asarray([s, k, t, r, q, sigma], dtype=float)
+    if not np.isfinite(parameters).all():
+        raise ValueError("market and contract parameters must be finite")
+    if s <= 0 or k <= 0:
+        raise ValueError("spot and strike must be positive")
+    if t < 0 or sigma < 0:
+        raise ValueError("maturity and volatility must be non-negative")
     if t <= 0:
         return max(s - k, 0.0)
     if sigma <= 0:
@@ -63,6 +70,12 @@ def price_down_and_out_call(
     """
     s0, h, t = market.spot, contract.barrier, contract.maturity
     sigma = market.volatility
+    parameters = np.asarray(
+        [s0, h, contract.strike, t, sigma, market.rate, market.dividend_yield],
+        dtype=float,
+    )
+    if not np.isfinite(parameters).all():
+        raise ValueError("market and contract parameters must be finite")
     if min(s0, h, contract.strike, t, sigma) <= 0:
         raise ValueError("spot, strike, barrier, maturity and volatility must be positive")
     if paths < 2 or steps < 1:
@@ -75,13 +88,19 @@ def price_down_and_out_call(
 
     rng = np.random.default_rng(seed)
     dt = t / steps
-    z = normals if normals is not None else rng.standard_normal((paths, steps))
+    z = np.asarray(normals, dtype=float) if normals is not None else rng.standard_normal((paths, steps))
     if z.shape != (paths, steps):
         raise ValueError("normals must have shape (paths, steps)")
+    if not np.isfinite(z).all():
+        raise ValueError("normals must contain only finite values")
     if uniforms is None and monitoring == "brownian_bridge":
         uniforms = rng.random((paths, steps))
-    if uniforms is not None and uniforms.shape != (paths, steps):
-        raise ValueError("uniforms must have shape (paths, steps)")
+    if uniforms is not None:
+        uniforms = np.asarray(uniforms, dtype=float)
+        if uniforms.shape != (paths, steps):
+            raise ValueError("uniforms must have shape (paths, steps)")
+        if not np.isfinite(uniforms).all() or np.any((uniforms < 0.0) | (uniforms > 1.0)):
+            raise ValueError("uniforms must contain finite values in [0, 1]")
 
     drift = (market.rate - market.dividend_yield - 0.5 * sigma**2) * dt
     diffusion = sigma * sqrt(dt)
