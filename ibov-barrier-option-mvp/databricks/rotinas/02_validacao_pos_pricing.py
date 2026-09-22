@@ -4,6 +4,7 @@
 # environment_version = "5"
 # dependencies = [
 #   "lxml>=6.0",
+#   "exchange-calendars==4.13.2",
 # ]
 # ///
 # MAGIC %md
@@ -163,23 +164,17 @@ MARKET_DATE = result_metadata["market_date"]
 valuation_date = date.fromisoformat(MARKET_DATE)
 market_folder = project_root / "data" / MARKET_DATE
 
-required_prefixes = ("IN", "IR", "SPRD", "PR")
-complete_market_folders = [
-    folder for folder in (project_root / "data").iterdir()
-    if folder.is_dir()
-    and all(any(folder.glob(f"{prefix}*.zip")) for prefix in required_prefixes)
-]
-if not complete_market_folders:
-    raise RuntimeError("ERRO: não existe nenhuma pasta de mercado completa.")
 
-latest_complete_market_folder = max(complete_market_folders, key=lambda p: p.name)
-if market_folder.name != latest_complete_market_folder.name:
-    raise RuntimeError(
-        "ERRO: o resultado de hoje não usa a última fotografia completa da B3. "
-        f"Resultado do 01_main_option_pricer: {market_folder.name}; "
-        f"última pasta completa: {latest_complete_market_folder.name}. "
-        "Execute novamente o notebook 01_main_option_pricer."
-    )
+import sys
+if str(project_root / "src") not in sys.path:
+    sys.path.insert(0, str(project_root / "src"))
+from ibov_barrier.market_date import expected_market_date, require_market_date, validate_snapshot
+
+expected_date = require_market_date(MARKET_DATE, today)
+market_folder = validate_snapshot(project_root / "data", expected_date)
+for prefix in ("IN", "IR", "PR", "SPRD"):
+    if result_metadata[f"{prefix.lower()}_zip"] != f"{prefix}{expected_date:%y%m%d}.zip":
+        raise RuntimeError(f"Nome do ZIP {prefix} incompatível com D-1.")
 
 in_zip = market_folder / result_metadata["in_zip"]
 ir_zip = market_folder / result_metadata["ir_zip"]

@@ -127,6 +127,39 @@ O notebook `03_analise_risco`:
 
 ## Validações implementadas
 
+### Referência operacional D−1 B3
+
+Os notebooks 00–03 usam `ibov_barrier.market_date`: a referência é a última
+sessão B3/BVMF estritamente anterior à data de execução em America/Sao_Paulo.
+Pastas de D0 ou futuras são ignoradas. Não há fallback para uma fotografia antiga.
+Exemplo: execução em 22/09/2026 usa mercado de 21/09/2026; os nomes RESULTS,
+VALIDATION e RISK mantêm o timestamp da execução, não a data de mercado.
+
+Dependência fixada: `exchange-calendars==4.13.2` (calendário BVMF). Os notebooks
+declaram essa dependência no ambiente Databricks; se necessário, configure-a nas
+dependências do Serverless antes de executar. Sem o calendário ou fora de sua
+cobertura, a rotina deve parar. Não substitua por calendário bancário ou weekdays.
+Revisar periodicamente contra os comunicados oficiais da B3, especialmente
+feriados extraordinários e mudanças anuais. Fonte de conferência para 2026:
+[Ofício B3 054/2025-VNC](https://www.b3.com.br/data/files/21/F3/6B/17/6FAEA9105B12E5A9AC094EA8/CL%20054-2025-VNC%20CALENDARIO%20DE%20FERIADOS%20EM%202026%20E%20FUNCIONAMENTO%20DA%20B3%20EM%2018022026%20QUARTAFEIRA%20DE%20CINZAS_EN.pdf).
+
+No 00, START_DATE e END_DATE iguais a None selecionam D−1 automaticamente.
+Intervalos explícitos continuam disponíveis para coleta histórica, mas não podem
+ultrapassar D−1. Datas sem sessão são puladas; falha em sessão esperada interrompe.
+No 01, MARKET_DATE explícita somente é aceita se coincidir com D−1; None é o padrão.
+O 02 exige RESULT produzido hoje e mercado D−1, em vez da maior pasta disponível.
+O 03 reconfirma D−1 e a igualdade da data de mercado entre RESULTS e VALIDATION.
+
+Antes de precificar/validar, exige-se cada ZIP com nome exato, integridade CRC e
+publicação XML selecionada com data de referência compatível (`RptDtAndTm` para
+IN, `TradDt` para IR/PR/SPRD). No PR verificam-se os registros IBOV consumidos
+pelo pricer: o arquivo também contém outros mercados, que podem ter datas distintas.
+A publicação selecionada é a de maior timestamp interno do ZIP, como no 01.
+Datas de vencimento/criação não são usadas como data de mercado.
+Dados ausentes, corrompidos ou incompatíveis bloqueiam sem alterar arquivos.
+
+Verificação local: `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m unittest discover -s tests -v`.
+
 - a opção com barreira não pode valer mais que a call vanilla;
 - barreira já violada implica preço zero;
 - barreira muito baixa converge para a call vanilla;

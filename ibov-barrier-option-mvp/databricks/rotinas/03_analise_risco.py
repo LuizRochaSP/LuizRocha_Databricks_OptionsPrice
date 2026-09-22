@@ -1,4 +1,9 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# dependencies = ["exchange-calendars==4.13.2", "lxml>=6.0"]
+# ///
 # MAGIC %md
 # MAGIC # 03 — Análise de risco da opção com barreira
 # MAGIC
@@ -38,6 +43,11 @@ def find_project_root() -> Path:
 
 
 project_root = find_project_root()
+import sys
+if str(project_root / "src") not in sys.path:
+    sys.path.insert(0, str(project_root / "src"))
+from ibov_barrier.market_date import expected_market_date, require_market_date, validate_snapshot
+
 results_root = project_root.parents[1] / "ibov-barrier-results"
 validation_pattern = re.compile(r"^VALIDATION_superficieVol_(\d{8})_(\d{6})\.json$")
 validation_candidates = []
@@ -98,6 +108,10 @@ if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
 from ibov_barrier import BarrierContract, MarketData, RiskConfig, calculate_risk_metrics
+
+require_market_date(metadata["market_date"], today)
+if validation.get("market_date") != metadata["market_date"]:
+    raise RuntimeError("Data de mercado divergente entre RESULTS e VALIDATION.")
 
 market_values = pricing_result["market"]
 contract_values = pricing_result["contract"]
