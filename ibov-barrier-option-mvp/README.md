@@ -62,11 +62,13 @@ databricks/
 ├── rotinas/                        # fluxo operacional diário
 │   ├── 00_coleta_dados_b3.py
 │   ├── 01_main_option_pricer.py
-│   └── 02_validacao_pos_pricing.py
+│   ├── 02_validacao_pos_pricing.py
+│   └── 03_analise_risco.py
 └── cadernos/                       # material explicativo (não operacional)
     ├── caderno_equacoes_completo.py
     ├── caderno_equacoes_barrier_pricing.py
-    └── caderno_equacoes_curvas_mercado.py
+    ├── caderno_equacoes_curvas_mercado.py
+    └── caderno_equacoes_risco.py
 ```
 
 ### Fluxo operacional diário (`databricks/rotinas/`)
@@ -76,6 +78,7 @@ Notebooks para execução operacional (ordem de execução):
 1. **`rotinas/00_coleta_dados_b3.py`** — Download automático dos arquivos diários da B3 (IN, IR, PR, SPRD)
 2. **`rotinas/01_main_option_pricer.py`** — Pipeline principal: leitura de dados B3, construção de curvas de mercado, superfície de volatilidade implícita e geração do resultado diário (`RESULTS_superficieVol_YYYYMMDD_HHMMSS.csv`)
 3. **`rotinas/02_validacao_pos_pricing.py`** — Validação de qualidade dos dados e resultados do pricer. Exige execução do `rotinas/01_main_option_pricer` no mesmo dia.
+4. **`rotinas/03_analise_risco.py`** — Calcula gregas, DV01, convexidade de taxa, VaR e Expected Shortfall somente para um resultado aprovado pelo notebook 02.
 
 ### Material explicativo e de desenvolvimento (`databricks/cadernos/`)
 
@@ -84,6 +87,7 @@ Notebooks de referência (não precisam ser executados no fluxo operacional):
 - **`cadernos/caderno_equacoes_completo.py`** — Referência completa de equações e fundamentos teóricos
 - **`cadernos/caderno_equacoes_barrier_pricing.py`** — Monte Carlo para opções com barreira, variáveis de controle, Brownian Bridge
 - **`cadernos/caderno_equacoes_curvas_mercado.py`** — Construção de curvas DI e dividend yield implícito
+- **`cadernos/caderno_equacoes_risco.py`** — Convenções e equações de gregas, DV01, convexidade de taxa, VaR e Expected Shortfall
 
 ### Saída do pipeline
 
@@ -107,8 +111,54 @@ O notebook `02_validacao_pos_pricing`:
 - Repete deterministicamente a precificação com o mesmo motor e a mesma seed
 - Consolida controles em `PASS`, `WARN` e `FAIL` e interrompe a execução quando houver qualquer `FAIL`
 - Interrompe a execução se o `01_main_option_pricer` não foi executado no dia corrente
+- Persiste `VALIDATION_superficieVol_YYYYMMDD_HHMMSS.json`, com decisão, contagens de controles e SHA-256 do `RESULTS` aprovado
+
+O notebook `03_analise_risco`:
+- exige `FAIL=0` e decisão `APROVADO` ou `APROVADO COM RESSALVAS`;
+- verifica se a validação corresponde ao mesmo `RESULTS` por nome e SHA-256;
+- calcula Delta, Gamma, Vega, Theta, Rho, DV01 e convexidade de taxa;
+- calcula VaR e Expected Shortfall model-based por aproximação delta-gamma do risco de spot;
+- carrega e exibe as ressalvas de qualidade produzidas pelo notebook 02;
+- persiste `RISK_superficieVol_YYYYMMDD_HHMMSS.json` fora da Git Folder.
+
+> O VaR/ES inicial usa choques lognormais de spot e aproximação delta-gamma. Não é VaR
+> histórico e ainda não inclui choques conjuntos de volatilidade e curva. Cenários e
+> stress testing serão implementados em uma etapa posterior.
 
 ## Validações implementadas
+
+### Referência operacional D−1 B3
+
+Os notebooks 00–03 usam `ibov_barrier.market_date`: a referência é a última
+sessão B3/BVMF estritamente anterior à data de execução em America/Sao_Paulo.
+Pastas de D0 ou futuras são ignoradas. Não há fallback para uma fotografia antiga.
+Exemplo: execução em 22/09/2026 usa mercado de 21/09/2026; os nomes RESULTS,
+VALIDATION e RISK mantêm o timestamp da execução, não a data de mercado.
+
+Dependência fixada: `exchange-calendars==4.13.2` (calendário BVMF). Os notebooks
+declaram essa dependência no ambiente Databricks; se necessário, configure-a nas
+dependências do Serverless antes de executar. Sem o calendário ou fora de sua
+cobertura, a rotina deve parar. Não substitua por calendário bancário ou weekdays.
+Revisar periodicamente contra os comunicados oficiais da B3, especialmente
+feriados extraordinários e mudanças anuais. Fonte de conferência para 2026:
+[Ofício B3 054/2025-VNC](https://www.b3.com.br/data/files/21/F3/6B/17/6FAEA9105B12E5A9AC094EA8/CL%20054-2025-VNC%20CALENDARIO%20DE%20FERIADOS%20EM%202026%20E%20FUNCIONAMENTO%20DA%20B3%20EM%2018022026%20QUARTAFEIRA%20DE%20CINZAS_EN.pdf).
+
+No 00, START_DATE e END_DATE iguais a None selecionam D−1 automaticamente.
+Intervalos explícitos continuam disponíveis para coleta histórica, mas não podem
+ultrapassar D−1. Datas sem sessão são puladas; falha em sessão esperada interrompe.
+No 01, MARKET_DATE explícita somente é aceita se coincidir com D−1; None é o padrão.
+O 02 exige RESULT produzido hoje e mercado D−1, em vez da maior pasta disponível.
+O 03 reconfirma D−1 e a igualdade da data de mercado entre RESULTS e VALIDATION.
+
+Antes de precificar/validar, exige-se cada ZIP com nome exato, integridade CRC e
+publicação XML selecionada com data de referência compatível (`RptDtAndTm` para
+IN, `TradDt` para IR/PR/SPRD). No PR verificam-se os registros IBOV consumidos
+pelo pricer: o arquivo também contém outros mercados, que podem ter datas distintas.
+A publicação selecionada é a de maior timestamp interno do ZIP, como no 01.
+Datas de vencimento/criação não são usadas como data de mercado.
+Dados ausentes, corrompidos ou incompatíveis bloqueiam sem alterar arquivos.
+
+Verificação local: `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m unittest discover -s tests -v`.
 
 - a opção com barreira não pode valer mais que a call vanilla;
 - barreira já violada implica preço zero;

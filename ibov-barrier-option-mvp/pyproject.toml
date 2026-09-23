@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Monte Carlo pricing and risk for an Ibovespa barrier option"
 requires-python = ">=3.10"
 dependencies = [
+    "exchange-calendars==4.13.2",
     "lxml>=5.0",
     "matplotlib>=3.8",
     "numpy>=1.24",

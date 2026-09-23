@@ -4,6 +4,7 @@
 # environment_version = "5"
 # dependencies = [
 #   "lxml>=6.0",
+#   "exchange-calendars==4.13.2",
 # ]
 # ///
 # MAGIC %md
@@ -71,6 +72,7 @@ from scipy.stats import norm
 # COMMAND ----------
 
 # Comentário: escolha a fotografia de mercado e os filtros mínimos da amostra.
+# None seleciona D-1 B3; data explícita deve coincidir com D-1.
 MARKET_DATE = None
 MIN_TRADES = 1
 MIN_OPEN_INTEREST = 1
@@ -118,53 +120,22 @@ def find_project_root() -> Path:
     raise FileNotFoundError("Não encontrei a raiz contendo as pastas data e src.")
 
 
-# Comentário: localiza a pasta solicitada ou seleciona automaticamente
-# a pasta mais recente que contenha os quatro arquivos necessários.
+# Comentário: exige a fotografia D-1 B3, independentemente de pastas mais recentes.
 
 project_root = find_project_root()
 data_root = project_root / "data"
 
-required_patterns = (
-    "IN*.zip",
-    "IR*.zip",
-    "SPRD*.zip",
-    "PR*.zip",
-)
 
-if MARKET_DATE is None:
-    candidate_folders = sorted(
-        [
-            folder
-            for folder in data_root.iterdir()
-            if folder.is_dir()
-        ],
-        key=lambda folder: folder.name,
-        reverse=True,
-    )
+import sys
+if str(project_root / "src") not in sys.path:
+    sys.path.insert(0, str(project_root / "src"))
+from ibov_barrier.market_date import expected_market_date, require_market_date, validate_snapshot
 
-    market_folder = next(
-        (
-            folder
-            for folder in candidate_folders
-            if all(any(folder.glob(pattern)) for pattern in required_patterns)
-        ),
-        None,
-    )
-
-    if market_folder is None:
-        raise FileNotFoundError(
-            "Nenhuma pasta contém simultaneamente os arquivos IN, IR, SPRD e PR."
-        )
-
-    MARKET_DATE = market_folder.name
-
-else:
-    market_folder = data_root / MARKET_DATE
-
-    if not market_folder.exists():
-        raise FileNotFoundError(
-            f"A pasta de mercado não foi encontrada: {market_folder}"
-        )
+expected_date = expected_market_date()
+if MARKET_DATE is not None:
+    require_market_date(MARKET_DATE)
+MARKET_DATE = expected_date.isoformat()
+market_folder = validate_snapshot(data_root, expected_date)
 
 print("Data de mercado selecionada:", MARKET_DATE)
 print("Pasta selecionada:", market_folder)

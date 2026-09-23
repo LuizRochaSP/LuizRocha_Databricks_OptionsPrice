@@ -2,6 +2,7 @@
 # /// script
 # [tool.databricks.environment]
 # environment_version = "5"
+# dependencies = ["exchange-calendars==4.13.2", "lxml>=6.0"]
 # ///
 # DBTITLE 1,Título
 # MAGIC %md
@@ -34,8 +35,9 @@
 from datetime import date, timedelta
 
 # Data única ou intervalo. Para uma única data, use START_DATE = END_DATE.
-START_DATE = "2026-09-18"
-END_DATE = "2026-09-18"
+START_DATE = None
+END_DATE = None
+# Ambos None: rotina D-1. Intervalo explícito: coleta histórica, limitada a D-1.
 
 # Sobrescrever datas já baixadas.
 OVERWRITE = False
@@ -150,9 +152,21 @@ def download_and_extract(d: date, prefixes: list[str], data_root: Path, overwrit
 # Comentário: executa o download para cada data no intervalo, pulando finais de semana.
 project_root = find_project_root()
 data_root = project_root / "data"
+import sys
+if str(project_root / "src") not in sys.path:
+    sys.path.insert(0, str(project_root / "src"))
+from ibov_barrier.market_date import expected_market_date, require_market_date, validate_snapshot
 
-start = date.fromisoformat(START_DATE)
-end = date.fromisoformat(END_DATE)
+from ibov_barrier.market_date import b3_calendar
+expected_date = expected_market_date()
+calendar = b3_calendar()
+
+if (START_DATE is None) != (END_DATE is None):
+    raise ValueError("Informe ambas as datas ou deixe ambas como None.")
+start = expected_date if START_DATE is None else date.fromisoformat(START_DATE)
+end = expected_date if END_DATE is None else date.fromisoformat(END_DATE)
+if end > expected_date:
+    raise ValueError(f"A coleta deve terminar até D-1 B3: {expected_date}.")
 
 if end < start:
     raise ValueError("END_DATE deve ser maior ou igual a START_DATE.")
@@ -160,14 +174,17 @@ if end < start:
 results = []
 current = start
 while current <= end:
-    if current.weekday() >= 5:
-        results.append({"data": current.isoformat(), "status": "skip", "motivo": "final de semana"})
+    if not calendar.is_session(current.isoformat()):
+        results.append({"data": current.isoformat(), "status": "skip", "motivo": "sem sessão no calendário B3"})
         current += timedelta(days=1)
         continue
 
     print(f"Baixando {current.isoformat()}...", end=" ")
     result = download_and_extract(current, FILE_PREFIXES, data_root, OVERWRITE)
     results.append(result)
+    if result["status"] not in {"ok", "skip"}:
+        raise RuntimeError(f"Coleta incompleta: {result}")
+    validate_snapshot(data_root, current)
 
     if result["status"] == "ok":
         size_mb = result.get("tamanho_total", 0) / 1e6

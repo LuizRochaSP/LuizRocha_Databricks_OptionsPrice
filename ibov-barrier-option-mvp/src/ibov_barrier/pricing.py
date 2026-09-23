@@ -156,6 +156,7 @@ def greeks(
     paths: int = 200_000,
     steps: int = 126,
     seed: int = 42,
+    monitoring: str = "brownian_bridge",
 ) -> dict[str, float]:
     """Central finite-difference Greeks with common random numbers."""
     rng = np.random.default_rng(seed)
@@ -165,7 +166,7 @@ def greeks(
     def value(m: MarketData, c: BarrierContract = contract) -> float:
         return price_down_and_out_call(
             m, c, paths=paths, steps=steps, seed=seed,
-            normals=normals, uniforms=uniforms,
+            monitoring=monitoring, normals=normals, uniforms=uniforms,
         ).price
 
     ds = max(1.0, market.spot * 0.001)
