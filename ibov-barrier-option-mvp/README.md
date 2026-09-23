@@ -1,6 +1,6 @@
 # Precificação de Opção com Barreira no Ibovespa
 
-Projeto quantitativo em Python, preparado para execução local e em Databricks, para precificar uma **call down-and-out sem rebate** sobre o Ibovespa.
+Projeto quantitativo em Python, preparado para execução local e em Databricks, para precificar uma call down-and-out sem rebate sobre o Ibovespa. Mais precisamente, um pipeline end-to-end que consome dados públicos da B3, constrói superfície de volatilidade implícita, precifica uma opção com barreira por Monte Carlo com variável de controle e monitoramento Brownian Bridge, valida a qualidade dos dados e do modelo com controles auditáveis, e calcula métricas de risco de mercado (gregas, VaR, ES) — tudo reprodutível, testado e versionado. Cada execução estabelece uma cadeia de confiança criptográfica via SHA-256 (função de hash determinística que gera uma impressão digital única de 256 bits para cada arquivo, permitindo verificar sua integridade sem acessar o conteúdo) entre os artefatos de preço, validação e risco, garantindo rastreabilidade total. A data de mercado é selecionada automaticamente como D-1 via calendário de feriados da B3, sem parâmetros manuais. O projeto inclui 63 testes unitários cobrindo domínio, reprodutibilidade e casos extremos, com replay determinístico do motor de precificação para auditoria.
 
 ## Objetivo
 
