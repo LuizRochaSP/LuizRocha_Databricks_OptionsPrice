@@ -1,6 +1,6 @@
 # Precificação de Opção com Barreira no Ibovespa
 
-Projeto quantitativo em Python, preparado para execução local e em Databricks, para precificar uma call down-and-out sem rebate sobre o Ibovespa. Mais precisamente, um pipeline end-to-end que consome dados públicos da B3, constrói superfície de volatilidade implícita, precifica uma opção com barreira por Monte Carlo com variável de controle e monitoramento Brownian Bridge, valida a qualidade dos dados e do modelo com controles auditáveis, e calcula métricas de risco de mercado (gregas, VaR, ES) — tudo reprodutível, testado e versionado. Cada execução estabelece uma cadeia de confiança criptográfica via SHA-256 (função de hash determinística que gera uma impressão digital única de 256 bits para cada arquivo, permitindo verificar sua integridade sem acessar o conteúdo) entre os artefatos de preço, validação e risco, garantindo rastreabilidade total. A data de mercado é selecionada automaticamente como D-1 via calendário de feriados da B3, sem parâmetros manuais. O projeto inclui 63 testes unitários cobrindo domínio, reprodutibilidade e casos extremos, com replay determinístico do motor de precificação para auditoria.
+Projeto quantitativo em Python, preparado para execução local e em Databricks, para precificar uma call down-and-out sem rebate sobre o Ibovespa. Mais precisamente, um pipeline end-to-end que consome dados públicos da B3, constrói superfície de volatilidade implícita, precifica uma opção com barreira por Monte Carlo com variável de controle e monitoramento Brownian Bridge, valida a qualidade dos dados e do modelo com controles auditáveis, e calcula métricas de risco de mercado (gregas, VaR, ES) — tudo reprodutível, testado e versionado. Cada execução estabelece uma cadeia de confiança criptográfica via SHA-256 (função de hash determinística que gera uma impressão digital única de 256 bits para cada arquivo, permitindo verificar sua integridade sem acessar o conteúdo) entre os artefatos de preço, validação e risco, garantindo rastreabilidade total. A data de mercado é selecionada automaticamente como D-1 via calendário de feriados da B3, sem parâmetros manuais. O projeto inclui 75 testes unitários cobrindo domínio, reprodutibilidade e casos extremos, com replay determinístico do motor de precificação para auditoria.
 
 ## Objetivo
 
@@ -63,12 +63,15 @@ databricks/
 │   ├── 00_coleta_dados_b3.py
 │   ├── 01_main_option_pricer.py
 │   ├── 02_validacao_pos_pricing.py
-│   └── 03_analise_risco.py
-└── cadernos/                       # material explicativo (não operacional)
-    ├── caderno_equacoes_completo.py
-    ├── caderno_equacoes_barrier_pricing.py
-    ├── caderno_equacoes_curvas_mercado.py
-    └── caderno_equacoes_risco.py
+│   ├── 03_analise_risco.py
+│   └── 04_cenarios_stress.py
+├── cadernos/                       # material explicativo (não operacional)
+│   ├── caderno_equacoes_completo.py
+│   ├── caderno_equacoes_barrier_pricing.py
+│   ├── caderno_equacoes_curvas_mercado.py
+│   └── caderno_equacoes_risco.py
+└── templates/                      # templates de entrada
+    └── stress_scenarios.xlsx       # cenários de stress test (1 aba por cenário)
 ```
 
 ### Fluxo operacional diário (`databricks/rotinas/`)
@@ -121,9 +124,32 @@ O notebook `03_analise_risco`:
 - carrega e exibe as ressalvas de qualidade produzidas pelo notebook 02;
 - persiste `RISK_superficieVol_YYYYMMDD_HHMMSS.json` fora da Git Folder.
 
+5. **`rotinas/04_cenarios_stress.py`** — Cenários e Stress Test:
+   - Consome um conjunto coerente de RESULTS, VALIDATION e RISK aprovados
+   - Verifica proveniência: schema, `FAIL=0`, `approved_for_risk`, SHA-256 e referências entre arquivos
+   - Lê cenários de uma planilha Excel (`templates/stress_scenarios.xlsx`), uma aba por cenário
+   - Cada aba define choques de spot (%), volatilidade (abs.) e taxa (bp), lado da posição (`COMPRADO`/`VENDIDO`) e `QtdPontos`
+   - Reutiliza o motor de Monte Carlo existente com números aleatórios comuns entre base e cenário
+   - Se o spot estressado atinge ou cruza a barreira, a opção é zerada (knock-out sem rebate)
+   - Calcula P&L em pontos do índice: `P&L = (preço_estressado - preço_base) * QtdPontos` (comprado) ou sinal oposto (vendido)
+   - Aba com entradas inválidas registra mensagem na própria aba sem interromper os demais cenários
+   - Gera `STRESS_YYYYMMDD_HHMMSS.xlsx` (abas dos cenários + aba `RESUMO`) e `STRESS_YYYYMMDD_HHMMSS.json` (auditoria completa)
+   - O Excel de entrada é preservado; não há sobrescrita de arquivos anteriores
+
+### Módulo de stress test (`src/ibov_barrier/stress.py`)
+
+Motor reutilizável para reprecificação sob choques:
+
+- `ScenarioInput` — define nome, choques (spot %, vol abs., rate bp), lado e `QtdPontos`
+- `SimulationParams` — replay dos parâmetros de Monte Carlo da execução base
+- `verify_provenance` — verifica a cadeia de confiança RESULTS -> VALIDATION -> RISK (schema, SHA-256, `FAIL=0`, `approved_for_risk`)
+- `run_scenario` — aplica choques, reprecifica com CRN e calcula P&L em pontos do índice
+- `run_all_scenarios` — executa todos os cenários com números aleatórios comuns
+
 > O VaR/ES inicial usa choques lognormais de spot e aproximação delta-gamma. Não é VaR
-> histórico e ainda não inclui choques conjuntos de volatilidade e curva. Cenários e
-> stress testing serão implementados em uma etapa posterior.
+> histórico e não inclui choques conjuntos de volatilidade e curva.
+>
+> Cenários e stress testing são implementados no módulo 04 (ver abaixo).
 
 ## Validações implementadas
 
