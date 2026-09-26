@@ -1,9 +1,10 @@
 """Wrapper para construir r(T) e q(T) a partir dos dados SPRD da B3.
 
-Substitui o código ad-hoc de curva DI em 01_main_option_pricer.py por:
-- Day count DU/252 (correto para o mercado brasileiro)
-- Interpolação flat forward em log-DF (padrão de mercado)
-- Cálculo de vencimento com calendário BVMF
+Convenções:
+- r(T) e q(T) retornados em taxa CONTÍNUA (compatível com Black-Scholes).
+- Tenores em DU/252 (padrão do mercado brasileiro).
+- r(T) vem da curva DI1 (flat forward em log-DF).
+- q(T) é inferido do futuro de Ibovespa (IND) via F = S * exp((r - q) * T).
 """
 from __future__ import annotations
 
@@ -20,29 +21,29 @@ from .data_loader import load_di1_ind
 
 @dataclass(frozen=True)
 class MarketCurves:
-    """Par de curvas r(T) e q(T) derivadas de DI1 e IND.
+    """Curvas r(T) e q(T) em convenção contínua.
 
     Attributes:
-        r_curve: DiscountCurve de DI1, flat forward em log-DF, DU/252.
+        r_curve: DiscountCurve de DI1 com taxas efetivas anuais.
         q_tenors_bd: Tenores (em DU) dos contratos IND.
-        q_values: Dividend yields em cada vencimento IND.
-        spot: Referência (fechamento do Ibovespa).
+        q_cont_values: Dividend yields contínuos nos vencimentos IND.
+        spot: Fechamento do Ibovespa.
     """
     r_curve: DiscountCurve
     q_tenors_bd: np.ndarray
-    q_values: np.ndarray
+    q_cont_values: np.ndarray
     spot: float
 
     def r(self, tenor_bd: float) -> float:
-        """Taxa livre de risco (efetiva anual) no prazo em DU."""
-        return self.r_curve.rate(tenor_bd)
+        """Taxa livre de risco CONTÍNUA no prazo em DU."""
+        return float(np.log1p(self.r_curve.rate(tenor_bd)))
 
     def q(self, tenor_bd: float) -> float:
-        """Dividend yield (efetiva anual) no prazo em DU (interp. linear)."""
-        return float(np.interp(tenor_bd, self.q_tenors_bd, self.q_values))
+        """Dividend yield CONTÍNUO no prazo em DU (interp. linear)."""
+        return float(np.interp(tenor_bd, self.q_tenors_bd, self.q_cont_values))
 
     def forward(self, tenor_bd: float) -> float:
-        """Preço a termo F(T) = S * exp((r-q) * T), com T em DU/252."""
+        """F(T) = S * exp((r - q) * T), com T em DU/252 e r, q contínuos."""
         T = tenor_bd / BUSINESS_DAYS_PER_YEAR
         return float(self.spot * np.exp((self.r(tenor_bd) - self.q(tenor_bd)) * T))
 
@@ -56,7 +57,7 @@ def build_market_curves(
     spot: float,
     method: str = "flat_forward",
 ) -> MarketCurves:
-    """Constrói r(T) e q(T) a partir de DI1 e IND.
+    """Constrói r(T) e q(T) contínuos a partir de DI1 e IND.
 
     Args:
         sprd_zip: Caminho do ZIP SPRD da B3.
@@ -65,7 +66,7 @@ def build_market_curves(
         method: Método de interpolação para r(T). Default: flat_forward.
 
     Returns:
-        MarketCurves com curva r(T) e interpolador q(T).
+        MarketCurves.
 
     Raises:
         ValueError: se não houver DI1 ou IND no SPRD, ou se spot <= 0.
@@ -90,12 +91,12 @@ def build_market_curves(
     if (ind["T_252"] <= 0).any():
         raise ValueError("IND contracts com tenor_bd <= 0 encontrados.")
 
-    ind["r"] = [r_curve.rate(t) for t in ind["tenor_bd"]]
-    ind["q"] = ind["r"] - np.log(ind["future"] / spot) / ind["T_252"]
+    ind["r_cont"] = np.log1p([r_curve.rate(t) for t in ind["tenor_bd"]])
+    ind["q_cont"] = ind["r_cont"] - np.log(ind["future"] / spot) / ind["T_252"]
 
     return MarketCurves(
         r_curve=r_curve,
         q_tenors_bd=ind["tenor_bd"].values,
-        q_values=ind["q"].values,
+        q_cont_values=ind["q_cont"].values,
         spot=float(spot),
     )
