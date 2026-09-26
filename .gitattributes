@@ -1,0 +1,2 @@
+*.ipynb diff=jupyter
+*.ipynb -text
