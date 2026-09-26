@@ -2,7 +2,10 @@
 # /// script
 # [tool.databricks.environment]
 # environment_version = "5"
-# dependencies = ["exchange-calendars==4.13.2", "lxml>=6.0"]
+# dependencies = [
+#   "exchange-calendars==4.13.2",
+#   "lxml>=6.0",
+# ]
 # ///
 # DBTITLE 1,Título
 # MAGIC %md
@@ -35,8 +38,8 @@
 from datetime import date, timedelta
 
 # Data única ou intervalo. Para uma única data, use START_DATE = END_DATE.
-START_DATE = None
-END_DATE = None
+START_DATE = "2026-09-24"
+END_DATE = "2026-09-24"
 # Ambos None: rotina D-1. Intervalo explícito: coleta histórica, limitada a D-1.
 
 # Sobrescrever datas já baixadas.
