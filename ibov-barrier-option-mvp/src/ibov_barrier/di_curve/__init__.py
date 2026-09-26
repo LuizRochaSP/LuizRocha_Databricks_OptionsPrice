@@ -11,6 +11,7 @@ from .conventions import (
 )
 from .curve import DiscountCurve
 from .data_loader import load_anbima_ettj, load_di1_ind
+from .market_curves import MarketCurves, build_market_curves
 from .risk import (
     KeyRateResult,
     PCAResult,
@@ -30,9 +31,11 @@ __all__ = [
     "BUSINESS_DAYS_PER_YEAR",
     "DiscountCurve",
     "KeyRateResult",
+    "MarketCurves",
     "PCAResult",
     "SwapResult",
     "add_business_days",
+    "build_market_curves",
     "business_days",
     "check_monotonic_df",
     "check_positive_forwards",
