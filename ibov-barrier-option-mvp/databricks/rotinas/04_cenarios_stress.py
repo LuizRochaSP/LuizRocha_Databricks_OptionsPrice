@@ -2,7 +2,11 @@
 # /// script
 # [tool.databricks.environment]
 # environment_version = "5"
-# dependencies = ["openpyxl>=3.1", "exchange-calendars==4.13.2", "lxml>=6.0"]
+# dependencies = [
+#   "openpyxl>=3.1",
+#   "exchange-calendars==4.13.2",
+#   "lxml>=6.0",
+# ]
 # ///
 # DBTITLE 1,Título
 # MAGIC %md

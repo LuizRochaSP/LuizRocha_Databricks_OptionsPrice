@@ -1,0 +1,29 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+
+# === Ambientes virtuais ===
+.venv/
+venv/
+env/
+
+# === Cache de testes ===
+.pytest_cache/
+.coverage
+htmlcov/
+
+# === Jupyter ===
+.ipynb_checkpoints/
+
+# === Dados de mercado (B3, ANBIMA) ===
+data/
+
+# === OS ===
+.DS_Store
+Thumbs.db

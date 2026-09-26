@@ -1,0 +1,1 @@
+# Pacote de testes do módulo di_curve.
