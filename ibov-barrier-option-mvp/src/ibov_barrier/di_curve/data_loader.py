@@ -1,16 +1,19 @@
 """Leitura de DI1/IND do SPRD da B3 e da ETTJ da ANBIMA."""
 from __future__ import annotations
 
+import warnings
 from datetime import date
 from pathlib import Path
 from zipfile import ZipFile
 
 import pandas as pd
 from lxml import etree
+from exchange_calendars.errors import DateOutOfBounds
 
 from .conventions import (
     business_days,
     first_business_day,
+    max_calendar_date,
     nearest_wednesday,
 )
 
@@ -56,7 +59,33 @@ def load_di1_ind(sprd_zip: Path, valuation_date: date) -> tuple[pd.DataFrame, pd
                     del el.getparent()[0]
 
     df = pd.DataFrame(rows)
-    df["maturity"] = df["ticker"].map(_contract_maturity)
+
+    # Calcula vencimento; contratos DI1 além da cobertura do calendário BVMF
+    # recebem None (first_business_day chama is_session, que lança DateOutOfBounds).
+    def _safe_maturity(ticker: str) -> date | None:
+        try:
+            return _contract_maturity(ticker)
+        except DateOutOfBounds:
+            return None
+
+    df["maturity"] = df["ticker"].map(_safe_maturity)
+
+    # Filtra contratos cujo vencimento excede a cobertura do calendário BVMF.
+    # O exchange_calendars não publica feriados para prazos muito longos, e os
+    # contratos além desse limite são tipicamente ilíquidos.
+    max_date = max_calendar_date()
+    n_before = len(df)
+    df = df.dropna(subset=["maturity"]).copy()
+    df = df[df["maturity"] <= max_date].copy()
+    n_dropped = n_before - len(df)
+    if n_dropped > 0:
+        warnings.warn(
+            f"{n_dropped} contrato(s) DI1/IND descartado(s) — vencimento além "
+            f"de {max_date} (limite do calendário BVMF). Atualize "
+            f"exchange-calendars para estender a cobertura.",
+            stacklevel=2,
+        )
+
     df["tenor_bd"] = df["maturity"].apply(lambda m: business_days(valuation_date, m))
 
     di = df[df["ticker"].str.startswith("DI1")].copy()

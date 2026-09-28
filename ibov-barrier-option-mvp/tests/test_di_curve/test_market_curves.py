@@ -49,6 +49,39 @@ class TestMarketCurves(unittest.TestCase):
         mc = self._build_synthetic()
         self.assertGreater(mc.spot, 0)
 
+    def test_load_di1_ind_filters_out_of_calendar(self):
+        """Contratos com vencimento além do calendário BVMF devem ser filtrados."""
+        from datetime import date
+        from pathlib import Path
+        from ibov_barrier.di_curve.data_loader import load_di1_ind
+        from ibov_barrier.di_curve.conventions import max_calendar_date
+
+        sprd_zip = Path(
+            "/Workspace/Users/luiz.henrique.felipe.rocha@gmail.com/"
+            "LuizRocha_Databricks_OptionsPrice/ibov-barrier-option-mvp/"
+            "data/2026-09-25/SPRD260925.zip"
+        )
+        if not sprd_zip.exists():
+            self.skipTest(f"SPRD não encontrado: {sprd_zip}")
+
+        import warnings
+        valuation_date = date(2026, 9, 25)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            di1, ind = load_di1_ind(sprd_zip, valuation_date)
+
+        # Todos os contratos retornados devem ter vencimento dentro do calendário
+        max_date = max_calendar_date()
+        self.assertTrue((di1["maturity"] <= max_date).all())
+        self.assertTrue((ind["maturity"] <= max_date).all())
+
+        # Aviso deve ter sido emitido se contratos foram descartados
+        if len(w) > 0:
+            self.assertTrue(
+                any("descartado" in str(x.message) for x in w),
+                "Esperava aviso sobre contratos descartados",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
