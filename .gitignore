@@ -27,3 +27,6 @@ data/
 # === OS ===
 .DS_Store
 Thumbs.db
+
+# === Notebooks de diagnóstico pessoal (não versionados) ===
+ibov-barrier-option-mvp/tests/testes_1.ipynb
