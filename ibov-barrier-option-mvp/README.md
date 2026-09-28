@@ -205,15 +205,27 @@ Verificação local: `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m unittes
 
 O q(T) inferido do futuro de Ibovespa (IND) via F = S·exp((r−q)·T) está em ~0.8% a.a. nos dias 23-25/09/2026 (estável, desvio-padrão de 5.87 bps). O dividend yield histórico do mercado brasileiro, segundo a série NEFIN/USP, está em 5-7% a.a. no mesmo período.
 
-A fórmula utilizada segue a metodologia padrão de mesa (paridade spot-futuro não-arbitragem), e a implementação em `di_curve/market_curves.py` está alinhada com a convenção de mercado. O valor baixo reflete o que o mercado está precificando, não um erro de cálculo.
+**Confirmação do ativo subjacente (três fontes independentes):**
 
-Hipóteses em investigação:
-1. Concentração temporal de dividendos — a DY anual é trailing de 12 meses, mas os proventos brasileiros concentram-se em datas específicas (abr-mai, ago, nov). A janela do vencimento analisado pode ter poucos pagamentos.
-2. Expectativa futura < trailing — normalização dos proventos de Vale/Petrobras após dividendos recordes em 2024-2025.
-3. Prêmio de liquidez/carry no contrato IND — fluxo de hedge de estrangeiros ou demanda institucional.
-4. Base de desconto alternativa — possibilidade de a mesa usar curva diferente do DI1 puro (ajuste de cupom cambial).
+1. **Especificação oficial da B3** (Ibovespa Futures Contract): "Underlying: Standardized futures contract based on the Bovespa Index (Ibovespa)".
+2. **Campo AsstDesc do arquivo IN** (cadastro de instrumentos): `AsstDesc: Ibovespa` para todos os contratos IND.
+3. **Campo Desc do arquivo IN**: `Desc: INDICE BOVESPA`.
+
+Não há menção a IBOVTR ou Total Return em nenhuma das fontes. O contrato IND tem como subjacente o **Ibovespa puro**, que é um price index (desconta dividendos em ex-proventos).
+
+A fórmula F = S·(1+r_DI)^(DU/252)·e^(−q·DU/252) é a metodologia padrão de mesa, e a implementação em `di_curve/market_curves.py` está alinhada com a convenção de mercado. O q(T) baixo reflete o que o mercado está precificando, não um erro de cálculo.
+
+Hipóteses para o q(T) abaixo do histórico:
+
+1. **Concentração temporal de dividendos** — a DY anual do NEFIN é trailing de 12 meses, mas os proventos brasileiros concentram-se em abr-mai e ago-nov. A janela do vencimento analisado pode ter poucos pagamentos.
+2. **Expectativa de corte de dividendos** — normalização dos proventos de Vale/Petrobras após dividendos recordes em 2024-2025.
+3. **Prêmio de liquidez/carry no contrato IND** — fluxo de hedge de estrangeiros pode comprimir o q implícito.
+4. **Base de desconto diferente do DI1** — possibilidade de a mesa usar curva com spread (cupom cambial) em vez do DI1 puro.
 
 Impacto na precificação: o q baixo eleva o forward e, consequentemente, o preço da call e a probabilidade de knock-out. Para produtos com barreira, isso é material. A comparação controlada (mesma data de mercado, apenas day count alterado) mostrou delta de +1.32% no preço do barrier.
+
+**Próximos passos:** investigar hipótese 1 (calendário de proventos das top 10 empresas do IBOV entre set/2026 e abr/2027) em PR separado.
+
 
 ## Próximas etapas
 
