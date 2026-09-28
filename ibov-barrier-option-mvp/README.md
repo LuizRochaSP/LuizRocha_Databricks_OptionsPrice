@@ -199,6 +199,22 @@ Verificação local: `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m unittes
 > reprodutibilidade. Ela não substitui uma validação independente do modelo. Um benchmark
 > analítico de Reiner–Rubinstein permanece como evolução planejada.
 
+## Limitações conhecidas
+
+### Dividend yield implícito (q) abaixo do histórico
+
+O q(T) inferido do futuro de Ibovespa (IND) via F = S·exp((r−q)·T) está em ~0.8% a.a. nos dias 23-25/09/2026 (estável, desvio-padrão de 5.87 bps). O dividend yield histórico do mercado brasileiro, segundo a série NEFIN/USP, está em 5-7% a.a. no mesmo período.
+
+A fórmula utilizada segue a metodologia padrão de mesa (paridade spot-futuro não-arbitragem), e a implementação em `di_curve/market_curves.py` está alinhada com a convenção de mercado. O valor baixo reflete o que o mercado está precificando, não um erro de cálculo.
+
+Hipóteses em investigação:
+1. Concentração temporal de dividendos — a DY anual é trailing de 12 meses, mas os proventos brasileiros concentram-se em datas específicas (abr-mai, ago, nov). A janela do vencimento analisado pode ter poucos pagamentos.
+2. Expectativa futura < trailing — normalização dos proventos de Vale/Petrobras após dividendos recordes em 2024-2025.
+3. Prêmio de liquidez/carry no contrato IND — fluxo de hedge de estrangeiros ou demanda institucional.
+4. Base de desconto alternativa — possibilidade de a mesa usar curva diferente do DI1 puro (ajuste de cupom cambial).
+
+Impacto na precificação: o q baixo eleva o forward e, consequentemente, o preço da call e a probabilidade de knock-out. Para produtos com barreira, isso é material. A comparação controlada (mesma data de mercado, apenas day count alterado) mostrou delta de +1.32% no preço do barrier.
+
 ## Próximas etapas
 
 1. ✅ Calibrar a curva DI e o carry implícito com futuro de Ibovespa
