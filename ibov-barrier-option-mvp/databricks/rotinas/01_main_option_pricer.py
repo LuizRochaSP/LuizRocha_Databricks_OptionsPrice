@@ -172,6 +172,7 @@ if str(SRC_PATH) not in sys.path:
 
 # Importa somente as classes e funções necessárias do motor centralizado.
 from ibov_barrier import BarrierContract, MarketData, price_down_and_out_call
+from ibov_barrier.di_curve import build_market_curves, business_days
 
 print(f"Motor de precificação importado de: {SRC_PATH}")
 print("API disponível: MarketData, BarrierContract, price_down_and_out_call")
@@ -378,65 +379,32 @@ price_rows = [
 ]
 derivatives = pd.DataFrame(price_rows)
 
-MONTH_CODES = {
-    "F": 1, "G": 2, "H": 3, "J": 4, "K": 5, "M": 6,
-    "N": 7, "Q": 8, "U": 9, "V": 10, "X": 11, "Z": 12,
-}
+# ============================================================================
+# Curvas de mercado r(T) e q(T) — via ibov_barrier.di_curve.build_market_curves
+# ============================================================================
+# A função constrói:
+#   - r_curve: DI1 interpolado flat forward em log-DF, day count DU/252
+#   - q_curve: dividend yield inferido do futuro IND via F = S * exp((r-q) * T)
+# Convenção: r e q retornados em taxa CONTÍNUA (compatível com Black-Scholes).
+# ============================================================================
+market_curves = build_market_curves(
+    sprd_zip=sprd_zip,
+    valuation_date=valuation_date,
+    spot=float(spot),
+    method="flat_forward",
+)
 
-
-def first_weekday(year: int, month: int) -> date:
-    result = date(year, month, 1)
-    while result.weekday() >= 5:
-        result += timedelta(days=1)
-    return result
-
-
-def nearest_wednesday(year: int, month: int) -> date:
-    candidates = [
-        date(year, month, day)
-        for day in range(12, 19)
-        if date(year, month, day).weekday() == 2
-    ]
-    return min(candidates, key=lambda x: abs(x.day - 15))
-
-
-def contract_maturity(ticker: str) -> date:
-    month = MONTH_CODES[ticker[-3]]
-    year = 2000 + int(ticker[-2:])
-    return first_weekday(year, month) if ticker.startswith("DI1") else nearest_wednesday(year, month)
-
-
-di = derivatives.loc[derivatives["TckrSymb"].str.startswith("DI1", na=False)].copy()
-ind = derivatives.loc[derivatives["TckrSymb"].str.startswith("IND", na=False)].copy()
-di["rate_effective"] = pd.to_numeric(di["AdjstdQtTax"], errors="coerce") / 100.0
-ind["future"] = pd.to_numeric(ind["AdjstdQt"], errors="coerce")
-di = di.dropna(subset=["rate_effective"]).drop_duplicates("TckrSymb")
-ind = ind.dropna(subset=["future"]).drop_duplicates("TckrSymb")
-di["maturity"] = pd.to_datetime(di["TckrSymb"].map(contract_maturity))
-ind["maturity"] = pd.to_datetime(ind["TckrSymb"].map(contract_maturity))
-di["T"] = (di["maturity"] - valuation_ts).dt.days / 365.0
-ind["T"] = (ind["maturity"] - valuation_ts).dt.days / 365.0
-di = di.loc[di["T"] > 0].sort_values("T")
-ind = ind.loc[ind["T"].between(di["T"].min(), di["T"].max())].sort_values("T")
-
-ind["r_effective"] = np.interp(ind["T"], di["T"], di["rate_effective"])
-ind["r"] = np.log1p(ind["r_effective"])
-ind["q"] = ind["r"] - np.log(ind["future"] / spot) / ind["T"]
-
-curve = ind[["T", "r", "q", "future"]].drop_duplicates("T").sort_values("T")
-
-
-def interpolate_market_curve(target_tenors) -> tuple[np.ndarray, np.ndarray]:
-    target = np.asarray(target_tenors, dtype=float)
-    if target.min() < curve["T"].min() or target.max() > curve["T"].max():
-        raise ValueError("Há vencimentos de opções fora do intervalo coberto pelos futuros IND.")
-    return (
-        np.interp(target, curve["T"], curve["r"]),
-        np.interp(target, curve["T"], curve["q"]),
-    )
+# DataFrame resumo para inspeção visual (compatível com a saída anterior)
+curve = pd.DataFrame({
+    "tenor_bd": market_curves.r_curve.tenors_bd,
+    "r_cont":   [market_curves.r(t) for t in market_curves.r_curve.tenors_bd],
+    "q_cont":   [market_curves.q(t) for t in market_curves.r_curve.tenors_bd],
+})
 
 print(f"Spot IBOV: {spot:,.2f}")
-display(curve.style.format({"r": "{:.4%}", "q": "{:.4%}", "future": "{:,.2f}"}))
+print(f"Curva DI: {len(market_curves.r_curve.tenors_bd)} vértices")
+print(f"Curva q(T): {len(market_curves.q_tenors_bd)} pontos IND")
+display(curve.style.format({"tenor_bd": "{:.0f}", "r_cont": "{:.4%}", "q_cont": "{:.4%}"}))
 
 # COMMAND ----------
 
@@ -483,13 +451,25 @@ register_filter(f"Ao menos {MIN_TRADES} negócio(s)", filtered)
 filtered = filtered.loc[filtered["open_interest"].fillna(0).ge(MIN_OPEN_INTEREST)]
 register_filter("Posição em aberto positiva", filtered)
 
+# Calcula o tenor em DU usando o calendário BVMF (a partir da data de vencimento real)
+filtered["tenor_bd"] = filtered["maturity_date"].apply(
+    lambda d: business_days(valuation_date, d.date())
+)
+
+# Filtra apenas opções cujo prazo está coberto pela curva DI
+du_min = int(market_curves.r_curve.tenors_bd.min())
+du_max = int(market_curves.r_curve.tenors_bd.max())
 filtered = filtered.loc[
-    filtered["T"].between(curve["T"].min(), curve["T"].max())
+    filtered["tenor_bd"].between(du_min, du_max)
 ].copy()
 register_filter("Prazo coberto pelas curvas", filtered)
 
-filtered["r"], filtered["q"] = interpolate_market_curve(filtered["T"])
-filtered["forward"] = spot * np.exp((filtered["r"] - filtered["q"]) * filtered["T"])
+# Aplica r(T) e q(T) contínuos para cada prazo (wrapper espera DU)
+filtered["r"] = [market_curves.r(t) for t in filtered["tenor_bd"]]
+filtered["q"] = [market_curves.q(t) for t in filtered["tenor_bd"]]
+filtered["forward"] = spot * np.exp(
+    (filtered["r"] - filtered["q"]) * filtered["T"]
+)
 filtered["log_moneyness"] = np.log(filtered["strike"] / filtered["forward"])
 
 display(pd.DataFrame(filter_summary))
@@ -650,8 +630,10 @@ plt.show()
 # COMMAND ----------
 
 # Comentário: estima a volatilidade para o strike e prazo da opção com barreira.
-target_r, target_q = interpolate_market_curve([TARGET_MATURITY])
-target_forward = spot * np.exp((target_r[0] - target_q[0]) * TARGET_MATURITY)
+TARGET_MATURITY_DU = round(TARGET_MATURITY * 252)
+target_r_cont = market_curves.r(TARGET_MATURITY_DU)
+target_q_cont = market_curves.q(TARGET_MATURITY_DU)
+target_forward = spot * np.exp((target_r_cont - target_q_cont) * TARGET_MATURITY)
 target_k = np.log(TARGET_STRIKE / target_forward)
 
 target_iv = griddata(
@@ -690,8 +672,8 @@ surface_result = pd.DataFrame({
         f"{TARGET_MATURITY:.4f}",
         f"{target_forward:,.2f}",
         f"{target_k:.6f}",
-        f"{100 * target_r[0]:.4f}% a.a.",
-        f"{100 * target_q[0]:.4f}% a.a.",
+        f"{100 * target_r_cont:.4f}% a.a.",
+        f"{100 * target_q_cont:.4f}% a.a.",
         f"{100 * target_iv:.4f}% a.a.",
         interpolation_method,
     ],
@@ -741,8 +723,8 @@ print(
 # calculados pelo notebook a partir dos dados da B3.
 market = MarketData(
     spot=float(spot),
-    rate=float(target_r[0]),
-    dividend_yield=float(target_q[0]),
+    rate=float(target_r_cont),
+    dividend_yield=float(target_q_cont),
     volatility=float(target_iv),
 )
 
@@ -862,8 +844,8 @@ summary_table = pd.DataFrame([{
     "strike": TARGET_STRIKE,
     "barreira": TARGET_BARRIER,
     "prazo_anos": TARGET_MATURITY,
-    "r": target_r[0],
-    "q": target_q[0],
+    "r": target_r_cont,
+    "q": target_q_cont,
     "forward": target_forward,
     "volatilidade": target_iv,
     "preco_vanilla": barrier_result.vanilla_price,
@@ -938,8 +920,8 @@ result_metadata = {
     "spot": float(spot),
     "target_strike": float(TARGET_STRIKE),
     "target_maturity": float(TARGET_MATURITY),
-    "target_r": float(target_r[0]),
-    "target_q": float(target_q[0]),
+    "target_r": float(target_r_cont),
+    "target_q": float(target_q_cont),
     "target_iv": float(target_iv),
     "interpolation_method": interpolation_method,
     "min_trades": int(MIN_TRADES),
@@ -982,8 +964,8 @@ pricing_result = {
     },
     "market": {
         "spot": float(spot),
-        "rate": float(target_r[0]),
-        "dividend_yield": float(target_q[0]),
+        "rate": float(target_r_cont),
+        "dividend_yield": float(target_q_cont),
         "volatility": float(target_iv),
         "forward": float(target_forward),
         "interpolation_method": interpolation_method,

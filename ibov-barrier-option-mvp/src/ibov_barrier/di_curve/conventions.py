@@ -17,6 +17,16 @@ def bvmf_calendar():
     return exchange_calendars.get_calendar(CALENDAR_NAME)
 
 
+def max_calendar_date() -> date:
+    """Última data de sessão suportada pelo calendário BVMF.
+
+    Contratos com vencimento além dessa data não podem ser processados
+    via business_days() porque o exchange_calendars ainda não tem os
+    feriados publicados para o período.
+    """
+    return bvmf_calendar().last_session.date()
+
+
 def is_session(d: date) -> bool:
     """True se d é dia de sessão na B3."""
     return bool(bvmf_calendar().is_session(d.isoformat()))
