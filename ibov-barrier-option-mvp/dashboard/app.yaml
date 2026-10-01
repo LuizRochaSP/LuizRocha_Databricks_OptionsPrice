@@ -2,9 +2,10 @@ command:
   - "streamlit"
   - "run"
   - "app.py"
-  - "--server.port"
-  - "8080"
-  - "--server.address"
-  - "0.0.0.0"
-  - "--server.headless"
-  - "true"
+  - "--server.port=8080"
+  - "--server.address=0.0.0.0"
+  - "--server.headless=true"
+
+env:
+  - name: RESULTS_BASE_PATH
+    value: "/Workspace/Users/luiz.henrique.felipe.rocha@gmail.com/ibov-barrier-results"

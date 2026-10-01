@@ -30,3 +30,8 @@ Thumbs.db
 
 # === Notebooks de diagnóstico pessoal (não versionados) ===
 ibov-barrier-option-mvp/tests/testes_1.ipynb
+
+# === Dashboard (Databricks Apps) ===
+ibov-barrier-option-mvp/dashboard/data/results/
+ibov-barrier-option-mvp/dashboard/.venv/
+ibov-barrier-option-mvp/dashboard/__pycache__/
