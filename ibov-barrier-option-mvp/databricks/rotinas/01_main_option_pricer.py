@@ -172,7 +172,7 @@ if str(SRC_PATH) not in sys.path:
 
 # Importa somente as classes e funções necessárias do motor centralizado.
 from ibov_barrier import BarrierContract, MarketData, price_down_and_out_call
-from ibov_barrier.di_curve import build_market_curves, business_days
+from ibov_barrier.di_curve import build_market_curves, business_days, max_calendar_date
 
 print(f"Motor de precificação importado de: {SRC_PATH}")
 print("API disponível: MarketData, BarrierContract, price_down_and_out_call")
@@ -450,6 +450,12 @@ register_filter(f"Ao menos {MIN_TRADES} negócio(s)", filtered)
 
 filtered = filtered.loc[filtered["open_interest"].fillna(0).ge(MIN_OPEN_INTEREST)]
 register_filter("Posição em aberto positiva", filtered)
+
+# Filtra opções com vencimento além da cobertura do calendário BVMF
+# (exchange_calendars não publica feriados para prazos muito longos).
+_b3_cal_max = max_calendar_date()
+filtered = filtered.loc[filtered["maturity_date"].dt.date <= _b3_cal_max].copy()
+register_filter("Vencimento dentro do calendário BVMF", filtered)
 
 # Calcula o tenor em DU usando o calendário BVMF (a partir da data de vencimento real)
 filtered["tenor_bd"] = filtered["maturity_date"].apply(

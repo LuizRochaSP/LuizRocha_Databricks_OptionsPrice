@@ -33,9 +33,15 @@ def is_session(d: date) -> bool:
 
 
 def business_days(start: date, end: date) -> int:
-    """Dias úteis em (start, end]. Convenção DI1."""
-    if end <= start:
-        raise ValueError(f"end ({end}) deve ser posterior a start ({start})")
+    """Dias úteis em (start, end]. Convenção DI1.
+
+    Retorna 0 quando end == start (contrato vencendo na própria data
+    de avaliação — sem dias úteis no intervalo).
+    """
+    if end < start:
+        raise ValueError(f"end ({end}) deve ser posterior ou igual a start ({start})")
+    if end == start:
+        return 0
     sessions = bvmf_calendar().sessions_in_range(start.isoformat(), end.isoformat())
     return int(sum(1 for s in sessions if start < s.date() <= end))
 

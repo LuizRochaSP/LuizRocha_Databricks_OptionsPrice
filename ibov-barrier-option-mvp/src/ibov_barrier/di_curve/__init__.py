@@ -7,6 +7,7 @@ from .conventions import (
     first_business_day,
     is_session,
     log_df_to_effective,
+    max_calendar_date,
     nearest_wednesday,
 )
 from .curve import DiscountCurve
@@ -47,6 +48,7 @@ __all__ = [
     "load_anbima_ettj",
     "load_di1_ind",
     "log_df_to_effective",
+    "max_calendar_date",
     "nearest_wednesday",
     "parallel_dv01",
     "pca_decomposition",
