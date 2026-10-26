@@ -182,6 +182,17 @@ sprd_zip = market_folder / result_metadata["sprd_zip"]
 pr_zip = market_folder / result_metadata["pr_zip"]
 
 spot = float(result_metadata["spot"])
+
+# Compatibilidade de schema: o notebook 01 persiste a curva com colunas
+# tenor_bd/r_cont/q_cont; os controles de curva abaixo esperam T (anos), r, q e future.
+# Normaliza para o schema esperado quando o RESULTS usa o formato novo.
+if "T" not in curve.columns and "tenor_bd" in curve.columns:
+    curve = pd.DataFrame({
+        "T": curve["tenor_bd"].astype(float) / 252.0,
+        "r": curve["r_cont"].astype(float),
+        "q": curve["q_cont"].astype(float),
+    })
+    curve["future"] = spot * np.exp((curve["r"] - curve["q"]) * curve["T"])
 TARGET_STRIKE = float(result_metadata["target_strike"])
 TARGET_MATURITY = float(result_metadata["target_maturity"])
 target_r = np.array([float(result_metadata["target_r"])])

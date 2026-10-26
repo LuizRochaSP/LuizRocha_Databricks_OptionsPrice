@@ -105,6 +105,31 @@ def extract_dataframe(bundle, name):
             return None
 
 
+@st.cache_data(ttl=300)
+def list_available_risk(base_path: str):
+    try:
+        w = get_workspace_client()
+        files = []
+        for entry in w.workspace.list(base_path):
+            name = entry.path.split("/")[-1]
+            if name.startswith("RISK_superficieVol_") and name.endswith(".json"):
+                files.append(entry.path)
+        return sorted(files, reverse=True)
+    except Exception as e:
+        st.error(f"Erro ao listar arquivos de risco: {e}")
+        return []
+
+
+def load_risk_json(file_path: str):
+    try:
+        w = get_workspace_client()
+        response = w.workspace.download(file_path)
+        return json.loads(response.read().decode())
+    except Exception as e:
+        st.error(f"Erro ao carregar {file_path}: {e}")
+        return None
+
+
 st.sidebar.header("⚙️ Configurações")
 
 available_files = list_available_results(RESULTS_BASE_PATH)
@@ -141,6 +166,7 @@ st.sidebar.markdown("**Seções do Dashboard**")
 
 show_metadata = st.sidebar.checkbox("📋 Metadata", value=True)
 show_validation = st.sidebar.checkbox("✅ Validação", value=True)
+show_risk = st.sidebar.checkbox("🛡️ Risco & Gregas", value=True)
 show_export = st.sidebar.checkbox("📥 Exportação", value=True)
 show_history = st.sidebar.checkbox("📈 Histórico", value=False)
 show_raw_data = st.sidebar.checkbox("📊 Dados Brutos", value=False)
@@ -503,6 +529,68 @@ if show_mc_viz:
                 col_mc4.metric("Payoff std", f"{payoffs.std():,.2f}")
         except Exception as e:
             st.warning(f"Erro ao gerar visualização MC: {e}")
+
+st.markdown("---")
+
+if show_risk:
+    st.header("5️⃣c Risco & Gregas")
+
+    selected_ts = (
+        selected_file_path.split("/")[-1]
+        .replace("RESULTS_superficieVol_", "")
+        .replace(".csv", "")
+    )
+    risk_files = list_available_risk(RESULTS_BASE_PATH)
+    risk_match = next(
+        (p for p in risk_files if selected_ts in p.split("/")[-1]), None
+    )
+
+    if risk_match is None:
+        st.info(
+            "⚠️ Nenhum arquivo RISK correspondente a este RESULTS.\n\n"
+            "Execute o notebook `03_analise_risco` após a validação."
+        )
+    else:
+        risk = load_risk_json(risk_match)
+        if risk:
+            m = risk.get("metrics", {})
+
+            col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+            col_r1.metric("💵 Preço (MC)", f"{m.get('price', 0):,.2f}")
+            col_r2.metric("Δ Delta", f"{m.get('delta', 0):.4f}")
+            col_r3.metric("Γ Gamma", f"{m.get('gamma', 0):.6f}")
+            col_r4.metric("ν Vega (1%)", f"{m.get('vega_1pct', 0):,.2f}")
+
+            col_r5, col_r6, col_r7, col_r8 = st.columns(4)
+            col_r5.metric("Θ Theta (1d)", f"{m.get('theta_1day', 0):,.2f}")
+            col_r6.metric("ρ Rho (1%)", f"{m.get('rho_1pct', 0):,.2f}")
+            col_r7.metric("DV01", f"{m.get('dv01', 0):.4f}")
+            col_r8.metric("Convexidade (1bp)", f"{m.get('rate_convexity_1bp', 0):.6f}")
+
+            st.markdown("---")
+            col_v1, col_v2, col_v3, col_v4 = st.columns(4)
+            col_v1.metric("📉 VaR 99% (1d)", f"{m.get('var', 0):,.2f}")
+            col_v2.metric("⚠️ Expected Shortfall", f"{m.get('expected_shortfall', 0):,.2f}")
+            col_v3.metric("📊 PnL médio", f"{m.get('pnl_mean', 0):,.2f}")
+            col_v4.metric("📏 PnL std", f"{m.get('pnl_std', 0):,.2f}")
+
+            st.caption(
+                f"VaR/ES: {m.get('confidence_level', 0.99):.0%} de confiança, horizonte de "
+                f"{m.get('horizon_days', 1)} dia(s), {m.get('scenarios', 0):,} cenários — "
+                f"{m.get('methodology', '—')}"
+            )
+
+            limitations = risk.get("limitations", [])
+            if limitations:
+                with st.expander("⚠️ Limitações do cálculo de risco"):
+                    for lim in limitations:
+                        st.markdown(f"- {lim}")
+
+            st.caption(
+                f"Validação: {risk.get('validation_decision', '—')} "
+                f"({risk.get('validation_warn_count', 0)} ressalvas) | "
+                f"Fonte: `{risk_match.split('/')[-1]}`"
+            )
 
 st.markdown("---")
 
