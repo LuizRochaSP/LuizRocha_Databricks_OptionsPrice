@@ -16,35 +16,37 @@ if str(project_root / "src") not in sys.path:
     sys.path.insert(0, str(project_root / "src"))
 
 # COMMAND ----------
-# MAGIC %md
-# MAGIC ## 1. Coleta da ETTJ IPCA da ANBIMA (via API do pyettj ou CSV)
-# MAGIC Como a API do pyettj pode mudar, vamos usar o arquivo CSV oficial da ANBIMA
-# MAGIC (disponível publicamente no site deles para download).
+import pyettj
+import pandas as pd
+from datetime import date
 
 def baixar_ettj_ipca_anbima(data_ref: date) -> pd.DataFrame:
-    """Baixa a ETTJ IPCA da ANBIMA.
-    Nota: Em produção, usar pyettj ou a API oficial. Aqui usamos um mock/CSV.
-    """
-    # Exemplo de URL de onde a ANBIMA disponibiliza o CSV (pode variar)
-    url = "https://www.anbima.com.br/informacoes/est-termo/CZ-down.asp"
-    
+    """Baixa a ETTJ IPCA real da ANBIMA usando a biblioteca pyettj."""
     try:
-        # Tenta fazer o download dos dados
-        # Em um cenário real, você faria o parse do arquivo CSV ou chamaria pyettj
-        # Aqui simulamos o retorno para não travar o teste por falta de conexão
-        print(f"Buscando dados da ANBIMA para {data_ref.strftime('%d/%m/%Y')}...")
+        print(f"Buscando dados REAIS da ANBIMA para {data_ref.strftime('%d/%m/%Y')}...")
+        # pyettj espera uma string no formato YYYY-MM-DD
+        data_str = data_ref.strftime("%Y-%m-%d")
         
-        # Mock de dados para teste (substitua pela chamada real do pyettj)
-        # Exemplo: ettj = pyettj.get_ettj(data_ref, "IPCA")
+        # Chamada real da biblioteca
+        df = pyettj.get_ettj(data_str, curva="ipca")
+        
+        if df is not None and not df.empty:
+            # Renomeia as colunas para o padrão do nosso sistema
+            df = df.rename(columns={"vertice": "vertice_du", "taxa": "taxa_ipca"})
+            print("✅ ETTJ IPCA REAL carregada com sucesso!")
+            return df
+        else:
+            raise ValueError("ANBIMA retornou dados vazios (possível feriado/fim de semana).")
+            
+    except Exception as e:
+        print(f"⚠️ Falha ao buscar dados reais da ANBIMA: {e}")
+        print("Usando fallback (mock) para não travar o pipeline...")
+        
         dados_mock = {
             "vertice_du": [252, 504, 1260, 2520],
             "taxa_ipca": [6.10, 6.20, 6.35, 6.50]
         }
-        df = pd.DataFrame(dados_mock)
-        return df
-    except Exception as e:
-        print(f"Erro ao baixar ETTJ: {e}")
-        return None
+        return pd.DataFrame(dados_mock)
 
 # COMMAND ----------
 
@@ -52,8 +54,7 @@ data_hoje = date.today()
 df_ettj = baixar_ettj_ipca_anbima(data_hoje)
 
 if df_ettj is not None:
-    print("ETTJ IPCA carregada com sucesso:")
-    display(df_ettj)
+    display(df_ettj.head(10)) # Mostra os primeiros 10 vértices
 else:
     print("Falha ao carregar ETTJ.")
 
@@ -63,18 +64,18 @@ else:
 
 from ibov_barrier.fixed_income.ntnb import ntnb_price, ntnb_duration
 
-# Parâmetros do título
 vna = 4000.00
 cupom = 6.00
 data_venc = date(2035, 5, 15)
 
-# Pega a taxa de 10 anos (2520 DU) do DataFrame
-taxa_10_anos = df_ettj[df_ettj["vertice_du"] == 2520]["taxa_ipca"].values[0]
+# Pega a taxa mais próxima de 10 anos (2520 DU) - busca pelo valor mais próximo caso não exista o vértice exato
+idx_10_anos = (df_ettj["vertice_du"] - 2520).abs().idxmin()
+taxa_10_anos = df_ettj.loc[idx_10_anos, "taxa_ipca"]
 
 preco = ntnb_price(vna, taxa_10_anos, cupom, data_hoje, data_venc)
 duration = ntnb_duration(vna, taxa_10_anos, cupom, data_hoje, data_venc)
 
 print(f"\n=== Precificação NTN-B com Dados ANBIMA ===")
-print(f"Taxa IPCA (10 anos): {taxa_10_anos}% a.a.")
+print(f"Taxa IPCA (Vértice mais próximo de 10 anos): {taxa_10_anos}% a.a.")
 print(f"PU Estimado: R$ {preco:,.2f}")
 print(f"Duration: {duration:.4f} anos")
