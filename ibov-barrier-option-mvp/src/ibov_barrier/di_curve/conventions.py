@@ -1,7 +1,7 @@
 """Convenções de mercado brasileiro: DU/252, calendário BVMF, day count."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from functools import lru_cache
 
 import exchange_calendars
@@ -20,9 +20,8 @@ def bvmf_calendar():
 def max_calendar_date() -> date:
     """Última data de sessão suportada pelo calendário BVMF.
 
-    Contratos com vencimento além dessa data não podem ser processados
-    via business_days() porque o exchange_calendars ainda não tem os
-    feriados publicados para o período.
+    Vencimentos além dessa data são processados por business_days()
+    com projeção de dias úteis (seg–sex, sem feriados publicados).
     """
     return bvmf_calendar().last_session.date()
 
@@ -37,13 +36,37 @@ def business_days(start: date, end: date) -> int:
 
     Retorna 0 quando end == start (contrato vencendo na própria data
     de avaliação — sem dias úteis no intervalo).
+
+    Para períodos além do último bound do exchange_calendars (ver
+    max_calendar_date()), projeta dias úteis descontando apenas fins de
+    semana — aproximação de mercado de 252 DU/ano sem feriados publicados.
     """
     if end < start:
         raise ValueError(f"end ({end}) deve ser posterior ou igual a start ({start})")
     if end == start:
         return 0
-    sessions = bvmf_calendar().sessions_in_range(start.isoformat(), end.isoformat())
-    return int(sum(1 for s in sessions if start < s.date() <= end))
+    cal = bvmf_calendar()
+    bound_max = cal.last_session.date()
+
+    if end <= bound_max:
+        sessions = cal.sessions_in_range(start.isoformat(), end.isoformat())
+        return int(sum(1 for s in sessions if start < s.date() <= end))
+
+    # Trecho dentro do calendário: exato, com feriados B3 publicados
+    total = 0
+    if start <= bound_max:
+        sessions = cal.sessions_in_range(start.isoformat(), bound_max.isoformat())
+        total += int(sum(1 for s in sessions if start < s.date() <= bound_max))
+
+    # Trecho projetado: dias de semana (seg–sex) sem feriados publicados
+    projected_from = max(start, bound_max) + timedelta(days=1)
+    total += int(
+        np.busday_count(
+            projected_from.isoformat(),
+            (end + timedelta(days=1)).isoformat(),
+        )
+    )
+    return total
 
 
 def add_business_days(start: date, n: int) -> date:
