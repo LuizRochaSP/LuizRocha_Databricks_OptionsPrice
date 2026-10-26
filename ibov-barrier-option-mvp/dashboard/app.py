@@ -4,7 +4,7 @@ Roda em container dedicado e acessa arquivos do Workspace via SDK.
 """
 import json
 import os
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from datetime import datetime
 
@@ -75,7 +75,9 @@ def load_result(file_path: str):
     try:
         w = get_workspace_client()
         with w.workspace.download(file_path) as f:
-            return pd.read_csv(f)
+            # BytesIO explícito: o handle do SDK (_StreamingResponse) tem .mode=None,
+            # e o pandas tenta "b" in handle.mode ao detectar modo binário → TypeError.
+            return pd.read_csv(BytesIO(f.read()))
     except Exception as e:
         st.error(f"Erro ao carregar {file_path}: {e}")
         return None
