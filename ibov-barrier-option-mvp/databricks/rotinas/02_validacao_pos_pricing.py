@@ -51,6 +51,9 @@ else:
 
 # DBTITLE 1,Carrega a última execução do notebook 01_main_option_pricer
 # Comentário: interrompe imediatamente se o notebook 01_main_option_pricer não tiver gerado resultado hoje.
+# Backfill: setar BACKFILL_RESULTS_FILE para processar um resultado histórico específico.
+BACKFILL_RESULTS_FILE = None
+
 import json
 import hashlib
 import re
@@ -96,17 +99,24 @@ if not result_candidates:
         "Execute primeiro o notebook 01_main_option_pricer."
     )
 
-latest_result_timestamp, latest_result_path = max(
-    result_candidates, key=lambda item: item[0]
-)
 today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
 
-if latest_result_timestamp.date() != today:
-    raise RuntimeError(
-        "ERRO: o notebook 01_main_option_pricer ainda não foi executado hoje. "
-        f"Último resultado disponível: {latest_result_timestamp:%d/%m/%Y %H:%M:%S}. "
-        "Execute o notebook 01_main_option_pricer antes do notebook 02_validacao_pos_pricing."
+if BACKFILL_RESULTS_FILE is not None:
+    latest_result_path = results_root / BACKFILL_RESULTS_FILE
+    if not latest_result_path.is_file():
+        raise RuntimeError(f"Backfill: arquivo não encontrado: {latest_result_path}")
+    match = result_pattern.match(BACKFILL_RESULTS_FILE)
+    latest_result_timestamp = datetime.strptime("".join(match.groups()), "%Y%m%d%H%M%S") if match else datetime.now()
+else:
+    latest_result_timestamp, latest_result_path = max(
+        result_candidates, key=lambda item: item[0]
     )
+    if latest_result_timestamp.date() != today:
+        raise RuntimeError(
+            "ERRO: o notebook 01_main_option_pricer ainda não foi executado hoje. "
+            f"Último resultado disponível: {latest_result_timestamp:%d/%m/%Y %H:%M:%S}. "
+            "Execute o notebook 01_main_option_pricer antes do notebook 02_validacao_pos_pricing."
+        )
 
 result_bundle = pd.read_csv(latest_result_path)
 required_objects = {
@@ -141,7 +151,7 @@ if result_metadata.get("schema_version") != 2:
 metadata_execution_date = datetime.fromisoformat(
     result_metadata["execution_timestamp"]
 ).date()
-if metadata_execution_date != today:
+if BACKFILL_RESULTS_FILE is None and metadata_execution_date != today:
     raise RuntimeError(
         "ERRO: a data interna do resultado não corresponde a hoje. "
         "Execute novamente o notebook 01_main_option_pricer."
@@ -170,11 +180,14 @@ if str(project_root / "src") not in sys.path:
     sys.path.insert(0, str(project_root / "src"))
 from ibov_barrier.market_date import expected_market_date, require_market_date, validate_snapshot
 
-expected_date = require_market_date(MARKET_DATE, today)
+if BACKFILL_RESULTS_FILE is not None:
+    expected_date = date.fromisoformat(MARKET_DATE)
+else:
+    expected_date = require_market_date(MARKET_DATE, today)
 market_folder = validate_snapshot(project_root / "data", expected_date)
 for prefix in ("IN", "IR", "PR", "SPRD"):
     if result_metadata[f"{prefix.lower()}_zip"] != f"{prefix}{expected_date:%y%m%d}.zip":
-        raise RuntimeError(f"Nome do ZIP {prefix} incompatível com D-1.")
+        raise RuntimeError(f"Nome do ZIP {prefix} incompatível com a data de mercado.")
 
 in_zip = market_folder / result_metadata["in_zip"]
 ir_zip = market_folder / result_metadata["ir_zip"]
@@ -763,9 +776,14 @@ def add_barrier_check(categoria, controle, observado, esperado, tolerancia, stat
 # --- Seção A: confirma dependência explícita do notebook 01 ---
 # O arquivo já foi selecionado na célula de carregamento (cell 3).
 # Aqui apenas confirmamos qual arquivo foi usado.
+# Snapshot para proteção contra interferência de auto-execução.
+# Estes valores são capturados após o carregamento correto na célula 3 e
+# usados pela célula de persistência (29), evitando que a auto-execução
+# da célula 3 sobrescreva latest_result_path, MARKET_DATE, etc.
 barrier_result_file = latest_result_path
 barrier_execution_ts = result_metadata["execution_timestamp"]
 barrier_market_date = MARKET_DATE
+barrier_schema_version = int(result_metadata["schema_version"])
 
 print(f"Arquivo de resultado analisado: {barrier_result_file.name}")
 print(f"Data de execução do notebook 01: {barrier_execution_ts}")
@@ -1406,7 +1424,10 @@ if not barrier_report.empty:
     barrier_report = barrier_report.sort_values(["status_sort", "categoria", "controle"]).drop(columns="status_sort")
 
 print("✓ Tabela consolidada de controles da barreira:")
-display(barrier_report)
+if not barrier_report.empty:
+    display(barrier_report)
+else:
+    print("(sem controles de barreira)")
 
 _barrier_n_fail = int((barrier_report["status"] == "FAIL").sum()) if not barrier_report.empty else 0
 _barrier_n_warn = int((barrier_report["status"] == "WARN").sum()) if not barrier_report.empty else 0
@@ -1483,18 +1504,18 @@ if n_fail:
 # DBTITLE 1,Persiste evidência de aprovação para o notebook 03
 # Comentário: o notebook de risco só pode consumir o RESULTS exato aprovado aqui.
 validation_timestamp = datetime.now(ZoneInfo("America/Sao_Paulo"))
-results_sha256 = hashlib.sha256(latest_result_path.read_bytes()).hexdigest()
-validation_filename = latest_result_path.name.replace("RESULTS_", "VALIDATION_").replace(".csv", ".json")
+results_sha256 = hashlib.sha256(barrier_result_file.read_bytes()).hexdigest()
+validation_filename = barrier_result_file.name.replace("RESULTS_", "VALIDATION_").replace(".csv", ".json")
 validation_path = results_root / validation_filename
 
 validation_payload = {
     "schema_version": 1,
     "validation_timestamp": validation_timestamp.isoformat(),
-    "results_file": latest_result_path.name,
+    "results_file": barrier_result_file.name,
     "results_sha256": results_sha256,
-    "results_schema_version": int(result_metadata["schema_version"]),
-    "execution_timestamp": result_metadata["execution_timestamp"],
-    "market_date": MARKET_DATE,
+    "results_schema_version": barrier_schema_version,
+    "execution_timestamp": barrier_execution_ts,
+    "market_date": barrier_market_date,
     "decision": final_decision,
     "approved_for_risk": True,
     "pass_count": int((quality_report["status"] == "PASS").sum()),
@@ -1511,7 +1532,7 @@ validation_path.write_text(
 )
 
 print(f"✓ Evidência de validação salva em: {validation_path}")
-print(f"✓ RESULTS aprovado para risco: {latest_result_path.name}")
+print(f"✓ RESULTS aprovado para risco: {barrier_result_file.name}")
 print(f"✓ SHA-256: {results_sha256}")
 
 # COMMAND ----------

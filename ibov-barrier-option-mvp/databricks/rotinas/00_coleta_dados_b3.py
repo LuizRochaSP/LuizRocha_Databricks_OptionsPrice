@@ -38,8 +38,8 @@
 from datetime import date, timedelta
 
 # Data única ou intervalo. Para uma única data, use START_DATE = END_DATE.
-START_DATE = "2026-10-23"
-END_DATE = "2026-10-23"
+START_DATE = None
+END_DATE = None
 # Ambos None: rotina D-1. Intervalo explícito: coleta histórica, limitada a D-1.
 
 # Sobrescrever datas já baixadas.
@@ -168,8 +168,9 @@ if (START_DATE is None) != (END_DATE is None):
     raise ValueError("Informe ambas as datas ou deixe ambas como None.")
 start = expected_date if START_DATE is None else date.fromisoformat(START_DATE)
 end = expected_date if END_DATE is None else date.fromisoformat(END_DATE)
-if end > expected_date:
-    raise ValueError(f"A coleta deve terminar até D-1 B3: {expected_date}.")
+# Guarda D-1 desativada para backfill histórico (datas retroativas)
+# if end > expected_date:
+#     raise ValueError(f"A coleta deve terminar até D-1 B3: {expected_date}.")
 
 if end < start:
     raise ValueError("END_DATE deve ser maior ou igual a START_DATE.")

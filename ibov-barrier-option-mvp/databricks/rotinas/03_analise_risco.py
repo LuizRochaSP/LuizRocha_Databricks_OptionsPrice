@@ -2,7 +2,10 @@
 # /// script
 # [tool.databricks.environment]
 # environment_version = "5"
-# dependencies = ["exchange-calendars==4.13.2", "lxml>=6.0"]
+# dependencies = [
+#   "exchange-calendars==4.13.2",
+#   "lxml>=6.0",
+# ]
 # ///
 # MAGIC %md
 # MAGIC # 03 — Análise de risco da opção com barreira
@@ -22,6 +25,9 @@ RISK_ANNUAL_DRIFT = 0.0
 # COMMAND ----------
 
 # DBTITLE 1,Dependência explícita da validação
+# Backfill: setar BACKFILL_VALIDATION_FILE para processar uma validação histórica específica.
+BACKFILL_VALIDATION_FILE = None
+
 import hashlib
 import json
 import re
@@ -60,10 +66,17 @@ for path in results_root.glob("VALIDATION_superficieVol_*.json"):
 if not validation_candidates:
     raise RuntimeError("Nenhuma evidência de validação encontrada. Execute primeiro o notebook 02.")
 
-validation_stamp, validation_path = max(validation_candidates, key=lambda item: item[0])
 today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
-if validation_stamp.date() != today:
-    raise RuntimeError("A validação mais recente não foi gerada hoje. Execute os notebooks 01 e 02.")
+if BACKFILL_VALIDATION_FILE is not None:
+    validation_path = results_root / BACKFILL_VALIDATION_FILE
+    if not validation_path.is_file():
+        raise RuntimeError(f"Backfill: arquivo não encontrado: {validation_path}")
+    match = validation_pattern.match(BACKFILL_VALIDATION_FILE)
+    validation_stamp = datetime.strptime("".join(match.groups()), "%Y%m%d%H%M%S") if match else datetime.now()
+else:
+    validation_stamp, validation_path = max(validation_candidates, key=lambda item: item[0])
+    if validation_stamp.date() != today:
+        raise RuntimeError("A validação mais recente não foi gerada hoje. Execute os notebooks 01 e 02.")
 
 validation = json.loads(validation_path.read_text(encoding="utf-8"))
 if validation.get("schema_version") != 1:
@@ -109,7 +122,8 @@ if str(src_path) not in sys.path:
 
 from ibov_barrier import BarrierContract, MarketData, RiskConfig, calculate_risk_metrics
 
-require_market_date(metadata["market_date"], today)
+if BACKFILL_VALIDATION_FILE is None:
+    require_market_date(metadata["market_date"], today)
 if validation.get("market_date") != metadata["market_date"]:
     raise RuntimeError("Data de mercado divergente entre RESULTS e VALIDATION.")
 
@@ -126,6 +140,16 @@ contract = BarrierContract(
     barrier=float(contract_values["barrier"]),
     maturity=float(contract_values["maturity"]),
 )
+
+# Snapshot para proteção contra interferência de auto-execução
+# Estes valores são capturados após o carregamento correto e usados
+# pela célula de persistência, evitando que a auto-execução da célula 3
+# sobrescreva validation_path, results_path, etc. entre as duas etapas.
+barrier_validation_path = validation_path
+barrier_results_path = results_path
+barrier_actual_sha256 = actual_sha256
+barrier_metadata = dict(metadata)
+barrier_validation = dict(validation)
 
 # COMMAND ----------
 
@@ -176,17 +200,17 @@ else:
 # COMMAND ----------
 
 # DBTITLE 1,Persiste resultado de risco
-risk_filename = validation_path.name.replace("VALIDATION_", "RISK_")
+risk_filename = barrier_validation_path.name.replace("VALIDATION_", "RISK_")
 risk_path = results_root / risk_filename
 risk_payload = {
     "schema_version": 1,
     "risk_timestamp": datetime.now(ZoneInfo("America/Sao_Paulo")).isoformat(),
-    "validation_file": validation_path.name,
-    "results_file": results_path.name,
-    "results_sha256": actual_sha256,
-    "market_date": metadata["market_date"],
-    "validation_decision": validation["decision"],
-    "validation_warn_count": int(validation["warn_count"]),
+    "validation_file": barrier_validation_path.name,
+    "results_file": barrier_results_path.name,
+    "results_sha256": barrier_actual_sha256,
+    "market_date": barrier_metadata["market_date"],
+    "validation_decision": barrier_validation["decision"],
+    "validation_warn_count": int(barrier_validation["warn_count"]),
     "metrics": asdict(risk_result),
     "limitations": [
         "VaR e ES model-based por aproximação delta-gamma do risco de spot.",

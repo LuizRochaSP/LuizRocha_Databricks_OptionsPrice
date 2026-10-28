@@ -133,8 +133,9 @@ from ibov_barrier.market_date import expected_market_date, require_market_date, 
 
 expected_date = expected_market_date()
 if MARKET_DATE is not None:
-    require_market_date(MARKET_DATE)
-MARKET_DATE = expected_date.isoformat()
+    expected_date = date.fromisoformat(MARKET_DATE)
+else:
+    MARKET_DATE = expected_date.isoformat()
 market_folder = validate_snapshot(data_root, expected_date)
 
 print("Data de mercado selecionada:", MARKET_DATE)
