@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 # MAGIC %md
 # MAGIC # Coleta de Dados ANBIMA e Tesouro Direto
 
@@ -16,6 +20,12 @@ if str(project_root / "src") not in sys.path:
     sys.path.insert(0, str(project_root / "src"))
 
 # COMMAND ----------
+
+# DBTITLE 1,Instala pyettj
+# MAGIC %pip install pyettj exchange_calendars lxml
+
+# COMMAND ----------
+
 import pyettj
 import pandas as pd
 from datetime import date
@@ -28,12 +38,13 @@ def baixar_ettj_ipca_anbima(data_ref: date) -> pd.DataFrame:
         data_str = data_ref.strftime("%Y-%m-%d")
         
         # Chamada real da biblioteca
-        df = pyettj.get_ettj(data_str, curva="ipca")
+        df = pyettj.get_ettj(data_str, curva="DIC")
         
         if df is not None and not df.empty:
             # Renomeia as colunas para o padrão do nosso sistema
-            df = df.rename(columns={"vertice": "vertice_du", "taxa": "taxa_ipca"})
-            print("✅ ETTJ IPCA REAL carregada com sucesso!")
+            df = df.rename(columns={"dias_uteis": "vertice_du", "taxa": "taxa_ipca"})
+            df["taxa_ipca"] = df["taxa_ipca"] * 100
+            print("✅ ETTJ IPCA REAL (DIC) carregada com sucesso!")
             return df
         else:
             raise ValueError("ANBIMA retornou dados vazios (possível feriado/fim de semana).")
@@ -50,17 +61,21 @@ def baixar_ettj_ipca_anbima(data_ref: date) -> pd.DataFrame:
 
 # COMMAND ----------
 
-data_hoje = date.today()
-df_ettj = baixar_ettj_ipca_anbima(data_hoje)
+# ANBIMA publica ETTJ após o fechamento; se hoje não há dados, usa o último dia útil
+for _d in [date(2026, 10, 28), date(2026, 10, 27), date(2026, 10, 26), date(2026, 10, 23)]:
+    data_hoje = _d
+    df_ettj = baixar_ettj_ipca_anbima(data_hoje)
+    if df_ettj is not None and not df_ettj.empty:
+        # Verifica se não é mock (mock tem sempre 4 linhas com vértices fixos)
+        if len(df_ettj) > 4 or df_ettj["vertice_du"].iloc[0] != 252:
+            break
 
 if df_ettj is not None:
-    display(df_ettj.head(10)) # Mostra os primeiros 10 vértices
+    display(df_ettj.head(10))
 else:
     print("Falha ao carregar ETTJ.")
 
 # COMMAND ----------
-# MAGIC %md
-# MAGIC ## 2. Testar a NTN-B com a taxa real
 
 from ibov_barrier.fixed_income.ntnb import ntnb_price, ntnb_duration
 
@@ -68,7 +83,7 @@ vna = 4000.00
 cupom = 6.00
 data_venc = date(2035, 5, 15)
 
-# Pega a taxa mais próxima de 10 anos (2520 DU) - busca pelo valor mais próximo caso não exista o vértice exato
+# Pega a taxa mais próxima de 10 anos (2520 DU)
 idx_10_anos = (df_ettj["vertice_du"] - 2520).abs().idxmin()
 taxa_10_anos = df_ettj.loc[idx_10_anos, "taxa_ipca"]
 
