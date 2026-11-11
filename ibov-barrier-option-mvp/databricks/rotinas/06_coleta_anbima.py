@@ -125,3 +125,38 @@ try:
     print(f"Duration: {duration_ltn:.4f} anos")
 except Exception as e:
     print(f"Erro ao precificar LTN: {e}")
+
+# COMMAND ----------
+
+# DBTITLE 1,Testar LFT (Tesouro Selic)
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## 4. Testar a LFT (Tesouro Selic)
+
+from ibov_barrier.fixed_income.lft import lft_price
+import pyettj
+
+print("\n=== Buscando Curva DI (proxy para Selic) ===")
+try:
+    # Usamos a curva DI como proxy para a projeção da Selic
+    df_di = pyettj.get_ettj(date(2026, 10, 27).strftime("%Y-%m-%d"), curva="PRE")
+    df_di = df_di.rename(columns={"dias_uteis": "vertice_du", "taxa": "taxa_di"})
+    df_di["taxa_di"] = df_di["taxa_di"] * 100
+    
+    # Pega a taxa DI de ~1 ano (252 DU)
+    idx_1_ano = (df_di["vertice_du"] - 252).abs().idxmin()
+    taxa_1_ano = df_di.loc[idx_1_ano, "taxa_di"]
+    
+    # Parâmetros da LFT
+    vna_teste = 10000.00 # VNA de teste (R$ 10 mil)
+    spread = 0.0 # LFT padrão não tem spread
+    data_venc_lft = date(2027, 10, 27)
+    
+    preco_lft = lft_price(vna_teste, taxa_1_ano, spread, date(2026, 10, 27), data_venc_lft)
+    
+    print(f"Taxa DI/Selic Projetada (1 ano): {taxa_1_ano:.2f}% a.a.")
+    print(f"VNA Inicial: R$ {vna_teste:,.2f}")
+    print(f"PU Projetado da LFT em 1 ano: R$ {preco_lft:,.2f}")
+    print(f"Rendimento Nominal: R$ {preco_lft - vna_teste:,.2f}")
+except Exception as e:
+    print(f"Erro ao precificar LFT: {e}")
