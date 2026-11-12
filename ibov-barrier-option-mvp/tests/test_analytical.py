@@ -29,5 +29,27 @@ class TestAnalyticalBenchmark(unittest.TestCase):
         
         self.assertLess(error_pct, 0.01, "Monte Carlo divergiu mais de 1% do analítico")
 
+    def test_mc_vs_analytical_k_below_barrier(self):
+        """Valida o regime K < H (strike abaixo da barreira) da fórmula de Reiner-Rubinstein."""
+        market = MarketData(spot=150_000, rate=0.12, dividend_yield=0.02, volatility=0.22)
+        contract = BarrierContract(strike=120_000, barrier=140_000, maturity=0.5)
+
+        analytical_price = price_down_and_out_call_analytical(
+            spot=market.spot, strike=contract.strike, barrier=contract.barrier,
+            maturity=contract.maturity, rate=market.rate,
+            dividend_yield=market.dividend_yield, volatility=market.volatility
+        )
+
+        mc_result = price_down_and_out_call(
+            market, contract, paths=200_000, steps=252, seed=42, monitoring="brownian_bridge"
+        )
+
+        error_pct = abs(mc_result.price - analytical_price) / analytical_price
+        print(f"\nAnalítico (R-R, K<H): R$ {analytical_price:.2f}")
+        print(f"Monte Carlo (K<H):    R$ {mc_result.price:.2f}")
+        print(f"Erro relativo: {error_pct:.4%}")
+
+        self.assertLess(error_pct, 0.01, "Regime K<H divergiu mais de 1% do analítico")
+
 if __name__ == "__main__":
     unittest.main()
