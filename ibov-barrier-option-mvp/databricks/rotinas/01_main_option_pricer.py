@@ -173,10 +173,11 @@ if str(SRC_PATH) not in sys.path:
 
 # Importa somente as classes e funções necessárias do motor centralizado.
 from ibov_barrier import BarrierContract, MarketData, price_down_and_out_call
+from ibov_barrier.analytical import price_down_and_out_call_analytical
 from ibov_barrier.di_curve import build_market_curves, business_days, max_calendar_date
 
 print(f"Motor de precificação importado de: {SRC_PATH}")
-print("API disponível: MarketData, BarrierContract, price_down_and_out_call")
+print("API disponível: MarketData, BarrierContract, price_down_and_out_call, price_down_and_out_call_analytical")
 
 # COMMAND ----------
 
@@ -963,6 +964,15 @@ bundle_rows.extend({
 } for name, frame in result_frames.items())
 
 # --- Seção pricing_result: metadados da precificação da barreira ---
+# Calcula o Benchmark Analítico
+analytical_price = price_down_and_out_call_analytical(
+    spot=market.spot, strike=contract.strike, barrier=contract.barrier,
+    maturity=contract.maturity, rate=market.rate,
+    dividend_yield=market.dividend_yield, volatility=market.volatility
+)
+analytical_error_pct = abs(barrier_result.price - analytical_price) / analytical_price if analytical_price > 0 else 0.0
+print(f"  Benchmark analítico (R-R): {analytical_price:,.2f} | Erro MC vs analítico: {analytical_error_pct:.4%}")
+
 pricing_result = {
     "contract": {
         "strike": float(TARGET_STRIKE),
@@ -979,6 +989,8 @@ pricing_result = {
     },
     "vanilla_price": float(barrier_result.vanilla_price),
     "barrier_price": float(barrier_result.price),
+    "analytical_price": float(analytical_price),
+    "analytical_error_pct": float(analytical_error_pct),
     "barrier_discount_abs": float(barrier_discount_abs),
     "barrier_discount_pct": float(barrier_discount_pct),
     "knock_out_probability": float(barrier_result.knock_out_probability),

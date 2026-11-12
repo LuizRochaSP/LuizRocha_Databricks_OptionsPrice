@@ -208,6 +208,11 @@ if metadata and pricing:
     col7.metric("📉 Desconto Barreira", f"{pricing.get('barrier_discount_pct', 0):.2%}")
     col8.metric("🎲 P(knock-out)", f"{pricing.get('knock_out_probability', 0):.2%}")
 
+    if "analytical_price" in pricing:
+        col9, col10 = st.columns(2)
+        col9.metric("📐 Preço Analítico (Reiner-Rubinstein)", f"{pricing.get('analytical_price', 0):,.2f}")
+        col10.metric("🧮 Erro MC vs Analítico", f"{pricing.get('analytical_error_pct', 0):.4%}")
+
     if show_metadata:
         with st.expander("📋 Ver parâmetros do contrato e mercado"):
             col_a, col_b = st.columns(2)
