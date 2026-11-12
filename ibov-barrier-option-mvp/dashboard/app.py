@@ -172,7 +172,7 @@ st.success(f"✓ Resultado carregado: **{selected_filename}**")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
     ["📈 Resumo do Gestor", "🌪️ Superfície e Volatilidade", "📉 Curvas de Mercado",
-     "⚙️ Motor de Precificação", "🛡️ Controle e Ingestão"]
+     "⚙️ Motor de Precificação", "🛡️ Controle e Ingestão"])
 
 with tab1:
     st.header("1️⃣ Resumo do Pricer")
