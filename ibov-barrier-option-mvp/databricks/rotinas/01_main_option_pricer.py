@@ -87,9 +87,9 @@ TARGET_MATURITY = 0.5
 # Barreira down-and-out (pontos do IBOV). Deve ser positiva e inferior ao spot.
 TARGET_BARRIER = 140_000.0
 # Número de caminhos de Monte Carlo (mais caminhos = menor erro-padrão).
-MC_PATHS = 100_000
+MC_PATHS = 200_000
 # Número de passos discretos no caminho (resolução temporal da simulação).
-MC_STEPS = 126
+MC_STEPS = 252
 # Semente fixa para reprodutibilidade dos resultados.
 MC_SEED = 42
 # Método de monitoramento: "brownian_bridge" detecta cruzamentos entre passos;

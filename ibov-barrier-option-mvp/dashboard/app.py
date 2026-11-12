@@ -631,6 +631,7 @@ if show_validation:
             "Erro-padrão não-negativo": se >= 0,
             "IC contém preço": ci_low <= barrier_price <= ci_high,
             "Forward reconstruído": forward_ok,
+            "Erro MC vs Analítico < 1%": pricing.get("analytical_error_pct", 0) < 0.01,
         }
 
         pass_count = fail_count = 0
