@@ -15,8 +15,14 @@ import plotly.graph_objects as go
 import streamlit as st
 from databricks.sdk import WorkspaceClient
 
+from types import SimpleNamespace
+
 from ibov_barrier.pricing import price_down_and_out_call, MarketData, BarrierContract
-from ibov_barrier.pricing_barriers import price_up_and_out_call
+from ibov_barrier.pricing_barriers import (
+    price_up_and_out_call,
+    price_down_and_out_put,
+    price_up_and_out_put,
+)
 
 st.set_page_config(
     page_title="Dashboard Renda Fixa",
@@ -715,7 +721,13 @@ with tab6:
 
     with col_esq:
         st.subheader("Parâmetros da Operação")
-        sim_strategy = st.selectbox("Estratégia", ["Down-and-Out Call", "Up-and-Out Call"])
+        sim_strategy = st.selectbox(
+            "Estratégia",
+            ["Down-and-Out Call", "Up-and-Out Call", "Down-and-Out Put", "Up-and-Out Put", "Knock-Out Straddle"],
+        )
+        # Down = barreira inferior (morre se cair); Up = barreira superior (morre se subir).
+        # O Knock-Out Straddle usa barreira para baixo (down): as duas pernas morrem no crash.
+        barrier_is_down = sim_strategy.startswith("Down") or sim_strategy == "Knock-Out Straddle"
 
         sim_spot = st.number_input("Spot Inicial (R$)", min_value=10000.0, max_value=500000.0, value=172000.0, step=1000.0)
         sim_vol = st.slider("Volatilidade (%)", min_value=5.0, max_value=100.0, value=20.0, step=1.0) / 100.0
@@ -724,8 +736,8 @@ with tab6:
         sim_strike_pct = st.slider("Strike (% do Spot)", min_value=50, max_value=150, value=90, step=1)
         sim_strike = sim_spot * (sim_strike_pct / 100.0)
 
-        # TRAVA DE UX: O range do slider muda conforme a estratégia
-        if sim_strategy == "Down-and-Out Call":
+        # TRAVA DE UX: O range do slider muda conforme a barreira (Down/Up)
+        if barrier_is_down:
             sim_barrier_pct = st.slider("Barreira (% do Spot)", min_value=50, max_value=99, value=80, step=1)
         else:
             sim_barrier_pct = st.slider("Barreira (% do Spot)", min_value=101, max_value=150, value=120, step=1)
@@ -740,9 +752,14 @@ with tab6:
 
         # GRÁFICO DE PAYOFF
         s_t = np.linspace(sim_spot * 0.5, sim_spot * 1.5, 200)
-        payoff = np.maximum(s_t - sim_strike, 0)
+        if "Put" in sim_strategy:
+            payoff = np.maximum(sim_strike - s_t, 0)
+        elif sim_strategy == "Knock-Out Straddle":
+            payoff = np.maximum(s_t - sim_strike, 0) + np.maximum(sim_strike - s_t, 0)
+        else:  # Calls
+            payoff = np.maximum(s_t - sim_strike, 0)
 
-        if sim_strategy == "Down-and-Out Call":
+        if barrier_is_down:
             payoff[s_t <= sim_barrier] = 0
         else:
             payoff[s_t >= sim_barrier] = 0
@@ -757,14 +774,14 @@ with tab6:
         # TRAVAS DE UX COM MENSAGENS AMIGÁVEIS
         is_invalid = False
 
-        if sim_strategy == "Down-and-Out Call" and sim_spot <= sim_barrier:
+        if barrier_is_down and sim_spot <= sim_barrier:
             st.error("🚨 **Opa, chefe!** O Spot já está abaixo ou na barreira. A opção morreu antes de começar! Diminua a barreira ou aumente o Spot.")
             is_invalid = True
-        elif sim_strategy == "Up-and-Out Call" and sim_spot >= sim_barrier:
+        elif (not barrier_is_down) and sim_spot >= sim_barrier:
             st.error("🚨 **Opa, chefe!** O Spot já está acima da barreira. A opção morreu antes de começar! Aumente a barreira ou diminua o Spot.")
             is_invalid = True
 
-        if sim_strategy == "Down-and-Out Call" and sim_strike < sim_barrier:
+        if barrier_is_down and sim_strike < sim_barrier:
             st.warning("⚠️ **Atenção:** O Strike está abaixo da Barreira. Essa estrutura é atípica.")
 
         if not is_invalid:
@@ -776,8 +793,23 @@ with tab6:
                     try:
                         if sim_strategy == "Down-and-Out Call":
                             result = price_down_and_out_call(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
-                        else:
+                        elif sim_strategy == "Up-and-Out Call":
                             result = price_up_and_out_call(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
+                        elif sim_strategy == "Down-and-Out Put":
+                            result = price_down_and_out_put(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
+                        elif sim_strategy == "Up-and-Out Put":
+                            result = price_up_and_out_put(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
+                        else:
+                            # Knock-Out Straddle: perna call + perna put, mesmo Strike e
+                            # Barreira down. Mesma seed → mesmos caminhos e mesmos eventos
+                            # de knock-out nas duas pernas; P(KO) é idêntica entre pernas.
+                            result_call = price_down_and_out_call(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
+                            result_put = price_down_and_out_put(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
+                            result = SimpleNamespace(
+                                price=result_call.price + result_put.price,
+                                vanilla_price=result_call.vanilla_price + result_put.vanilla_price,
+                                knock_out_probability=result_call.knock_out_probability,
+                            )
 
                         if result.price <= 0.01:
                             st.warning("💡 **Calma lá!** Com esses parâmetros a opção está valendo praticamente zero. Tente ajustar o Strike ou a Barreira.")
