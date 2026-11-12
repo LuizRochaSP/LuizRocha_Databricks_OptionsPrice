@@ -157,26 +157,6 @@ instrument_choice = st.sidebar.selectbox(
     format_func=lambda x: SUPPORTED_INSTRUMENTS[x]["label"],
 )
 
-with st.sidebar.expander("🔮 Próximos instrumentos"):
-    for key, info in SUPPORTED_INSTRUMENTS.items():
-        if info["status"] == "planned":
-            st.markdown(f"**{info['label']}**")
-            st.caption(info["description"])
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("**Seções do Dashboard**")
-
-show_metadata = st.sidebar.checkbox("📋 Metadata", value=True)
-show_validation = st.sidebar.checkbox("✅ Validação", value=True)
-show_risk = st.sidebar.checkbox("🛡️ Risco & Gregas", value=True)
-show_export = st.sidebar.checkbox("📥 Exportação", value=True)
-show_history = st.sidebar.checkbox("📈 Histórico", value=False)
-show_raw_data = st.sidebar.checkbox("📊 Dados Brutos", value=False)
-show_mc_viz = st.sidebar.checkbox("🎲 Visualização Monte Carlo", value=True)
-
-st.sidebar.markdown("---")
-st.sidebar.caption("Databricks Apps · Renda Fixa")
-
 bundle = load_result(selected_file_path)
 
 if bundle is None:
@@ -190,30 +170,34 @@ st.markdown("---")
 
 st.success(f"✓ Resultado carregado: **{selected_filename}**")
 
-st.header("1️⃣ Resumo do Pricer")
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    ["📈 Resumo do Gestor", "🌪️ Superfície e Volatilidade", "📉 Curvas de Mercado",
+     "⚙️ Motor de Precificação", "🛡️ Controle e Ingestão"]
 
-metadata = extract_json_object(bundle, "metadata")
-pricing = extract_json_object(bundle, "pricing_result")
+with tab1:
+    st.header("1️⃣ Resumo do Pricer")
 
-if metadata and pricing:
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("📅 Data de Mercado", metadata.get("market_date", "—"))
-    col2.metric("📈 Spot IBOV", f"{metadata.get('spot', 0):,.2f}")
-    col3.metric("🎯 Strike Alvo", f"{metadata.get('target_strike', 0):,.2f}")
-    col4.metric("📊 Vol. Implícita", f"{metadata.get('target_iv', 0):.2%}")
+    metadata = extract_json_object(bundle, "metadata")
+    pricing = extract_json_object(bundle, "pricing_result")
 
-    col5, col6, col7, col8 = st.columns(4)
-    col5.metric("💰 Preço Vanilla (BS)", f"{pricing.get('vanilla_price', 0):,.2f}")
-    col6.metric("💎 Preço Down-and-Out", f"{pricing.get('barrier_price', 0):,.2f}")
-    col7.metric("📉 Desconto Barreira", f"{pricing.get('barrier_discount_pct', 0):.2%}")
-    col8.metric("🎲 P(knock-out)", f"{pricing.get('knock_out_probability', 0):.2%}")
+    if metadata and pricing:
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("📅 Data de Mercado", metadata.get("market_date", "—"))
+        col2.metric("📈 Spot IBOV", f"{metadata.get('spot', 0):,.2f}")
+        col3.metric("🎯 Strike Alvo", f"{metadata.get('target_strike', 0):,.2f}")
+        col4.metric("📊 Vol. Implícita", f"{metadata.get('target_iv', 0):.2%}")
 
-    if "analytical_price" in pricing:
-        col9, col10 = st.columns(2)
-        col9.metric("📐 Preço Analítico (Reiner-Rubinstein)", f"{pricing.get('analytical_price', 0):,.2f}")
-        col10.metric("🧮 Erro MC vs Analítico", f"{pricing.get('analytical_error_pct', 0):.4%}")
+        col5, col6, col7, col8 = st.columns(4)
+        col5.metric("💰 Preço Vanilla (BS)", f"{pricing.get('vanilla_price', 0):,.2f}")
+        col6.metric("💎 Preço Down-and-Out", f"{pricing.get('barrier_price', 0):,.2f}")
+        col7.metric("📉 Desconto Barreira", f"{pricing.get('barrier_discount_pct', 0):.2%}")
+        col8.metric("🎲 P(knock-out)", f"{pricing.get('knock_out_probability', 0):.2%}")
 
-    if show_metadata:
+        if "analytical_price" in pricing:
+            col9, col10 = st.columns(2)
+            col9.metric("📐 Preço Analítico (Reiner-Rubinstein)", f"{pricing.get('analytical_price', 0):,.2f}")
+            col10.metric("🧮 Erro MC vs Analítico", f"{pricing.get('analytical_error_pct', 0):.4%}")
+
         with st.expander("📋 Ver parâmetros do contrato e mercado"):
             col_a, col_b = st.columns(2)
             with col_a:
@@ -223,179 +207,278 @@ if metadata and pricing:
                 st.markdown("**Mercado**")
                 st.json(pricing.get("market", {}))
 
-st.markdown("---")
+    st.markdown("---")
+    st.header("5️⃣c Risco & Gregas")
 
-st.header("2️⃣ Curva de Juros (DI)")
+    selected_ts = (
+        selected_file_path.split("/")[-1]
+        .replace("RESULTS_superficieVol_", "")
+        .replace(".csv", "")
+    )
+    risk_files = list_available_risk(RESULTS_BASE_PATH)
+    risk_match = next(
+        (p for p in risk_files if selected_ts in p.split("/")[-1]), None
+    )
 
-curve_df = extract_dataframe(bundle, "curve")
-y_col = None
-
-if curve_df is not None and len(curve_df) > 0:
-    curve_df = curve_df.copy()
-    if "T" in curve_df.columns:
-        curve_df["T_plot"] = curve_df["T"]
-    elif "tenor_bd" in curve_df.columns:
-        curve_df["T_plot"] = curve_df["tenor_bd"] / 252.0
-    else:
-        curve_df["T_plot"] = range(len(curve_df))
-
-    for candidate in ["r_cont", "r", "rate"]:
-        if candidate in curve_df.columns:
-            y_col = candidate
-            break
-
-    if y_col:
-        fig = px.line(
-            curve_df, x="T_plot", y=y_col, markers=True,
-            title="Curva Prefixada (r contínua)",
-            labels={"T_plot": "Prazo (anos)", y_col: "Taxa contínua (% a.a.)"},
-        )
-        fig.update_traces(line_color="#1f77b4", marker_size=8)
-        fig.update_layout(yaxis_tickformat=".2%", hovermode="x unified", height=400)
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("Coluna de taxa não encontrada.")
-
-st.markdown("---")
-
-st.header("3️⃣ Dividend Yield Implícito q(T)")
-
-if curve_df is not None and len(curve_df) > 0:
-    q_col = None
-    for candidate in ["q_cont", "q", "dividend_yield"]:
-        if candidate in curve_df.columns:
-            q_col = candidate
-            break
-
-    if q_col:
-        fig_q = px.line(
-            curve_df, x="T_plot", y=q_col, markers=True,
-            title="Dividend Yield Implícito (q contínuo)",
-            labels={"T_plot": "Prazo (anos)", q_col: "q (% a.a.)"},
-        )
-        fig_q.update_traces(line_color="#ff7f0e", marker_size=8)
-        fig_q.update_layout(yaxis_tickformat=".2%", hovermode="x unified", height=400)
-        st.plotly_chart(fig_q, use_container_width=True)
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("q Médio", f"{curve_df[q_col].mean():.4%}")
-        col2.metric("q Mínimo", f"{curve_df[q_col].min():.4%}")
-        col3.metric("q Máximo", f"{curve_df[q_col].max():.4%}")
-
+    if risk_match is None:
         st.info(
-            "⚠️ **Limitação conhecida:** q(T) ~0.8% a.a. está abaixo do "
-            "histórico NEFIN/USP (5-7%). Ver README."
+            "⚠️ Nenhum arquivo RISK correspondente a este RESULTS.\n\n"
+            "Execute o notebook `03_analise_risco` após a validação."
+        )
+    else:
+        risk = load_risk_json(risk_match)
+        if risk:
+            m = risk.get("metrics", {})
+
+            col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+            col_r1.metric("💵 Preço (MC)", f"{m.get('price', 0):,.2f}")
+            col_r2.metric("Δ Delta", f"{m.get('delta', 0):.4f}")
+            col_r3.metric("Γ Gamma", f"{m.get('gamma', 0):.6f}")
+            col_r4.metric("ν Vega (1%)", f"{m.get('vega_1pct', 0):,.2f}")
+
+            col_r5, col_r6, col_r7, col_r8 = st.columns(4)
+            col_r5.metric("Θ Theta (1d)", f"{m.get('theta_1day', 0):,.2f}")
+            col_r6.metric("ρ Rho (1%)", f"{m.get('rho_1pct', 0):,.2f}")
+            col_r7.metric("DV01", f"{m.get('dv01', 0):.4f}")
+            col_r8.metric("Convexidade (1bp)", f"{m.get('rate_convexity_1bp', 0):.6f}")
+
+            st.markdown("---")
+            col_v1, col_v2, col_v3, col_v4 = st.columns(4)
+            col_v1.metric("📉 VaR 99% (1d)", f"{m.get('var', 0):,.2f}")
+            col_v2.metric("⚠️ Expected Shortfall", f"{m.get('expected_shortfall', 0):,.2f}")
+            col_v3.metric("📊 PnL médio", f"{m.get('pnl_mean', 0):,.2f}")
+            col_v4.metric("📏 PnL std", f"{m.get('pnl_std', 0):,.2f}")
+
+            st.caption(
+                f"VaR/ES: {m.get('confidence_level', 0.99):.0%} de confiança, horizonte de "
+                f"{m.get('horizon_days', 1)} dia(s), {m.get('scenarios', 0):,} cenários — "
+                f"{m.get('methodology', '—')}"
+            )
+
+            limitations = risk.get("limitations", [])
+            if limitations:
+                with st.expander("⚠️ Limitações do cálculo de risco"):
+                    for lim in limitations:
+                        st.markdown(f"- {lim}")
+
+            st.caption(
+                f"Validação: {risk.get('validation_decision', '—')} "
+                f"({risk.get('validation_warn_count', 0)} ressalvas) | "
+                f"Fonte: `{risk_match.split('/')[-1]}`"
+            )
+
+    st.markdown("---")
+    st.header("8️⃣ Histórico de Execuções")
+
+    if len(available_files) > 1:
+        selected_hist = st.multiselect(
+            "Comparar múltiplas execuções",
+            options=available_files,
+            default=available_files[:2],
+            format_func=lambda x: x.split("/")[-1].replace("RESULTS_superficieVol_", "").replace(".csv", ""),
         )
 
-st.markdown("---")
+        if selected_hist:
+            comparison_data = []
+            for fpath in selected_hist:
+                bundle_hist = load_result(fpath)
+                if bundle_hist is None:
+                    continue
+                meta_hist = extract_json_object(bundle_hist, "metadata")
+                price_hist = extract_json_object(bundle_hist, "pricing_result")
+                if meta_hist and price_hist:
+                    comparison_data.append({
+                        "Arquivo": fpath.split("/")[-1],
+                        "Data": meta_hist.get("market_date", "—"),
+                        "Spot": meta_hist.get("spot", 0),
+                        "Vanilla": price_hist.get("vanilla_price", 0),
+                        "DAO": price_hist.get("barrier_price", 0),
+                        "Desconto %": price_hist.get("barrier_discount_pct", 0),
+                        "P(KO) %": price_hist.get("knock_out_probability", 0),
+                    })
 
-st.header("4️⃣ Superfície de Volatilidade Implícita")
+            if comparison_data:
+                comparison_df = pd.DataFrame(comparison_data)
+                st.dataframe(comparison_df, use_container_width=True)
 
-iv_data = extract_dataframe(bundle, "iv_data")
+                if len(comparison_df) > 1:
+                    fig_comp = px.line(
+                        comparison_df, x="Data", y=["Vanilla", "DAO"],
+                        markers=True, title="Evolução de Preços",
+                        labels={"value": "Preço (pontos)", "variable": "Tipo"},
+                    )
+                    st.plotly_chart(fig_comp, use_container_width=True)
+    else:
+        st.info("Apenas 1 arquivo disponível.")
 
-if iv_data is not None and len(iv_data) > 0:
-    iv_data = iv_data.copy()
-    iv_data["T_anos"] = iv_data.get("T", 0.5)
+with tab2:
+    st.header("4️⃣ Superfície de Volatilidade Implícita")
 
-    x_col = "log_moneyness" if "log_moneyness" in iv_data.columns else "strike"
-    z_col = "implied_vol" if "implied_vol" in iv_data.columns else "volatility"
+    iv_data = extract_dataframe(bundle, "iv_data")
 
-    if x_col in iv_data.columns and z_col in iv_data.columns:
-        fig_3d = px.scatter_3d(
-            iv_data, x=x_col, y="T_anos", z=z_col, color=z_col,
-            color_continuous_scale="Viridis",
-            title="Superfície de Volatilidade Implícita",
-            labels={x_col: "Log-moneyness ln(K/F)", "T_anos": "Prazo (anos)", z_col: "IV"},
-        )
-        fig_3d.update_layout(height=600, scene=dict(zaxis=dict(tickformat=".1%")))
-        st.plotly_chart(fig_3d, use_container_width=True)
+    if iv_data is not None and len(iv_data) > 0:
+        iv_data = iv_data.copy()
+        iv_data["T_anos"] = iv_data.get("T", 0.5)
 
-        col_x, col_y = st.columns(2)
-        col_x.metric("🎯 Opções com IV válido", len(iv_data))
-        col_y.metric("📅 Vencimentos distintos", iv_data["T_anos"].nunique())
+        x_col = "log_moneyness" if "log_moneyness" in iv_data.columns else "strike"
+        z_col = "implied_vol" if "implied_vol" in iv_data.columns else "volatility"
 
-st.markdown("---")
-
-st.header("4️⃣b Smile de Volatilidade por Vencimento")
-
-if iv_data is not None and len(iv_data) > 0:
-    smile_df = iv_data.copy()
-    group_col = None
-    if "maturity_date" in smile_df.columns:
-        group_col = "maturity_date"
-    elif "T" in smile_df.columns:
-        smile_df["T_group"] = (smile_df["T"] * 10).round() / 10
-        group_col = "T_group"
-
-    k_col = "log_moneyness" if "log_moneyness" in smile_df.columns else "strike"
-    v_col = "implied_vol" if "implied_vol" in smile_df.columns else "volatility"
-    type_col = "option_type" if "option_type" in smile_df.columns else None
-
-    if group_col and k_col in smile_df.columns and v_col in smile_df.columns:
-        if type_col:
-            types_available = sorted(smile_df[type_col].dropna().unique().tolist())
-            selected_types = st.multiselect(
-                "Filtrar por tipo de opção",
-                options=types_available,
-                default=types_available,
+        if x_col in iv_data.columns and z_col in iv_data.columns:
+            fig_3d = px.scatter_3d(
+                iv_data, x=x_col, y="T_anos", z=z_col, color=z_col,
+                color_continuous_scale="Viridis",
+                title="Superfície de Volatilidade Implícita",
+                labels={x_col: "Log-moneyness ln(K/F)", "T_anos": "Prazo (anos)", z_col: "IV"},
             )
-            if selected_types:
-                smile_df = smile_df[smile_df[type_col].isin(selected_types)]
+            fig_3d.update_layout(height=600, scene=dict(zaxis=dict(tickformat=".1%")))
+            st.plotly_chart(fig_3d, use_container_width=True)
 
-        counts = smile_df.groupby(group_col)[k_col].count()
-        valid_groups = counts[counts >= 3].index.tolist()
+            col_x, col_y = st.columns(2)
+            col_x.metric("🎯 Opções com IV válido", len(iv_data))
+            col_y.metric("📅 Vencimentos distintos", iv_data["T_anos"].nunique())
 
-        if valid_groups:
-            smile_filtered = smile_df[smile_df[group_col].isin(valid_groups)].copy()
-            fig_smile = px.line(
-                smile_filtered.sort_values(k_col),
-                x=k_col, y=v_col, color=group_col, markers=True,
-                title="Smile de Volatilidade Implícita por Vencimento",
-                labels={k_col: "Log-moneyness ln(K/F)", v_col: "IV", group_col: "Vencimento"},
-            )
-            fig_smile.update_traces(line_width=2, marker_size=7)
-            fig_smile.update_layout(
-                yaxis_tickformat=".1%", hovermode="x unified", height=500,
-                legend=dict(orientation="h", yanchor="bottom", y=-0.3),
-            )
-            fig_smile.add_vline(
-                x=0.0, line_dash="dash", line_color="gray", opacity=0.5,
-                annotation_text="ATM", annotation_position="top",
-            )
-            st.plotly_chart(fig_smile, use_container_width=True)
+    st.markdown("---")
+    st.header("4️⃣b Smile de Volatilidade por Vencimento")
 
-            col_a, col_b, col_c = st.columns(3)
-            col_a.metric("Vencimentos no smile", len(valid_groups))
-            col_b.metric("Strikes totais", len(smile_filtered))
-            col_c.metric(
-                "IV Mín / Máx",
-                f"{smile_filtered[v_col].min():.2%} / {smile_filtered[v_col].max():.2%}",
-            )
+    if iv_data is not None and len(iv_data) > 0:
+        smile_df = iv_data.copy()
+        group_col = None
+        if "maturity_date" in smile_df.columns:
+            group_col = "maturity_date"
+        elif "T" in smile_df.columns:
+            smile_df["T_group"] = (smile_df["T"] * 10).round() / 10
+            group_col = "T_group"
 
-            with st.expander("📋 Ver dados do smile"):
-                st.dataframe(smile_filtered, use_container_width=True)
+        k_col = "log_moneyness" if "log_moneyness" in smile_df.columns else "strike"
+        v_col = "implied_vol" if "implied_vol" in smile_df.columns else "volatility"
+        type_col = "option_type" if "option_type" in smile_df.columns else None
+
+        if group_col and k_col in smile_df.columns and v_col in smile_df.columns:
+            if type_col:
+                types_available = sorted(smile_df[type_col].dropna().unique().tolist())
+                selected_types = st.multiselect(
+                    "Filtrar por tipo de opção",
+                    options=types_available,
+                    default=types_available,
+                )
+                if selected_types:
+                    smile_df = smile_df[smile_df[type_col].isin(selected_types)]
+
+            counts = smile_df.groupby(group_col)[k_col].count()
+            valid_groups = counts[counts >= 3].index.tolist()
+
+            if valid_groups:
+                smile_filtered = smile_df[smile_df[group_col].isin(valid_groups)].copy()
+                fig_smile = px.line(
+                    smile_filtered.sort_values(k_col),
+                    x=k_col, y=v_col, color=group_col, markers=True,
+                    title="Smile de Volatilidade Implícita por Vencimento",
+                    labels={k_col: "Log-moneyness ln(K/F)", v_col: "IV", group_col: "Vencimento"},
+                )
+                fig_smile.update_traces(line_width=2, marker_size=7)
+                fig_smile.update_layout(
+                    yaxis_tickformat=".1%", hovermode="x unified", height=500,
+                    legend=dict(orientation="h", yanchor="bottom", y=-0.3),
+                )
+                fig_smile.add_vline(
+                    x=0.0, line_dash="dash", line_color="gray", opacity=0.5,
+                    annotation_text="ATM", annotation_position="top",
+                )
+                st.plotly_chart(fig_smile, use_container_width=True)
+
+                col_a, col_b, col_c = st.columns(3)
+                col_a.metric("Vencimentos no smile", len(valid_groups))
+                col_b.metric("Strikes totais", len(smile_filtered))
+                col_c.metric(
+                    "IV Mín / Máx",
+                    f"{smile_filtered[v_col].min():.2%} / {smile_filtered[v_col].max():.2%}",
+                )
+
+                with st.expander("📋 Ver dados do smile"):
+                    st.dataframe(smile_filtered, use_container_width=True)
+            else:
+                st.info("Nenhum vencimento com ≥3 strikes.")
+
+with tab3:
+    st.header("2️⃣ Curva de Juros (DI)")
+
+    curve_df = extract_dataframe(bundle, "curve")
+    y_col = None
+
+    if curve_df is not None and len(curve_df) > 0:
+        curve_df = curve_df.copy()
+        if "T" in curve_df.columns:
+            curve_df["T_plot"] = curve_df["T"]
+        elif "tenor_bd" in curve_df.columns:
+            curve_df["T_plot"] = curve_df["tenor_bd"] / 252.0
         else:
-            st.info("Nenhum vencimento com ≥3 strikes.")
+            curve_df["T_plot"] = range(len(curve_df))
 
-st.markdown("---")
+        for candidate in ["r_cont", "r", "rate"]:
+            if candidate in curve_df.columns:
+                y_col = candidate
+                break
 
-st.header("5️⃣ Diagnóstico da Simulação Monte Carlo")
+        if y_col:
+            fig = px.line(
+                curve_df, x="T_plot", y=y_col, markers=True,
+                title="Curva Prefixada (r contínua)",
+                labels={"T_plot": "Prazo (anos)", y_col: "Taxa contínua (% a.a.)"},
+            )
+            fig.update_traces(line_color="#1f77b4", marker_size=8)
+            fig.update_layout(yaxis_tickformat=".2%", hovermode="x unified", height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("Coluna de taxa não encontrada.")
 
-sim_diag = extract_json_object(bundle, "simulation_diagnostics")
-if sim_diag:
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("🔢 Caminhos", f"{sim_diag.get('paths', 0):,}")
-    col2.metric("📊 Passos", f"{sim_diag.get('steps', 0):,}")
-    col3.metric("🌱 Seed", sim_diag.get("seed", "—"))
-    col4.metric("📈 Monitoramento", sim_diag.get("monitoring", "—"))
+    st.markdown("---")
+    st.header("3️⃣ Dividend Yield Implícito q(T)")
 
-    if pricing:
-        col5, col6, col7 = st.columns(3)
-        col5.metric("📉 Erro-padrão", f"{pricing.get('standard_error', 0):,.4f}")
-        col6.metric("📊 IC 95% (inf)", f"{pricing.get('ci_low_95', 0):,.2f}")
-        col7.metric("📊 IC 95% (sup)", f"{pricing.get('ci_high_95', 0):,.2f}")
+    if curve_df is not None and len(curve_df) > 0:
+        q_col = None
+        for candidate in ["q_cont", "q", "dividend_yield"]:
+            if candidate in curve_df.columns:
+                q_col = candidate
+                break
 
-if show_mc_viz:
+        if q_col:
+            fig_q = px.line(
+                curve_df, x="T_plot", y=q_col, markers=True,
+                title="Dividend Yield Implícito (q contínuo)",
+                labels={"T_plot": "Prazo (anos)", q_col: "q (% a.a.)"},
+            )
+            fig_q.update_traces(line_color="#ff7f0e", marker_size=8)
+            fig_q.update_layout(yaxis_tickformat=".2%", hovermode="x unified", height=400)
+            st.plotly_chart(fig_q, use_container_width=True)
+
+            col1, col2, col3 = st.columns(3)
+            col1.metric("q Médio", f"{curve_df[q_col].mean():.4%}")
+            col2.metric("q Mínimo", f"{curve_df[q_col].min():.4%}")
+            col3.metric("q Máximo", f"{curve_df[q_col].max():.4%}")
+
+            st.info(
+                "⚠️ **Limitação conhecida:** q(T) ~0.8% a.a. está abaixo do "
+                "histórico NEFIN/USP (5-7%). Ver README."
+            )
+
+with tab4:
+    st.header("5️⃣ Diagnóstico da Simulação Monte Carlo")
+
+    sim_diag = extract_json_object(bundle, "simulation_diagnostics")
+    if sim_diag:
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("🔢 Caminhos", f"{sim_diag.get('paths', 0):,}")
+        col2.metric("📊 Passos", f"{sim_diag.get('steps', 0):,}")
+        col3.metric("🌱 Seed", sim_diag.get("seed", "—"))
+        col4.metric("📈 Monitoramento", sim_diag.get("monitoring", "—"))
+
+        if pricing:
+            col5, col6, col7 = st.columns(3)
+            col5.metric("📉 Erro-padrão", f"{pricing.get('standard_error', 0):,.4f}")
+            col6.metric("📊 IC 95% (inf)", f"{pricing.get('ci_low_95', 0):,.2f}")
+            col7.metric("📊 IC 95% (sup)", f"{pricing.get('ci_high_95', 0):,.2f}")
+
+    st.markdown("---")
     st.subheader("5️⃣b Visualização da Simulação Monte Carlo")
 
     if pricing and sim_diag:
@@ -537,71 +620,7 @@ if show_mc_viz:
         except Exception as e:
             st.warning(f"Erro ao gerar visualização MC: {e}")
 
-st.markdown("---")
-
-if show_risk:
-    st.header("5️⃣c Risco & Gregas")
-
-    selected_ts = (
-        selected_file_path.split("/")[-1]
-        .replace("RESULTS_superficieVol_", "")
-        .replace(".csv", "")
-    )
-    risk_files = list_available_risk(RESULTS_BASE_PATH)
-    risk_match = next(
-        (p for p in risk_files if selected_ts in p.split("/")[-1]), None
-    )
-
-    if risk_match is None:
-        st.info(
-            "⚠️ Nenhum arquivo RISK correspondente a este RESULTS.\n\n"
-            "Execute o notebook `03_analise_risco` após a validação."
-        )
-    else:
-        risk = load_risk_json(risk_match)
-        if risk:
-            m = risk.get("metrics", {})
-
-            col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-            col_r1.metric("💵 Preço (MC)", f"{m.get('price', 0):,.2f}")
-            col_r2.metric("Δ Delta", f"{m.get('delta', 0):.4f}")
-            col_r3.metric("Γ Gamma", f"{m.get('gamma', 0):.6f}")
-            col_r4.metric("ν Vega (1%)", f"{m.get('vega_1pct', 0):,.2f}")
-
-            col_r5, col_r6, col_r7, col_r8 = st.columns(4)
-            col_r5.metric("Θ Theta (1d)", f"{m.get('theta_1day', 0):,.2f}")
-            col_r6.metric("ρ Rho (1%)", f"{m.get('rho_1pct', 0):,.2f}")
-            col_r7.metric("DV01", f"{m.get('dv01', 0):.4f}")
-            col_r8.metric("Convexidade (1bp)", f"{m.get('rate_convexity_1bp', 0):.6f}")
-
-            st.markdown("---")
-            col_v1, col_v2, col_v3, col_v4 = st.columns(4)
-            col_v1.metric("📉 VaR 99% (1d)", f"{m.get('var', 0):,.2f}")
-            col_v2.metric("⚠️ Expected Shortfall", f"{m.get('expected_shortfall', 0):,.2f}")
-            col_v3.metric("📊 PnL médio", f"{m.get('pnl_mean', 0):,.2f}")
-            col_v4.metric("📏 PnL std", f"{m.get('pnl_std', 0):,.2f}")
-
-            st.caption(
-                f"VaR/ES: {m.get('confidence_level', 0.99):.0%} de confiança, horizonte de "
-                f"{m.get('horizon_days', 1)} dia(s), {m.get('scenarios', 0):,} cenários — "
-                f"{m.get('methodology', '—')}"
-            )
-
-            limitations = risk.get("limitations", [])
-            if limitations:
-                with st.expander("⚠️ Limitações do cálculo de risco"):
-                    for lim in limitations:
-                        st.markdown(f"- {lim}")
-
-            st.caption(
-                f"Validação: {risk.get('validation_decision', '—')} "
-                f"({risk.get('validation_warn_count', 0)} ressalvas) | "
-                f"Fonte: `{risk_match.split('/')[-1]}`"
-            )
-
-st.markdown("---")
-
-if show_validation:
+with tab5:
     st.header("6️⃣ Validação e Qualidade")
 
     if pricing:
@@ -650,8 +669,6 @@ if show_validation:
         col3.metric("📊 Taxa", f"{pass_count / total * 100:.1f}%" if total > 0 else "—")
 
     st.markdown("---")
-
-if show_export:
     st.header("7️⃣ Exportar Dados")
     market_date = metadata.get("market_date", "unknown") if metadata else "unknown"
 
@@ -679,54 +696,8 @@ if show_export:
                 file_name=f"iv_{market_date}.csv",
                 mime="text/csv",
             )
+
     st.markdown("---")
-
-if show_history:
-    st.header("8️⃣ Histórico de Execuções")
-
-    if len(available_files) > 1:
-        selected_hist = st.multiselect(
-            "Comparar múltiplas execuções",
-            options=available_files,
-            default=available_files[:2],
-            format_func=lambda x: x.split("/")[-1].replace("RESULTS_superficieVol_", "").replace(".csv", ""),
-        )
-
-        if selected_hist:
-            comparison_data = []
-            for fpath in selected_hist:
-                bundle_hist = load_result(fpath)
-                if bundle_hist is None:
-                    continue
-                meta_hist = extract_json_object(bundle_hist, "metadata")
-                price_hist = extract_json_object(bundle_hist, "pricing_result")
-                if meta_hist and price_hist:
-                    comparison_data.append({
-                        "Arquivo": fpath.split("/")[-1],
-                        "Data": meta_hist.get("market_date", "—"),
-                        "Spot": meta_hist.get("spot", 0),
-                        "Vanilla": price_hist.get("vanilla_price", 0),
-                        "DAO": price_hist.get("barrier_price", 0),
-                        "Desconto %": price_hist.get("barrier_discount_pct", 0),
-                        "P(KO) %": price_hist.get("knock_out_probability", 0),
-                    })
-
-            if comparison_data:
-                comparison_df = pd.DataFrame(comparison_data)
-                st.dataframe(comparison_df, use_container_width=True)
-
-                if len(comparison_df) > 1:
-                    fig_comp = px.line(
-                        comparison_df, x="Data", y=["Vanilla", "DAO"],
-                        markers=True, title="Evolução de Preços",
-                        labels={"value": "Preço (pontos)", "variable": "Tipo"},
-                    )
-                    st.plotly_chart(fig_comp, use_container_width=True)
-    else:
-        st.info("Apenas 1 arquivo disponível.")
-    st.markdown("---")
-
-if show_raw_data:
     st.header("9️⃣ Dados Brutos")
     with st.expander("📊 Ver bundle RESULTS completo"):
         st.dataframe(bundle, use_container_width=True)
