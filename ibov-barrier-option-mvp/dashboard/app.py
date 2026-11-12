@@ -167,8 +167,8 @@ if bundle is None:
 
 selected_filename = selected_file_path.split("/")[-1]
 
-st.title("📊 Dashboard do Projeto de Renda Fixa")
-st.markdown("**Opção com barreira sobre Ibovespa — pipeline end-to-end**")
+st.title("📊 Quantitative Pricing & Risk Dashboard")
+st.markdown("**Motor de precificação, análise de risco e simulação de estruturas**")
 st.markdown("---")
 
 st.success(f"✓ Resultado carregado: **{selected_filename}**")
