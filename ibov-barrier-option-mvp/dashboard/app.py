@@ -15,6 +15,9 @@ import plotly.graph_objects as go
 import streamlit as st
 from databricks.sdk import WorkspaceClient
 
+from ibov_barrier.pricing import price_down_and_out_call, MarketData, BarrierContract
+from ibov_barrier.pricing_barriers import price_up_and_out_call
+
 st.set_page_config(
     page_title="Dashboard Renda Fixa",
     page_icon="📊",
@@ -170,9 +173,9 @@ st.markdown("---")
 
 st.success(f"✓ Resultado carregado: **{selected_filename}**")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
     ["📈 Resumo do Gestor", "🌪️ Superfície e Volatilidade", "📉 Curvas de Mercado",
-     "⚙️ Motor de Precificação", "🛡️ Controle e Ingestão"])
+     "⚙️ Motor de Precificação", "🛡️ Controle e Ingestão", "🛠️ Structuring Desk"])
 
 with tab1:
     st.header("1️⃣ Resumo do Pricer")
@@ -703,6 +706,90 @@ with tab5:
         st.dataframe(bundle, use_container_width=True)
     with st.expander("📋 Ver lista de objetos no bundle"):
         st.write(sorted(bundle["object_name"].unique()))
+
+with tab6:
+    st.header("🛠️ Structuring Desk - Simulador de Opções com Barreira")
+    st.markdown("Monte a estrutura e visualize o payoff e o preço em tempo real.")
+
+    col_esq, col_dir = st.columns([1, 2])
+
+    with col_esq:
+        st.subheader("Parâmetros da Operação")
+        sim_strategy = st.selectbox("Estratégia", ["Down-and-Out Call", "Up-and-Out Call"])
+
+        sim_spot = st.number_input("Spot Inicial (R$)", min_value=10000.0, max_value=500000.0, value=172000.0, step=1000.0)
+        sim_vol = st.slider("Volatilidade (%)", min_value=5.0, max_value=100.0, value=20.0, step=1.0) / 100.0
+        sim_rate = st.slider("Taxa de Juros (%)", min_value=0.0, max_value=30.0, value=12.0, step=0.5) / 100.0
+
+        sim_strike_pct = st.slider("Strike (% do Spot)", min_value=50, max_value=150, value=90, step=1)
+        sim_strike = sim_spot * (sim_strike_pct / 100.0)
+
+        # TRAVA DE UX: O range do slider muda conforme a estratégia
+        if sim_strategy == "Down-and-Out Call":
+            sim_barrier_pct = st.slider("Barreira (% do Spot)", min_value=50, max_value=99, value=80, step=1)
+        else:
+            sim_barrier_pct = st.slider("Barreira (% do Spot)", min_value=101, max_value=150, value=120, step=1)
+        sim_barrier = sim_spot * (sim_barrier_pct / 100.0)
+
+        sim_tenor = st.selectbox("Vencimento", ["1 Mês (21 DU)", "3 Meses (63 DU)", "6 Meses (126 DU)", "1 Ano (252 DU)"], index=2)
+        tenor_map = {"1 Mês (21 DU)": 21/252, "3 Meses (63 DU)": 63/252, "6 Meses (126 DU)": 126/252, "1 Ano (252 DU)": 1.0}
+        sim_maturity = tenor_map[sim_tenor]
+
+    with col_dir:
+        st.subheader("Diagrama de Payoff e Precificação")
+
+        # GRÁFICO DE PAYOFF
+        s_t = np.linspace(sim_spot * 0.5, sim_spot * 1.5, 200)
+        payoff = np.maximum(s_t - sim_strike, 0)
+
+        if sim_strategy == "Down-and-Out Call":
+            payoff[s_t <= sim_barrier] = 0
+        else:
+            payoff[s_t >= sim_barrier] = 0
+
+        fig_payoff = go.Figure()
+        fig_payoff.add_trace(go.Scatter(x=s_t, y=payoff, mode='lines', name='Payoff', line=dict(color='#2ca02c', width=3)))
+        fig_payoff.add_vline(x=sim_barrier, line_dash="dash", line_color="red", annotation_text="Barreira (Knock-Out)")
+        fig_payoff.add_vline(x=sim_strike, line_dash="dot", line_color="orange", annotation_text="Strike")
+        fig_payoff.update_layout(title="Payoff no Vencimento", xaxis_title="Preço do Ativo no Vencimento (R$)", yaxis_title="Lucro/Prejuízo (R$)", height=350, margin=dict(l=20, r=20, t=40, b=20))
+        st.plotly_chart(fig_payoff, use_container_width=True)
+
+        # TRAVAS DE UX COM MENSAGENS AMIGÁVEIS
+        is_invalid = False
+
+        if sim_strategy == "Down-and-Out Call" and sim_spot <= sim_barrier:
+            st.error("🚨 **Opa, chefe!** O Spot já está abaixo ou na barreira. A opção morreu antes de começar! Diminua a barreira ou aumente o Spot.")
+            is_invalid = True
+        elif sim_strategy == "Up-and-Out Call" and sim_spot >= sim_barrier:
+            st.error("🚨 **Opa, chefe!** O Spot já está acima da barreira. A opção morreu antes de começar! Aumente a barreira ou diminua o Spot.")
+            is_invalid = True
+
+        if sim_strategy == "Down-and-Out Call" and sim_strike < sim_barrier:
+            st.warning("⚠️ **Atenção:** O Strike está abaixo da Barreira. Essa estrutura é atípica.")
+
+        if not is_invalid:
+            if st.button("🚀 Calcular Preço", use_container_width=True, type="primary"):
+                with st.spinner("Rodando Monte Carlo com 50.000 caminhos..."):
+                    market_sim = MarketData(spot=sim_spot, rate=sim_rate, dividend_yield=0.02, volatility=sim_vol)
+                    contract_sim = BarrierContract(strike=sim_strike, barrier=sim_barrier, maturity=sim_maturity)
+
+                    try:
+                        if sim_strategy == "Down-and-Out Call":
+                            result = price_down_and_out_call(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
+                        else:
+                            result = price_up_and_out_call(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
+
+                        if result.price <= 0.01:
+                            st.warning("💡 **Calma lá!** Com esses parâmetros a opção está valendo praticamente zero. Tente ajustar o Strike ou a Barreira.")
+                        else:
+                            st.success("Cálculo concluído com sucesso! Estrutura pronta para o cliente.")
+
+                        col_r1, col_r2, col_r3 = st.columns(3)
+                        col_r1.metric("Preço da Estrutura", f"R$ {result.price:,.2f}")
+                        col_r2.metric("Preço Vanilla", f"R$ {result.vanilla_price:,.2f}")
+                        col_r3.metric("P(Knock-out)", f"{result.knock_out_probability:.2%}")
+                    except Exception:
+                        st.error("⚠️ **Ops!** Não conseguimos calcular essa estrutura. Verifique os parâmetros.")
 
 st.markdown("---")
 st.caption(
