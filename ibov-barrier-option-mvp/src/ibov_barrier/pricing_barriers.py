@@ -814,3 +814,139 @@ def price_no_touch_up(
         p_not_touch,
         0.0,
     )
+
+
+def price_barrier_collar(
+    market: MarketData,
+    contract: BarrierContract,
+    strike_2: float,
+    *,
+    paths: int = 200_000,
+    steps: int = 252,
+    seed: int = 42,
+    monitoring: str = "brownian_bridge",
+):
+    """Collar com barreira Down (Família C — lacuna fácil).
+
+    Compra uma Put Down-and-Out (Strike 1 = `contract.strike`) e VENDE uma
+    Call Down-and-Out (Strike 2 = `strike_2`), ambas com a MESMA barreira
+    inferior. Preço líquido = put − call (negativo = crédito líquido).
+    Mesma seed → mesmos caminhos e knock-outs; SE em quadratura
+    (conservador, ignora a correlação das pernas).
+    """
+    if not np.isfinite(strike_2) or strike_2 <= 0:
+        raise ValueError("strike_2 must be a positive finite number")
+    put_leg = price_down_and_out_put(market, contract, paths=paths, steps=steps, seed=seed, monitoring=monitoring)
+    call_leg = price_down_and_out_call(
+        market, replace(contract, strike=strike_2), paths=paths, steps=steps, seed=seed, monitoring=monitoring
+    )
+    price = put_leg.price - call_leg.price
+    se = (put_leg.standard_error**2 + call_leg.standard_error**2) ** 0.5
+    return SimpleNamespace(
+        price=price,
+        standard_error=se,
+        ci_low=price - 1.96 * se,
+        ci_high=price + 1.96 * se,
+        knock_out_probability=put_leg.knock_out_probability,
+        vanilla_price=put_leg.vanilla_price - call_leg.vanilla_price,
+    )
+
+
+def price_barrier_call_spread(
+    market: MarketData,
+    contract: BarrierContract,
+    strike_2: float,
+    *,
+    paths: int = 200_000,
+    steps: int = 252,
+    seed: int = 42,
+    monitoring: str = "brownian_bridge",
+):
+    """Call Spread com barreira Down (Família C — lacuna fácil).
+
+    Compra uma Call Down-and-Out (Strike 1) e VENDE uma Call Down-and-Out
+    (Strike 2, tipicamente acima do Strike 1 para débito líquido).
+    Payoff limitado nos dois lados: risco e retorno known em troca de
+    prêmio menor que a call avulsa.
+    """
+    if not np.isfinite(strike_2) or strike_2 <= 0:
+        raise ValueError("strike_2 must be a positive finite number")
+    call_1 = price_down_and_out_call(market, contract, paths=paths, steps=steps, seed=seed, monitoring=monitoring)
+    call_2 = price_down_and_out_call(
+        market, replace(contract, strike=strike_2), paths=paths, steps=steps, seed=seed, monitoring=monitoring
+    )
+    price = call_1.price - call_2.price
+    se = (call_1.standard_error**2 + call_2.standard_error**2) ** 0.5
+    return SimpleNamespace(
+        price=price,
+        standard_error=se,
+        ci_low=price - 1.96 * se,
+        ci_high=price + 1.96 * se,
+        knock_out_probability=call_1.knock_out_probability,
+        vanilla_price=call_1.vanilla_price - call_2.vanilla_price,
+    )
+
+
+def price_barrier_put_spread(
+    market: MarketData,
+    contract: BarrierContract,
+    strike_2: float,
+    *,
+    paths: int = 200_000,
+    steps: int = 252,
+    seed: int = 42,
+    monitoring: str = "brownian_bridge",
+):
+    """Put Spread com barreira Down (Família C — lacuna fácil).
+
+    Compra uma Put Down-and-Out (Strike 1) e VENDE uma Put Down-and-Out
+    (Strike 2). Com Strike 2 abaixo do Strike 1, é o spread de put
+    clássico de débito (proteção limitada ao crash, mais barato que a
+    put avulsa — e a barreira Down corta ainda o custo da perna longa).
+    """
+    if not np.isfinite(strike_2) or strike_2 <= 0:
+        raise ValueError("strike_2 must be a positive finite number")
+    put_1 = price_down_and_out_put(market, contract, paths=paths, steps=steps, seed=seed, monitoring=monitoring)
+    put_2 = price_down_and_out_put(
+        market, replace(contract, strike=strike_2), paths=paths, steps=steps, seed=seed, monitoring=monitoring
+    )
+    price = put_1.price - put_2.price
+    se = (put_1.standard_error**2 + put_2.standard_error**2) ** 0.5
+    return SimpleNamespace(
+        price=price,
+        standard_error=se,
+        ci_low=price - 1.96 * se,
+        ci_high=price + 1.96 * se,
+        knock_out_probability=put_1.knock_out_probability,
+        vanilla_price=put_1.vanilla_price - put_2.vanilla_price,
+    )
+
+
+def price_knock_out_forward(
+    market: MarketData,
+    contract: BarrierContract,
+    *,
+    paths: int = 200_000,
+    steps: int = 252,
+    seed: int = 42,
+    monitoring: str = "brownian_bridge",
+):
+    """Forward sintético com barreira Down (Família C — lacuna fácil).
+
+    Compra uma Call Down-and-Out e VENDE uma Put Down-and-Out com o MESMO
+    Strike e a MESMA barreira (paridade put-call barrier). O valor forward
+    vanilla seria S0·e^(−qT) − K·e^(−rT); a barreira Down desconta essa
+    parcela pelo risco de knock-out (forward que "morre" no crash).
+    """
+    call = price_down_and_out_call(market, contract, paths=paths, steps=steps, seed=seed, monitoring=monitoring)
+    put = price_down_and_out_put(market, contract, paths=paths, steps=steps, seed=seed, monitoring=monitoring)
+    price = call.price - put.price
+    se = (call.standard_error**2 + put.standard_error**2) ** 0.5
+    return SimpleNamespace(
+        price=price,
+        standard_error=se,
+        ci_low=price - 1.96 * se,
+        ci_high=price + 1.96 * se,
+        knock_out_probability=call.knock_out_probability,
+        vanilla_price=call.vanilla_price - put.vanilla_price,
+    )
