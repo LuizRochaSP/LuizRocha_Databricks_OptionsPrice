@@ -721,3 +721,96 @@ def price_barrier_risk_reversal(
         knock_out_probability=call_leg.knock_out_probability,
         vanilla_price=call_leg.vanilla_price - put_leg.vanilla_price,
     )
+
+
+def price_one_touch_up(
+    market: MarketData,
+    contract: BarrierContract,
+    payout: float = 100.0,
+    paths: int = 200_000,
+    steps: int = 252,
+    seed: int = 42,
+) -> PriceResult:
+    """One-Touch Up: Paga o 'payout' se o ativo tocar a barreira superior em QUALQUER momento.
+
+    Binário de barreira (Família D): payoff fixo descontado multiplicado pela
+    probabilidade de toque. O campo `knock_out_probability` reporta P(tocado)
+    nesta função (convenção binária). Monitoramento Brownian Bridge sobre a
+    barreira logarítmica, payoff liquidado no vencimento.
+    """
+    s0, h, t = market.spot, contract.barrier, contract.maturity
+    sigma = market.volatility
+    if s0 >= h:
+        # Barreira já tocada: paga o payout com certeza (P(tocado) = 1).
+        return PriceResult(
+            payout * exp(-market.rate * t),
+            0.0,
+            payout * exp(-market.rate * t),
+            payout * exp(-market.rate * t),
+            1.0,
+            0.0,
+        )
+
+    rng = np.random.default_rng(seed)
+    dt = t / steps
+    z = rng.standard_normal((paths, steps))
+    uniforms = rng.random((paths, steps))
+
+    drift = (market.rate - market.dividend_yield - 0.5 * sigma**2) * dt
+    diffusion = sigma * np.sqrt(dt)
+    log_paths = np.log(s0) + np.cumsum(drift + diffusion * z, axis=1)
+    log_h = np.log(h)
+    previous = np.concatenate((np.full((paths, 1), np.log(s0)), log_paths[:, :-1]), axis=1)
+
+    endpoints_below = (previous < log_h) & (log_paths < log_h)
+    crossing_probability = np.ones_like(log_paths)
+    crossing_probability[endpoints_below] = np.exp(
+        -2.0 * (log_h - previous[endpoints_below]) * (log_h - log_paths[endpoints_below]) / (sigma**2 * dt)
+    )
+    survived = np.all(endpoints_below & (uniforms > crossing_probability), axis=1)
+    touched = ~survived
+
+    discount = exp(-market.rate * t)
+    payoffs = discount * payout * touched
+
+    price = float(payoffs.mean())
+    standard_error = float(payoffs.std(ddof=1) / sqrt(paths))
+    return PriceResult(
+        price,
+        standard_error,
+        price - 1.96 * standard_error,
+        price + 1.96 * standard_error,
+        float(touched.mean()),
+        0.0,
+    )
+
+
+def price_no_touch_up(
+    market: MarketData,
+    contract: BarrierContract,
+    payout: float = 100.0,
+    paths: int = 200_000,
+    steps: int = 252,
+    seed: int = 42,
+) -> PriceResult:
+    """No-Touch Up: Paga o 'payout' se o ativo NÃO tocar a barreira superior em momento algum.
+
+    Complemento binário do One-Touch. O erro padrão herdado do One-Touch não é
+    aproximação: payoffs binários complementares têm variância idêntica
+    (p(1-p)), logo o SE do No-Touch é EXATAMENTE o SE do One-Touch.
+    O campo `knock_out_probability` reporta P(não tocado).
+    """
+    # Roda o One-Touch para pegar os caminhos idênticos
+    res_ot = price_one_touch_up(market, contract, payout, paths, steps, seed)
+    p_not_touch = 1.0 - res_ot.knock_out_probability
+    discount = exp(-market.rate * contract.maturity)
+    price = discount * payout * p_not_touch
+    standard_error = res_ot.standard_error  # Exato: variância de Bernoulli complementar
+    return PriceResult(
+        price,
+        standard_error,
+        price - 1.96 * standard_error,
+        price + 1.96 * standard_error,
+        p_not_touch,
+        0.0,
+    )
