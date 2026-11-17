@@ -1074,16 +1074,16 @@ with tab6:
         else:
             fig_payoff.add_trace(go.Scatter(x=s_t, y=payoff, mode='lines', name='Payoff', line=dict(color='#2ca02c', width=3)))
         if is_two_barrier:
-            for level, label in ((sim_lower, "L"), (sim_upper, "U")):
+            for level, label, pos in ((sim_lower, "L", "top left"), (sim_upper, "U", "top right")):
                 if level is not None:
                     if is_sequential:
                         label += " (KI)" if (label == "L") == ki_is_lower else " (KO)"
-                    fig_payoff.add_vline(x=level, line_dash="dash", line_color="red", annotation_text=f"Barreira {label}")
+                    fig_payoff.add_vline(x=level, line_dash="dash", line_color="red", annotation_text=f"Barreira {label}", annotation_position=pos)
         else:
             barrier_label = "Barreira (Knock-In)" if is_knock_in else ("Barreira" if is_binary else "Barreira (Knock-Out)")
-            fig_payoff.add_vline(x=sim_barrier, line_dash="dash", line_color="red", annotation_text=barrier_label)
+            fig_payoff.add_vline(x=sim_barrier, line_dash="dash", line_color="red", annotation_text=barrier_label, annotation_position="top left")
         if has_strike:
-            fig_payoff.add_vline(x=sim_strike, line_dash="dot", line_color="orange", annotation_text="Strike")
+            fig_payoff.add_vline(x=sim_strike, line_dash="dot", line_color="orange", annotation_text="Strike", annotation_position="top right")
         if is_range:
             fig_payoff.add_hline(y=sim_coupon, line_dash="dash", line_color="#00A3E0",
                                  annotation_text=f"Cupom máximo {sim_accrual_rate:.2%} a.a. × {sim_maturity:.2f} ano (R$ {sim_coupon:,.2f})")
