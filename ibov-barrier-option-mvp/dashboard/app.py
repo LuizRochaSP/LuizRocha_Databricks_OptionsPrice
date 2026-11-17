@@ -251,7 +251,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
      "⚙️ Motor de Precificação", "🛡️ Controle e Ingestão", "🛠️ Structuring Desk"])
 
 with tab1:
-    st.header("1️⃣ Resumo do Pricer")
+    st.header("Resumo do Pricer")
 
     metadata = extract_json_object(bundle, "metadata")
     pricing = extract_json_object(bundle, "pricing_result")
@@ -284,7 +284,7 @@ with tab1:
                 st.json(pricing.get("market", {}))
 
     st.markdown("---")
-    st.header("5️⃣c Risco & Gregas")
+    st.header("Risco & Gregas")
 
     selected_ts = (
         selected_file_path.split("/")[-1]
@@ -344,7 +344,7 @@ with tab1:
             )
 
     st.markdown("---")
-    st.header("8️⃣ Histórico de Execuções")
+    st.header("Histórico de Execuções")
 
     if len(available_files) > 1:
         selected_hist = st.multiselect(
@@ -388,7 +388,7 @@ with tab1:
         st.info("Apenas 1 arquivo disponível.")
 
 with tab2:
-    st.header("4️⃣ Superfície de Volatilidade Implícita")
+    st.header("Superfície de Volatilidade Implícita")
 
     iv_data = extract_dataframe(bundle, "iv_data")
 
@@ -450,7 +450,7 @@ with tab2:
             col_y.metric("📅 Vencimentos distintos", iv_data["T_anos"].nunique())
 
     st.markdown("---")
-    st.header("4️⃣b Smile de Volatilidade por Vencimento")
+    st.header("Smile de Volatilidade por Vencimento")
 
     if iv_data is not None and len(iv_data) > 0:
         smile_df = iv_data.copy()
@@ -512,7 +512,7 @@ with tab2:
                 st.info("Nenhum vencimento com ≥3 strikes.")
 
 with tab3:
-    st.header("2️⃣ Curva de Juros (DI)")
+    st.header("Curva de Juros (DI)")
 
     curve_df = extract_dataframe(bundle, "curve")
     y_col = None
@@ -544,7 +544,7 @@ with tab3:
             st.warning("Coluna de taxa não encontrada.")
 
     st.markdown("---")
-    st.header("3️⃣ Dividend Yield Implícito q(T)")
+    st.header("Dividend Yield Implícito q(T)")
 
     if curve_df is not None and len(curve_df) > 0:
         q_col = None
@@ -574,7 +574,7 @@ with tab3:
             )
 
 with tab4:
-    st.header("5️⃣ Diagnóstico da Simulação Monte Carlo")
+    st.header("Diagnóstico da Simulação Monte Carlo")
 
     sim_diag = extract_json_object(bundle, "simulation_diagnostics")
     if sim_diag:
@@ -591,7 +591,7 @@ with tab4:
             col7.metric("📊 IC 95% (sup)", f"{pricing.get('ci_high_95', 0):,.2f}")
 
     st.markdown("---")
-    st.subheader("5️⃣b Visualização da Simulação Monte Carlo")
+    st.subheader("b Visualização da Simulação Monte Carlo")
 
     if pricing and sim_diag:
         try:
@@ -733,7 +733,7 @@ with tab4:
             st.warning(f"Erro ao gerar visualização MC: {e}")
 
 with tab5:
-    st.header("6️⃣ Validação e Qualidade")
+    st.header("Validação e Qualidade")
 
     if pricing:
         market_block = pricing.get("market", {})
@@ -781,7 +781,7 @@ with tab5:
         col3.metric("📊 Taxa", f"{pass_count / total * 100:.1f}%" if total > 0 else "—")
 
     st.markdown("---")
-    st.header("7️⃣ Exportar Dados")
+    st.header("Exportar Dados")
     market_date = metadata.get("market_date", "unknown") if metadata else "unknown"
 
     col1, col2, col3 = st.columns(3)
@@ -810,7 +810,7 @@ with tab5:
             )
 
     st.markdown("---")
-    st.header("9️⃣ Dados Brutos")
+    st.header("Dados Brutos")
     with st.expander("📊 Ver bundle RESULTS completo"):
         st.dataframe(bundle, use_container_width=True)
     with st.expander("📋 Ver lista de objetos no bundle"):
