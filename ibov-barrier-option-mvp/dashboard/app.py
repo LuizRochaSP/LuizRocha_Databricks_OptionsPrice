@@ -34,6 +34,58 @@ st.set_page_config(
     layout="wide",
 )
 
+# ---- CSS institucional (dark theme bank-grade) ----
+st.markdown(
+    """
+    <style>
+    /* Links e textos: sem o azul padrão do Streamlit */
+    a, .stApp a, [data-testid="stMarkdownContainer"] a {
+        color: #E8E9EB !important;
+        text-decoration: none !important;
+    }
+    [data-testid="stMarkdownContainer"] p {
+        color: #FFFFFF;
+    }
+
+    /* Cartões de métricas: bordas finas, fundo escuro, números monoespaçados */
+    div[data-testid="stMetric"],
+    [data-testid="metric-container"] {
+        background-color: #1E2128 !important;
+        border: 1px solid #2C3038 !important;
+        border-radius: 8px;
+        padding: 12px 16px !important;
+    }
+    div[data-testid="stMetricValue"],
+    [data-testid="stMetricValue"] {
+        font-family: "Courier New", Courier, monospace !important;
+        color: #FFFFFF !important;
+    }
+    div[data-testid="stMetricLabel"],
+    [data-testid="stMetricLabel"] {
+        color: #9CA3AF !important;
+        font-size: 0.85em !important;
+    }
+
+    /* Botão Calcular Preço: azul institucional B3 */
+    .stButton > button,
+    div[data-testid="stButton"] > button {
+        background-color: #00A3E0 !important;
+        border: 1px solid #00A3E0 !important;
+        color: #FFFFFF !important;
+        font-weight: 600 !important;
+        border-radius: 8px !important;
+    }
+    .stButton > button:hover,
+    div[data-testid="stButton"] > button:hover {
+        background-color: #0091C7 !important;
+        border-color: #0091C7 !important;
+        color: #FFFFFF !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 RESULTS_BASE_PATH = os.environ.get(
     "RESULTS_BASE_PATH",
     "/Workspace/Users/luiz.henrique.felipe.rocha@gmail.com/ibov-barrier-results",
@@ -337,13 +389,40 @@ with tab2:
         z_col = "implied_vol" if "implied_vol" in iv_data.columns else "volatility"
 
         if x_col in iv_data.columns and z_col in iv_data.columns:
-            fig_3d = px.scatter_3d(
-                iv_data, x=x_col, y="T_anos", z=z_col, color=z_col,
-                color_continuous_scale="Viridis",
-                title="Superfície de Volatilidade Implícita",
-                labels={x_col: "Log-moneyness ln(K/F)", "T_anos": "Prazo (anos)", z_col: "IV"},
+            # Superfície 3D real (MATLAB style): interpolação cúbica sobre grade regular
+            from scipy.interpolate import griddata
+
+            x_vals = iv_data[x_col].to_numpy(dtype=float)
+            y_vals = iv_data["T_anos"].to_numpy(dtype=float)
+            z_vals = iv_data[z_col].to_numpy(dtype=float)
+
+            xi = np.linspace(x_vals.min(), x_vals.max(), 80)
+            yi = np.linspace(y_vals.min(), y_vals.max(), 80)
+            X, Y = np.meshgrid(xi, yi)
+            Z = griddata((x_vals, y_vals), z_vals, (X, Y), method="cubic")
+
+            fig_3d = go.Figure(
+                data=[
+                    go.Surface(
+                        x=X, y=Y, z=Z,
+                        colorscale="Viridis",
+                        colorbar=dict(title="IV", tickformat=".1%"),
+                        contours=dict(
+                            z=dict(show=True, usecolormap=True, project_z=True)
+                        ),
+                    )
+                ]
             )
-            fig_3d.update_layout(height=600, scene=dict(zaxis=dict(tickformat=".1%")))
+            fig_3d.update_layout(
+                title="Superfície de Volatilidade Implícita",
+                scene=dict(
+                    xaxis_title="Log-moneyness ln(K/F)",
+                    yaxis_title="Prazo (anos)",
+                    zaxis_title="IV",
+                    zaxis=dict(tickformat=".1%"),
+                ),
+                height=600,
+            )
             st.plotly_chart(fig_3d, use_container_width=True)
 
             col_x, col_y = st.columns(2)
