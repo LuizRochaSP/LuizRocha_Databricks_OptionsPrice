@@ -864,6 +864,9 @@ with tab6:
         if is_combined:
             sim_strike_2_pct = st.slider("Strike da 2ª Perna (Put, % do Spot)", min_value=50, max_value=150, value=110, step=1)
             sim_strike_2 = sim_spot * (sim_strike_2_pct / 100.0)
+        # Payout dos binários de toque (Família D)
+        if is_binary:
+            sim_payout = st.number_input("Payout (R$)", min_value=1.0, max_value=1_000_000.0, value=100.0, step=10.0)
 
         # TRAVA DE UX: O range do slider muda conforme a barreira (Down/Up)
         if barrier_is_down:
@@ -882,13 +885,13 @@ with tab6:
         # GRÁFICO DE PAYOFF
         s_t = np.linspace(sim_spot * 0.5, sim_spot * 1.5, 200)
         if is_binary:
-            # Família D: payoff binário — payout fixo (R$ 100 de referência).
+            # Família D: payoff binário — payout fixo do cliente.
             # One-Touch Up paga acima da barreira (toque implícito no terminal);
             # No-Touch Up paga abaixo dela (barreira jamais tocada nesse cenário).
             if sim_strategy == "One-Touch Up":
-                payoff = np.where(s_t >= sim_barrier, 100.0, 0.0)
+                payoff = np.where(s_t >= sim_barrier, sim_payout, 0.0)
             else:
-                payoff = np.where(s_t < sim_barrier, 100.0, 0.0)
+                payoff = np.where(s_t < sim_barrier, sim_payout, 0.0)
         elif is_combined:
             # Família C: Call (Strike 1) + Put (Strike 2), ambas Knock-Out Down
             if sim_strategy == "Barrier Strangle":
@@ -923,8 +926,8 @@ with tab6:
         fig_payoff.add_vline(x=sim_barrier, line_dash="dash", line_color="red", annotation_text="Barreira (Knock-Out)")
         fig_payoff.add_vline(x=sim_strike, line_dash="dot", line_color="orange", annotation_text="Strike")
         if is_binary:
-            # Linha horizontal tracejada no nível do Payout (R$ 100 de referência)
-            fig_payoff.add_hline(y=100.0, line_dash="dash", line_color="#00A3E0", annotation_text="Payout (R$ 100)")
+            # Linha horizontal tracejada no nível do Payout escolhido
+            fig_payoff.add_hline(y=sim_payout, line_dash="dash", line_color="#00A3E0", annotation_text=f"Payout (R$ {sim_payout:,.0f})")
         fig_payoff.update_layout(title="Payoff no Vencimento", xaxis_title="Preço do Ativo no Vencimento (R$)", yaxis_title="Lucro/Prejuízo (R$)", height=350, margin=dict(l=20, r=20, t=40, b=20))
         st.plotly_chart(fig_payoff, use_container_width=True)
 
@@ -983,10 +986,10 @@ with tab6:
                             result = price_barrier_risk_reversal(market_sim, contract_sim, sim_strike_2, paths=50_000, steps=126, seed=42)
                         elif sim_strategy == "One-Touch Up":
                             # Família D: binário — payout fixo se tocar a barreira superior
-                            result = price_one_touch_up(market_sim, contract_sim, payout=100.0, paths=50_000, steps=126, seed=42)
+                            result = price_one_touch_up(market_sim, contract_sim, payout=sim_payout, paths=50_000, steps=126, seed=42)
                         elif sim_strategy == "No-Touch Up":
                             # Família D: binário — payout fixo se NUNCA tocar a barreira superior
-                            result = price_no_touch_up(market_sim, contract_sim, payout=100.0, paths=50_000, steps=126, seed=42)
+                            result = price_no_touch_up(market_sim, contract_sim, payout=sim_payout, paths=50_000, steps=126, seed=42)
                         else:
                             # Knock-Out Straddle: perna call + perna put, mesmo Strike e
                             # Barreira down. Mesma seed mesmos caminhos e mesmos eventos
