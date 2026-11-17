@@ -81,6 +81,17 @@ st.markdown(
         border-color: #0091C7 !important;
         color: #FFFFFF !important;
     }
+
+    /* Remove o azul dos títulos das seções */
+    h1, h2, h3, h4, h5, h6 {
+        color: #FFFFFF !important;
+    }
+
+    /* Remove o azul das tags do multiselect */
+    span[data-baseweb="tag"] {
+        background-color: #2C3038 !important;
+        color: #FFFFFF !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -423,7 +434,16 @@ with tab2:
                 ),
                 height=600,
             )
-            st.plotly_chart(fig_3d, use_container_width=True)
+            st.plotly_chart(
+                fig_3d,
+                use_container_width=True,
+                config={
+                    'displayModeBar': True,      # Mostra a barra de ferramentas (com botão de expandir)
+                    'scrollZoom': True,          # Permite dar zoom usando o scroll do mouse
+                    'displaylogo': False,        # Remove o logo do Plotly da barra
+                    'modeBarButtonsToRemove': ['sendDataToCloud']  # Limpa botões inúteis
+                }
+            )
 
             col_x, col_y = st.columns(2)
             col_x.metric("🎯 Opções com IV válido", len(iv_data))
