@@ -28,6 +28,8 @@ from ibov_barrier.pricing_barriers import (
     price_up_and_in_put,
     price_barrier_strangle,
     price_barrier_risk_reversal,
+    price_one_touch_up,
+    price_no_touch_up,
 )
 
 st.set_page_config(
@@ -834,6 +836,7 @@ with tab6:
                 "Down-and-Out Put", "Up-and-Out Put",
                 "Down-and-In Put", "Up-and-In Put",
                 "Knock-Out Straddle", "Barrier Strangle", "Barrier Risk Reversal",
+                "One-Touch Up", "No-Touch Up",
             ],
         )
         # Down = barreira inferior; Up = barreira superior.
@@ -842,6 +845,8 @@ with tab6:
         # O Knock-Out Straddle usa barreira para baixo (down): as duas pernas morrem no crash.
         # Estruturas combinadas (Família C): duas pernas Knock-Out Down com a mesma barreira.
         is_combined = sim_strategy in ("Barrier Strangle", "Barrier Risk Reversal")
+        # Binários de toque (Família D): payoff fixo condicionado ao toque da barreira
+        is_binary = sim_strategy in ("One-Touch Up", "No-Touch Up")
         barrier_is_down = (
             sim_strategy.startswith("Down")
             or sim_strategy == "Knock-Out Straddle"
@@ -876,7 +881,15 @@ with tab6:
 
         # GRÁFICO DE PAYOFF
         s_t = np.linspace(sim_spot * 0.5, sim_spot * 1.5, 200)
-        if is_combined:
+        if is_binary:
+            # Família D: payoff binário — payout fixo (R$ 100 de referência).
+            # One-Touch Up paga acima da barreira (toque implícito no terminal);
+            # No-Touch Up paga abaixo dela (barreira jamais tocada nesse cenário).
+            if sim_strategy == "One-Touch Up":
+                payoff = np.where(s_t >= sim_barrier, 100.0, 0.0)
+            else:
+                payoff = np.where(s_t < sim_barrier, 100.0, 0.0)
+        elif is_combined:
             # Família C: Call (Strike 1) + Put (Strike 2), ambas Knock-Out Down
             if sim_strategy == "Barrier Strangle":
                 payoff = np.maximum(s_t - sim_strike, 0) + np.maximum(sim_strike_2 - s_t, 0)
@@ -891,7 +904,10 @@ with tab6:
 
         # Região morta do payoff:
         # Knock-Out zero ONDE a barreira FOI tocada; Knock-In zero onde NÃO foi tocada.
-        if is_knock_in:
+        # Binários (Família D) já carregam a própria região binária no payoff.
+        if is_binary:
+            pass
+        elif is_knock_in:
             if barrier_is_down:
                 payoff[s_t > sim_barrier] = 0
             else:
@@ -906,6 +922,9 @@ with tab6:
         fig_payoff.add_trace(go.Scatter(x=s_t, y=payoff, mode='lines', name='Payoff', line=dict(color='#2ca02c', width=3)))
         fig_payoff.add_vline(x=sim_barrier, line_dash="dash", line_color="red", annotation_text="Barreira (Knock-Out)")
         fig_payoff.add_vline(x=sim_strike, line_dash="dot", line_color="orange", annotation_text="Strike")
+        if is_binary:
+            # Linha horizontal tracejada no nível do Payout (R$ 100 de referência)
+            fig_payoff.add_hline(y=100.0, line_dash="dash", line_color="#00A3E0", annotation_text="Payout (R$ 100)")
         fig_payoff.update_layout(title="Payoff no Vencimento", xaxis_title="Preço do Ativo no Vencimento (R$)", yaxis_title="Lucro/Prejuízo (R$)", height=350, margin=dict(l=20, r=20, t=40, b=20))
         st.plotly_chart(fig_payoff, use_container_width=True)
 
@@ -913,7 +932,11 @@ with tab6:
         is_invalid = False
 
         # Travas de UX: Knock-Out nasce além da barreira = morta; Knock-In nasce além = JÁ ATIVA (vanilla).
-        if not is_knock_in:
+        # Binários: barreira superior já tocada = One-Touch GANHO integral (não é erro).
+        if is_binary:
+            if (not barrier_is_down) and sim_spot >= sim_barrier:
+                st.info("Barreira superior já tocada: o One-Touch paga o Payout integral (o No-Touch vale zero).")
+        elif not is_knock_in:
             if barrier_is_down and sim_spot <= sim_barrier:
                 st.error("**Opa, chefe!** O Spot já está abaixo ou na barreira. A opção morreu antes de começar! Diminua a barreira ou aumente o Spot.")
                 is_invalid = True
@@ -958,6 +981,12 @@ with tab6:
                         elif sim_strategy == "Barrier Risk Reversal":
                             # Família C: Call DOC (Strike 1) - Put DOC (Strike 2); negativo = crédito líquido
                             result = price_barrier_risk_reversal(market_sim, contract_sim, sim_strike_2, paths=50_000, steps=126, seed=42)
+                        elif sim_strategy == "One-Touch Up":
+                            # Família D: binário — payout fixo se tocar a barreira superior
+                            result = price_one_touch_up(market_sim, contract_sim, payout=100.0, paths=50_000, steps=126, seed=42)
+                        elif sim_strategy == "No-Touch Up":
+                            # Família D: binário — payout fixo se NUNCA tocar a barreira superior
+                            result = price_no_touch_up(market_sim, contract_sim, payout=100.0, paths=50_000, steps=126, seed=42)
                         else:
                             # Knock-Out Straddle: perna call + perna put, mesmo Strike e
                             # Barreira down. Mesma seed mesmos caminhos e mesmos eventos
@@ -981,7 +1010,10 @@ with tab6:
                         col_r1.metric("Preço da Estrutura", f"R$ {result.price:,.2f}")
                         col_r2.metric("Preço Vanilla", f"R$ {result.vanilla_price:,.2f}")
                         # Knock-Ins: o campo reporta P(morrer sem ativação)
-                        p_label = "P(Sem Ativação)" if is_knock_in else "P(Knock-out)"
+                        if is_binary:
+                            p_label = "P(Tocado)" if sim_strategy == "One-Touch Up" else "P(Não Tocado)"
+                        else:
+                            p_label = "P(Sem Ativação)" if is_knock_in else "P(Knock-out)"
                         col_r3.metric(p_label, f"{result.knock_out_probability:.2%}")
                     except Exception:
                         st.error("**Ops!** Não conseguimos calcular essa estrutura. Verifique os parâmetros.")
