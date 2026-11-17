@@ -30,7 +30,7 @@ from ibov_barrier.pricing_barriers import (
 
 st.set_page_config(
     page_title="Dashboard Renda Fixa",
-    page_icon="📊",
+    page_icon="",
     layout="wide",
 )
 
@@ -104,22 +104,22 @@ RESULTS_BASE_PATH = os.environ.get(
 
 SUPPORTED_INSTRUMENTS = {
     "option_barrier": {
-        "label": "📊 Opção com Barreira (IBOV)",
+        "label": "Opção com Barreira (IBOV)",
         "status": "active",
         "description": "Call down-and-out sobre Ibovespa, precificada por Monte Carlo.",
     },
     "option_vanilla": {
-        "label": "📈 Opção Europeia Simples",
+        "label": "Opção Europeia Simples",
         "status": "planned",
         "description": "Call/Put europeia sobre IBOV — em desenvolvimento.",
     },
     "swap_di_pre": {
-        "label": "💱 Swap DI x Pré",
+        "label": "Swap DI x Pré",
         "status": "planned",
         "description": "Precificação de swap via curva DI — em desenvolvimento.",
     },
     "future_ind": {
-        "label": "📅 Futuro de Ibovespa",
+        "label": "Futuro de Ibovespa",
         "status": "planned",
         "description": "Precificação e análise de futuros — em desenvolvimento.",
     },
@@ -152,7 +152,7 @@ def load_result(file_path: str):
         w = get_workspace_client()
         with w.workspace.download(file_path) as f:
             # BytesIO explícito: o handle do SDK (_StreamingResponse) tem .mode=None,
-            # e o pandas tenta "b" in handle.mode ao detectar modo binário → TypeError.
+            # e o pandas tenta "b"in handle.mode ao detectar modo binário TypeError.
             return pd.read_csv(BytesIO(f.read()))
     except Exception as e:
         st.error(f"Erro ao carregar {file_path}: {e}")
@@ -208,20 +208,20 @@ def load_risk_json(file_path: str):
         return None
 
 
-st.sidebar.header("⚙️ Configurações")
+st.sidebar.header("Configurações")
 
 available_files = list_available_results(RESULTS_BASE_PATH)
 
 if not available_files:
     st.sidebar.error("Nenhum RESULTS encontrado")
     st.error(
-        f"⚠️ **Nenhum arquivo RESULTS em** `{RESULTS_BASE_PATH}`\n\n"
+        f"**Nenhum arquivo RESULTS em** `{RESULTS_BASE_PATH}`\n\n"
         "Execute `01_main_option_pricer.py` primeiro."
     )
     st.stop()
 
 selected_file_path = st.sidebar.selectbox(
-    "📁 Arquivo RESULTS",
+    "Arquivo RESULTS",
     options=available_files,
     format_func=lambda x: x.split("/")[-1].replace("RESULTS_superficieVol_", "").replace(".csv", ""),
 )
@@ -240,15 +240,15 @@ if bundle is None:
 
 selected_filename = selected_file_path.split("/")[-1]
 
-st.title("📊 Quantitative Pricing & Risk Dashboard")
+st.title("Quantitative Pricing & Risk Dashboard")
 st.markdown("**Motor de precificação, análise de risco e simulação de estruturas**")
 st.markdown("---")
 
-st.success(f"✓ Resultado carregado: **{selected_filename}**")
+st.success(f"Resultado carregado: **{selected_filename}**")
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-    ["📈 Resumo do Gestor", "🌪️ Superfície e Volatilidade", "📉 Curvas de Mercado",
-     "⚙️ Motor de Precificação", "🛡️ Controle e Ingestão", "🛠️ Structuring Desk"])
+    ["Resumo do Gestor", "Superfície e Volatilidade", "Curvas de Mercado",
+     "Motor de Precificação", "Controle e Ingestão", "Structuring Desk"])
 
 with tab1:
     st.header("Resumo do Pricer")
@@ -258,23 +258,23 @@ with tab1:
 
     if metadata and pricing:
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("📅 Data de Mercado", metadata.get("market_date", "—"))
-        col2.metric("📈 Spot IBOV", f"{metadata.get('spot', 0):,.2f}")
-        col3.metric("🎯 Strike Alvo", f"{metadata.get('target_strike', 0):,.2f}")
-        col4.metric("📊 Vol. Implícita", f"{metadata.get('target_iv', 0):.2%}")
+        col1.metric("Data de Mercado", metadata.get("market_date", "—"))
+        col2.metric("Spot IBOV", f"{metadata.get('spot', 0):,.2f}")
+        col3.metric("Strike Alvo", f"{metadata.get('target_strike', 0):,.2f}")
+        col4.metric("Vol. Implícita", f"{metadata.get('target_iv', 0):.2%}")
 
         col5, col6, col7, col8 = st.columns(4)
-        col5.metric("💰 Preço Vanilla (BS)", f"{pricing.get('vanilla_price', 0):,.2f}")
-        col6.metric("💎 Preço Down-and-Out", f"{pricing.get('barrier_price', 0):,.2f}")
-        col7.metric("📉 Desconto Barreira", f"{pricing.get('barrier_discount_pct', 0):.2%}")
-        col8.metric("🎲 P(knock-out)", f"{pricing.get('knock_out_probability', 0):.2%}")
+        col5.metric("Preço Vanilla (BS)", f"{pricing.get('vanilla_price', 0):,.2f}")
+        col6.metric("Preço Down-and-Out", f"{pricing.get('barrier_price', 0):,.2f}")
+        col7.metric("Desconto Barreira", f"{pricing.get('barrier_discount_pct', 0):.2%}")
+        col8.metric("P(knock-out)", f"{pricing.get('knock_out_probability', 0):.2%}")
 
-        if "analytical_price" in pricing:
+        if "analytical_price"in pricing:
             col9, col10 = st.columns(2)
-            col9.metric("📐 Preço Analítico (Reiner-Rubinstein)", f"{pricing.get('analytical_price', 0):,.2f}")
-            col10.metric("🧮 Erro MC vs Analítico", f"{pricing.get('analytical_error_pct', 0):.4%}")
+            col9.metric("Preço Analítico (Reiner-Rubinstein)", f"{pricing.get('analytical_price', 0):,.2f}")
+            col10.metric("Erro MC vs Analítico", f"{pricing.get('analytical_error_pct', 0):.4%}")
 
-        with st.expander("📋 Ver parâmetros do contrato e mercado"):
+        with st.expander("Ver parâmetros do contrato e mercado"):
             col_a, col_b = st.columns(2)
             with col_a:
                 st.markdown("**Contrato**")
@@ -298,7 +298,7 @@ with tab1:
 
     if risk_match is None:
         st.info(
-            "⚠️ Nenhum arquivo RISK correspondente a este RESULTS.\n\n"
+            "Nenhum arquivo RISK correspondente a este RESULTS.\n\n"
             "Execute o notebook `03_analise_risco` após a validação."
         )
     else:
@@ -307,23 +307,23 @@ with tab1:
             m = risk.get("metrics", {})
 
             col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-            col_r1.metric("💵 Preço (MC)", f"{m.get('price', 0):,.2f}")
-            col_r2.metric("Δ Delta", f"{m.get('delta', 0):.4f}")
-            col_r3.metric("Γ Gamma", f"{m.get('gamma', 0):.6f}")
-            col_r4.metric("ν Vega (1%)", f"{m.get('vega_1pct', 0):,.2f}")
+            col_r1.metric("Preço (MC)", f"{m.get('price', 0):,.2f}")
+            col_r2.metric("Delta", f"{m.get('delta', 0):.4f}")
+            col_r3.metric("Gamma", f"{m.get('gamma', 0):.6f}")
+            col_r4.metric("Vega (1%)", f"{m.get('vega_1pct', 0):,.2f}")
 
             col_r5, col_r6, col_r7, col_r8 = st.columns(4)
-            col_r5.metric("Θ Theta (1d)", f"{m.get('theta_1day', 0):,.2f}")
-            col_r6.metric("ρ Rho (1%)", f"{m.get('rho_1pct', 0):,.2f}")
+            col_r5.metric("Theta (1d)", f"{m.get('theta_1day', 0):,.2f}")
+            col_r6.metric("Rho (1%)", f"{m.get('rho_1pct', 0):,.2f}")
             col_r7.metric("DV01", f"{m.get('dv01', 0):.4f}")
             col_r8.metric("Convexidade (1bp)", f"{m.get('rate_convexity_1bp', 0):.6f}")
 
             st.markdown("---")
             col_v1, col_v2, col_v3, col_v4 = st.columns(4)
-            col_v1.metric("📉 VaR 99% (1d)", f"{m.get('var', 0):,.2f}")
-            col_v2.metric("⚠️ Expected Shortfall", f"{m.get('expected_shortfall', 0):,.2f}")
-            col_v3.metric("📊 PnL médio", f"{m.get('pnl_mean', 0):,.2f}")
-            col_v4.metric("📏 PnL std", f"{m.get('pnl_std', 0):,.2f}")
+            col_v1.metric("VaR 99% (1d)", f"{m.get('var', 0):,.2f}")
+            col_v2.metric("Expected Shortfall", f"{m.get('expected_shortfall', 0):,.2f}")
+            col_v3.metric("PnL médio", f"{m.get('pnl_mean', 0):,.2f}")
+            col_v4.metric("PnL std", f"{m.get('pnl_std', 0):,.2f}")
 
             st.caption(
                 f"VaR/ES: {m.get('confidence_level', 0.99):.0%} de confiança, horizonte de "
@@ -333,7 +333,7 @@ with tab1:
 
             limitations = risk.get("limitations", [])
             if limitations:
-                with st.expander("⚠️ Limitações do cálculo de risco"):
+                with st.expander("Limitações do cálculo de risco"):
                     for lim in limitations:
                         st.markdown(f"- {lim}")
 
@@ -396,8 +396,8 @@ with tab2:
         iv_data = iv_data.copy()
         iv_data["T_anos"] = iv_data.get("T", 0.5)
 
-        x_col = "log_moneyness" if "log_moneyness" in iv_data.columns else "strike"
-        z_col = "implied_vol" if "implied_vol" in iv_data.columns else "volatility"
+        x_col = "log_moneyness"if "log_moneyness"in iv_data.columns else "strike"
+        z_col = "implied_vol"if "implied_vol"in iv_data.columns else "volatility"
 
         if x_col in iv_data.columns and z_col in iv_data.columns:
             # Superfície 3D real (MATLAB style): interpolação cúbica sobre grade regular
@@ -438,16 +438,16 @@ with tab2:
                 fig_3d,
                 use_container_width=True,
                 config={
-                    'displayModeBar': True,      # Mostra a barra de ferramentas (com botão de expandir)
-                    'scrollZoom': True,          # Permite dar zoom usando o scroll do mouse
-                    'displaylogo': False,        # Remove o logo do Plotly da barra
-                    'modeBarButtonsToRemove': ['sendDataToCloud']  # Limpa botões inúteis
+                    'displayModeBar': True, # Mostra a barra de ferramentas (com botão de expandir)
+                    'scrollZoom': True, # Permite dar zoom usando o scroll do mouse
+                    'displaylogo': False, # Remove o logo do Plotly da barra
+                    'modeBarButtonsToRemove': ['sendDataToCloud'] # Limpa botões inúteis
                 }
             )
 
             col_x, col_y = st.columns(2)
-            col_x.metric("🎯 Opções com IV válido", len(iv_data))
-            col_y.metric("📅 Vencimentos distintos", iv_data["T_anos"].nunique())
+            col_x.metric("Opções com IV válido", len(iv_data))
+            col_y.metric("Vencimentos distintos", iv_data["T_anos"].nunique())
 
     st.markdown("---")
     st.header("Smile de Volatilidade por Vencimento")
@@ -455,15 +455,15 @@ with tab2:
     if iv_data is not None and len(iv_data) > 0:
         smile_df = iv_data.copy()
         group_col = None
-        if "maturity_date" in smile_df.columns:
+        if "maturity_date"in smile_df.columns:
             group_col = "maturity_date"
-        elif "T" in smile_df.columns:
+        elif "T"in smile_df.columns:
             smile_df["T_group"] = (smile_df["T"] * 10).round() / 10
             group_col = "T_group"
 
-        k_col = "log_moneyness" if "log_moneyness" in smile_df.columns else "strike"
-        v_col = "implied_vol" if "implied_vol" in smile_df.columns else "volatility"
-        type_col = "option_type" if "option_type" in smile_df.columns else None
+        k_col = "log_moneyness"if "log_moneyness"in smile_df.columns else "strike"
+        v_col = "implied_vol"if "implied_vol"in smile_df.columns else "volatility"
+        type_col = "option_type"if "option_type"in smile_df.columns else None
 
         if group_col and k_col in smile_df.columns and v_col in smile_df.columns:
             if type_col:
@@ -506,10 +506,10 @@ with tab2:
                     f"{smile_filtered[v_col].min():.2%} / {smile_filtered[v_col].max():.2%}",
                 )
 
-                with st.expander("📋 Ver dados do smile"):
+                with st.expander("Ver dados do smile"):
                     st.dataframe(smile_filtered, use_container_width=True)
             else:
-                st.info("Nenhum vencimento com ≥3 strikes.")
+                st.info("Nenhum vencimento com 3 strikes.")
 
 with tab3:
     st.header("Curva de Juros (DI)")
@@ -519,9 +519,9 @@ with tab3:
 
     if curve_df is not None and len(curve_df) > 0:
         curve_df = curve_df.copy()
-        if "T" in curve_df.columns:
+        if "T"in curve_df.columns:
             curve_df["T_plot"] = curve_df["T"]
-        elif "tenor_bd" in curve_df.columns:
+        elif "tenor_bd"in curve_df.columns:
             curve_df["T_plot"] = curve_df["tenor_bd"] / 252.0
         else:
             curve_df["T_plot"] = range(len(curve_df))
@@ -569,7 +569,7 @@ with tab3:
             col3.metric("q Máximo", f"{curve_df[q_col].max():.4%}")
 
             st.info(
-                "⚠️ **Limitação conhecida:** q(T) ~0.8% a.a. está abaixo do "
+                "**Limitação conhecida:** q(T) ~0.8% a.a. está abaixo do "
                 "histórico NEFIN/USP (5-7%). Ver README."
             )
 
@@ -579,16 +579,16 @@ with tab4:
     sim_diag = extract_json_object(bundle, "simulation_diagnostics")
     if sim_diag:
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("🔢 Caminhos", f"{sim_diag.get('paths', 0):,}")
-        col2.metric("📊 Passos", f"{sim_diag.get('steps', 0):,}")
-        col3.metric("🌱 Seed", sim_diag.get("seed", "—"))
-        col4.metric("📈 Monitoramento", sim_diag.get("monitoring", "—"))
+        col1.metric("Caminhos", f"{sim_diag.get('paths', 0):,}")
+        col2.metric("Passos", f"{sim_diag.get('steps', 0):,}")
+        col3.metric("Seed", sim_diag.get("seed", "—"))
+        col4.metric("Monitoramento", sim_diag.get("monitoring", "—"))
 
         if pricing:
             col5, col6, col7 = st.columns(3)
-            col5.metric("📉 Erro-padrão", f"{pricing.get('standard_error', 0):,.4f}")
-            col6.metric("📊 IC 95% (inf)", f"{pricing.get('ci_low_95', 0):,.2f}")
-            col7.metric("📊 IC 95% (sup)", f"{pricing.get('ci_high_95', 0):,.2f}")
+            col5.metric("Erro-padrão", f"{pricing.get('standard_error', 0):,.4f}")
+            col6.metric("IC 95% (inf)", f"{pricing.get('ci_low_95', 0):,.2f}")
+            col7.metric("IC 95% (sup)", f"{pricing.get('ci_high_95', 0):,.2f}")
 
     st.markdown("---")
     st.subheader("b Visualização da Simulação Monte Carlo")
@@ -648,7 +648,7 @@ with tab4:
 
                 st.caption(
                     f"Monitoramento: **{monitoring}** | "
-                    f"GBM com r={r:.2%}, q={q_val:.2%}, σ={sigma:.2%}"
+                    f"GBM com r={r:.2%}, q={q_val:.2%}, ={sigma:.2%}"
                 )
 
                 col_conv, col_hist = st.columns(2)
@@ -757,8 +757,8 @@ with tab5:
 
         checks = {
             "Preço não-negativo": barrier_price >= 0,
-            "Barreira ≤ Vanilla + 5×SE": barrier_price <= vanilla_price + (5.0 * se),
-            "P(knock-out) ∈ [0,1]": 0 <= ko <= 1,
+            "Barreira Vanilla + 5×SE": barrier_price <= vanilla_price + (5.0 * se),
+            "P(knock-out) [0,1]": 0 <= ko <= 1,
             "Erro-padrão não-negativo": se >= 0,
             "IC contém preço": ci_low <= barrier_price <= ci_high,
             "Forward reconstruído": forward_ok,
@@ -768,17 +768,17 @@ with tab5:
         pass_count = fail_count = 0
         for label, result in checks.items():
             if result:
-                st.success(f"✅ {label}")
+                st.success(f"{label}")
                 pass_count += 1
             else:
-                st.error(f"❌ {label}")
+                st.error(f"{label}")
                 fail_count += 1
 
         col1, col2, col3 = st.columns(3)
-        col1.metric("✅ PASS", pass_count)
-        col2.metric("❌ FAIL", fail_count)
+        col1.metric("PASS", pass_count)
+        col2.metric("FAIL", fail_count)
         total = pass_count + fail_count
-        col3.metric("📊 Taxa", f"{pass_count / total * 100:.1f}%" if total > 0 else "—")
+        col3.metric("Taxa", f"{pass_count / total * 100:.1f}%"if total > 0 else "—")
 
     st.markdown("---")
     st.header("Exportar Dados")
@@ -787,7 +787,7 @@ with tab5:
     col1, col2, col3 = st.columns(3)
     with col1:
         st.download_button(
-            label="📥 Download RESULTS (CSV)",
+            label="Download RESULTS (CSV)",
             data=bundle.to_csv(index=False),
             file_name=f"results_{market_date}.csv",
             mime="text/csv",
@@ -795,7 +795,7 @@ with tab5:
     with col2:
         if curve_df is not None and len(curve_df) > 0:
             st.download_button(
-                label="📥 Download Curva DI (CSV)",
+                label="Download Curva DI (CSV)",
                 data=curve_df.to_csv(index=False),
                 file_name=f"curve_{market_date}.csv",
                 mime="text/csv",
@@ -803,7 +803,7 @@ with tab5:
     with col3:
         if iv_data is not None and len(iv_data) > 0:
             st.download_button(
-                label="📥 Download IV Data (CSV)",
+                label="Download IV Data (CSV)",
                 data=iv_data.to_csv(index=False),
                 file_name=f"iv_{market_date}.csv",
                 mime="text/csv",
@@ -811,13 +811,13 @@ with tab5:
 
     st.markdown("---")
     st.header("Dados Brutos")
-    with st.expander("📊 Ver bundle RESULTS completo"):
+    with st.expander("Ver bundle RESULTS completo"):
         st.dataframe(bundle, use_container_width=True)
-    with st.expander("📋 Ver lista de objetos no bundle"):
+    with st.expander("Ver lista de objetos no bundle"):
         st.write(sorted(bundle["object_name"].unique()))
 
 with tab6:
-    st.header("🛠️ Structuring Desk - Simulador de Opções com Barreira")
+    st.header("Structuring Desk - Simulador de Opções com Barreira")
     st.markdown("Monte a estrutura e visualize o payoff e o preço em tempo real.")
 
     col_esq, col_dir = st.columns([1, 2])
@@ -835,11 +835,11 @@ with tab6:
             ],
         )
         # Down = barreira inferior; Up = barreira superior.
-        # Knock-In: a opção nasce morta e só "acorda" se tocar a barreira.
+        # Knock-In: a opção nasce morta e só "acorda"se tocar a barreira.
         # Knock-Out: a opção nasce viva e morre se tocar a barreira.
         # O Knock-Out Straddle usa barreira para baixo (down): as duas pernas morrem no crash.
         barrier_is_down = sim_strategy.startswith("Down") or sim_strategy == "Knock-Out Straddle"
-        is_knock_in = "and-In" in sim_strategy
+        is_knock_in = "and-In"in sim_strategy
 
         sim_spot = st.number_input("Spot Inicial (R$)", min_value=10000.0, max_value=500000.0, value=172000.0, step=1000.0)
         sim_vol = st.slider("Volatilidade (%)", min_value=5.0, max_value=100.0, value=20.0, step=1.0) / 100.0
@@ -864,15 +864,15 @@ with tab6:
 
         # GRÁFICO DE PAYOFF
         s_t = np.linspace(sim_spot * 0.5, sim_spot * 1.5, 200)
-        if "Put" in sim_strategy:
+        if "Put"in sim_strategy:
             payoff = np.maximum(sim_strike - s_t, 0)
         elif sim_strategy == "Knock-Out Straddle":
             payoff = np.maximum(s_t - sim_strike, 0) + np.maximum(sim_strike - s_t, 0)
-        else:  # Calls
+        else: # Calls
             payoff = np.maximum(s_t - sim_strike, 0)
 
         # Região morta do payoff:
-        # Knock-Out → zero ONDE a barreira FOI tocada; Knock-In → zero onde NÃO foi tocada.
+        # Knock-Out zero ONDE a barreira FOI tocada; Knock-In zero onde NÃO foi tocada.
         if is_knock_in:
             if barrier_is_down:
                 payoff[s_t > sim_barrier] = 0
@@ -897,22 +897,22 @@ with tab6:
         # Travas de UX: Knock-Out nasce além da barreira = morta; Knock-In nasce além = JÁ ATIVA (vanilla).
         if not is_knock_in:
             if barrier_is_down and sim_spot <= sim_barrier:
-                st.error("🚨 **Opa, chefe!** O Spot já está abaixo ou na barreira. A opção morreu antes de começar! Diminua a barreira ou aumente o Spot.")
+                st.error("**Opa, chefe!** O Spot já está abaixo ou na barreira. A opção morreu antes de começar! Diminua a barreira ou aumente o Spot.")
                 is_invalid = True
             elif (not barrier_is_down) and sim_spot >= sim_barrier:
-                st.error("🚨 **Opa, chefe!** O Spot já está acima da barreira. A opção morreu antes de começar! Aumente a barreira ou diminua o Spot.")
+                st.error("**Opa, chefe!** O Spot já está acima da barreira. A opção morreu antes de começar! Aumente a barreira ou diminua o Spot.")
                 is_invalid = True
         else:
             if barrier_is_down and sim_spot <= sim_barrier:
-                st.info("💡 A opção JÁ está ativa (spot tocou a barreira) — equivale à vanilla.")
+                st.info("A opção JÁ está ativa (spot tocou a barreira) — equivale à vanilla.")
             elif (not barrier_is_down) and sim_spot >= sim_barrier:
-                st.info("💡 A opção JÁ está ativa (spot tocou a barreira) — equivale à vanilla.")
+                st.info("A opção JÁ está ativa (spot tocou a barreira) — equivale à vanilla.")
 
         if barrier_is_down and (not is_knock_in) and sim_strike < sim_barrier:
-            st.warning("⚠️ **Atenção:** O Strike está abaixo da Barreira. Essa estrutura é atípica.")
+            st.warning("**Atenção:** O Strike está abaixo da Barreira. Essa estrutura é atípica.")
 
         if not is_invalid:
-            if st.button("🚀 Calcular Preço", use_container_width=True, type="primary"):
+            if st.button("Calcular Preço", use_container_width=True, type="primary"):
                 with st.spinner("Rodando Monte Carlo com 50.000 caminhos..."):
                     market_sim = MarketData(spot=sim_spot, rate=sim_rate, dividend_yield=0.02, volatility=sim_vol)
                     contract_sim = BarrierContract(strike=sim_strike, barrier=sim_barrier, maturity=sim_maturity)
@@ -936,7 +936,7 @@ with tab6:
                             result = price_up_and_in_put(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
                         else:
                             # Knock-Out Straddle: perna call + perna put, mesmo Strike e
-                            # Barreira down. Mesma seed → mesmos caminhos e mesmos eventos
+                            # Barreira down. Mesma seed mesmos caminhos e mesmos eventos
                             # de knock-out nas duas pernas; P(KO) é idêntica entre pernas.
                             result_call = price_down_and_out_call(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
                             result_put = price_down_and_out_put(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
@@ -947,7 +947,7 @@ with tab6:
                             )
 
                         if result.price <= 0.01:
-                            st.warning("💡 **Calma lá!** Com esses parâmetros a opção está valendo praticamente zero. Tente ajustar o Strike ou a Barreira.")
+                            st.warning("**Calma lá!** Com esses parâmetros a opção está valendo praticamente zero. Tente ajustar o Strike ou a Barreira.")
                         else:
                             st.success("Cálculo concluído com sucesso! Estrutura pronta para o cliente.")
 
@@ -955,15 +955,15 @@ with tab6:
                         col_r1.metric("Preço da Estrutura", f"R$ {result.price:,.2f}")
                         col_r2.metric("Preço Vanilla", f"R$ {result.vanilla_price:,.2f}")
                         # Knock-Ins: o campo reporta P(morrer sem ativação)
-                        p_label = "P(Sem Ativação)" if is_knock_in else "P(Knock-out)"
+                        p_label = "P(Sem Ativação)"if is_knock_in else "P(Knock-out)"
                         col_r3.metric(p_label, f"{result.knock_out_probability:.2%}")
                     except Exception:
-                        st.error("⚠️ **Ops!** Não conseguimos calcular essa estrutura. Verifique os parâmetros.")
+                        st.error("**Ops!** Não conseguimos calcular essa estrutura. Verifique os parâmetros.")
 
 st.markdown("---")
 st.caption(
-    f"📁 {selected_filename} | "
-    f"🔄 Cache: 5 min | "
-    f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | "
-    f"☁️ Databricks Apps"
+    f"{selected_filename} | "
+    f"Cache: 5 min | "
+    f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | "
+    f"Databricks Apps"
 )
