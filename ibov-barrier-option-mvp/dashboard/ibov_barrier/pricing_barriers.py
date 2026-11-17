@@ -935,8 +935,11 @@ def price_knock_out_forward(
 
     Compra uma Call Down-and-Out e VENDE uma Put Down-and-Out com o MESMO
     Strike e a MESMA barreira (paridade put-call barrier). O valor forward
-    vanilla seria S0·e^(−qT) − K·e^(−rT); a barreira Down desconta essa
-    parcela pelo risco de knock-out (forward que "morre" no crash).
+    vanilla seria S0·e^(−qT) − K·e^(−rT); a barreira Down AGREGA valor a
+    essa parcela: no knock-out as duas pernas morrem e o payoff vira zero
+    em vez de S_T − K < 0, eliminando o downside do crash. Por isso o
+    KO Forward custa MAIS que o forward vanilla (prêmio da proteção
+    implícita) — validado em smoke: +271,77 com barreira a 70%.
     """
     call = price_down_and_out_call(market, contract, paths=paths, steps=steps, seed=seed, monitoring=monitoring)
     put = price_down_and_out_put(market, contract, paths=paths, steps=steps, seed=seed, monitoring=monitoring)
