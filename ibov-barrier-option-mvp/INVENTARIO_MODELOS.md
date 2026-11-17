@@ -1,17 +1,20 @@
 # Inventário de Modelos Implementados - Quantitative Pricing & Risk Dashboard
 
-## Família A — Single Barrier Options (100% Completa)
+## Família A — Single Barrier Options (100% Completa, com Rebate)
 Temos as 8 variações clássicas de barreira simples, combinando Call/Put, Up/Down e In/Out.
+Todas aceitam **rebate** pago no vencimento via `price_single_barrier` (`pricing_extensions.py`):
+no Knock-Out o rebate é pago se a barreira for tocada; no Knock-In, se ela nunca for tocada.
+Com rebate zero, o precificador genérico reproduz exatamente os precificadores dedicados (teste de regressão).
 
 | Tipo | Call | Put | Status |
 | :--- | :--- | :--- | :--- |
-| **Down-and-Out** | DOC | DOP | Implementado |
-| **Up-and-Out** | UOC | UOP | Implementado |
-| **Down-and-In** | DIC | DIP | Implementado |
-| **Up-and-In** | UIC | UIP | Implementado |
+| **Down-and-Out** | DOC | DOP | Implementado (com rebate) |
+| **Up-and-Out** | UOC | UOP | Implementado (com rebate) |
+| **Down-and-In** | DIC | DIP | Implementado (com rebate) |
+| **Up-and-In** | UIC | UIP | Implementado (com rebate) |
 
 ## Família B — Double Barrier Options (Não Implementada)
-Devido à complexidade matemática de monitorar duas barreiras simultaneamente no Monte Carlo, o motor atual não possui essas estruturas.
+Devido à complexidade de monitorar duas barreiras com payoff de opção (Knock-In/Knock-Out cruzados), o motor ainda não possui essas estruturas.
 
 | Estrutura | Status |
 | :--- | :--- |
@@ -20,32 +23,39 @@ Devido à complexidade matemática de monitorar duas barreiras simultaneamente n
 | Knock-In / Knock-Out (KIKO) | Pendente |
 | Knock-Out / Knock-In (KOKI) | Pendente |
 
-## Família C — Barrier-Embedded Structures (100% Completa nas variantes Down)
-Temos as 7 estruturas combinadas mais usadas em mesa de tesouraria, todas implementadas com barreira inferior (Down).
+## Família C — Barrier-Embedded Structures (Completa: Down, Up e Knock-In)
+Estruturas combinadas mais usadas em mesa de tesouraria. Collar, Spreads e Strangle aceitam
+`direction="down"` (padrão) ou `direction="up"`; Straddle e Forward têm versões Knock-Out e Knock-In.
 
-| Estrutura | Status | Descrição |
+| Estrutura | Down | Up | Descrição |
+| :--- | :--- | :--- | :--- |
+| **Knock-Out Straddle** | Implementado | — | Call KO + Put KO, mesmo strike (aposta na volatilidade) |
+| **Knock-In Straddle** | Implementado | Implementado (biblioteca) | Call KI + Put KI: só nasce se tocar a barreira |
+| **Barrier Strangle** | Implementado | Implementado | Call KO + Put KO (strikes diferentes) |
+| **Barrier Risk Reversal** | Implementado | — | Compra Call KO − Vende Put KO (direcional) |
+| **Barrier Collar** | Implementado | Implementado | Compra Put KO − Vende Call KO (proteção barata) |
+| **Barrier Call Spread** | Implementado | Implementado | Compra Call KO − Vende Call KO |
+| **Barrier Put Spread** | Implementado | Implementado | Compra Put KO − Vende Put KO |
+| **Knock-Out Forward** | Implementado | — | Forward sintético que morre no crash |
+| **Knock-In Forward** | Implementado | Implementado (biblioteca) | Forward sintético que só nasce no crash (KI + KO Forward = forward vanilla) |
+
+## Família D — Range-Dependent e Digitais (Completa nas variantes de barreira simples e dupla)
+Binários pagos no vencimento. Cada produto tem benchmark analítico exibido no Structuring Desk.
+
+| Estrutura | Status | Benchmark analítico |
 | :--- | :--- | :--- |
-| **Knock-Out Straddle** | Implementado | Call DOC + Put DOC (Aposta na volatilidade) |
-| **Barrier Strangle** | Implementado | Call DOC + Put DOC (Strikes diferentes) |
-| **Barrier Risk Reversal** | Implementado | Compra Call DOC - Vende Put DOC (Direcional) |
-| **Barrier Collar** | Implementado | Compra Put DOC - Vende Call DOC (Proteção barata) |
-| **Barrier Call Spread** | Implementado | Compra Call DOC - Vende Call DOC (Limita ganho e custo) |
-| **Barrier Put Spread** | Implementado | Compra Put DOC - Vende Put DOC (Limita ganho e custo) |
-| **Knock-Out Forward** | Implementado | Forward sintético que morre no crash |
+| **One-Touch Up / Down** | Implementado | Primeira passagem (princípio da reflexão) |
+| **No-Touch Up / Down** | Implementado | Complemento exato do One-Touch |
+| **Double One-Touch** | Implementado | Complemento do Double No-Touch |
+| **Double No-Touch** | Implementado | Série de Fourier (Browniano com drift entre duas barreiras absorventes) |
+| **Range Accrual** (túnel, Down, Up) | Implementado | Valor exato: média das probabilidades lognormais por fixing |
 
-## Família D — Range-Dependent e Digitais (Parcial)
-Temos os binários de toque para cima (Up). As variantes Down e os modelos de faixa não foram implementados.
-
-| Estrutura | Status | Descrição |
-| :--- | :--- | :--- |
-| **One-Touch Up** | Implementado | Paga um valor fixo se bater na barreira superior |
-| **No-Touch Up** | Implementado | Paga um valor fixo se NUNCA bater na barreira superior |
-| Range Accrual | Pendente | Pagamento proporcional aos dias na faixa |
-| Double One-Touch | Pendente | Pagamento se tocar qualquer uma das duas |
-| Double No-Touch | Pendente | Pagamento se não tocar nenhuma das duas |
+O Range Accrual usa 1 fixing por passo de simulação (no Desk: 1 por dia útil do prazo). Os binários
+de dupla barreira usam Brownian Bridge com probabilidade de saída por passo p_L + p_U (os termos
+omitidos exigem cruzar as duas barreiras no mesmo passo e são desprezíveis).
 
 ## Modelos Adicionais (Exóticos)
-Nenhum dos modelos avançados foi implementado, pois exigem mudanças profundas no motor de simulação.
+Ainda não implementados: exigem mudanças profundas no motor de simulação.
 
 | Modelo | Status |
 | :--- | :--- |
@@ -54,6 +64,6 @@ Nenhum dos modelos avançados foi implementado, pois exigem mudanças profundas 
 | Soft Barriers | Pendente |
 
 ## Resumo Executivo
-- Total de modelos prontos: 17 estratégias expostas no Structuring Desk.
-- Cobertura: Família A completa, Família C completa (variante Down) e parte da Família D.
-- O que ficou de fora: Rebate, Double Barriers, opções "Down" dos binários e os modelos exóticos de terceira geração.
+- **24 estratégias** no seletor do Structuring Desk, mais as variantes Up de Collar, Call Spread, Put Spread e Strangle e o rebate configurável nas 8 barreiras simples.
+- Cobertura: Família A completa com rebate, Família C completa (Down, Up e Knock-In), Família D completa nos binários de toque simples/duplos e Range Accrual.
+- O que falta: Family B (barreiras duplas com payoff de opção) e os exóticos de terceira geração (Parisian, Step, Soft).

@@ -6,9 +6,11 @@ Projeto quantitativo em Python, preparado para execução local e em Databricks,
 
 - **Motor de Opções com Barreira** — Monte Carlo com 200 mil caminhos × 252 passos, monitoramento Brownian Bridge (toque contínuo entre observações) e variável de controle vanilla para redução de variância.
 - **Validação Analítica** — Benchmark de Reiner-Rubinstein com erro < 0,02% vs o motor estocástico, replay determinístico do pricer e cadeia de confiança SHA-256 entre RESULTS, VALIDATION e RISK.
-- **Família A Completa** — Calls e Puts, Down/Up, In/Out (DOC, UOC, DIC, UIC, DOP, UOP, DIP, UIP) + Knock-Out Straddle, todas no mesmo motor MC e no simulador.
+- **Família A Completa com Rebate** — Calls e Puts, Down/Up, In/Out (DOC, UOC, DIC, UIC, DOP, UOP, DIP, UIP), com rebate opcional pago no vencimento (`price_single_barrier`).
+- **Família C Completa** — Straddle, Strangle, Risk Reversal, Collar, Call/Put Spread e Forward; variantes Up para Collar, Spreads e Strangle; versões Knock-In de Straddle e Forward.
+- **Família D** — One-Touch/No-Touch Up e Down, Double One-Touch/No-Touch e Range Accrual (túnel, Down, Up), cada um com benchmark analítico (`pricing_extensions.py`).
 - **Dashboard em 6 Abas** — Resumo Gestor, Superfície de Volatilidade, Curvas de Mercado, Motor de Monte Carlo, Controle de Qualidade e Structuring Desk.
-- **Structuring Desk** — Simulador interativo com travas de UX bank-grade, diagrama de payoff em tempo real e precificação on-demand de 9 estratégias.
+- **Structuring Desk** — Simulador interativo com travas de UX bank-grade, diagrama de payoff em tempo real e precificação on-demand de 24 estratégias (mais variantes Up e rebate configurável).
 - **Motor de Renda Fixa** — Curvas ANBIMA (pyettj), NTN-B, LTN, LFT e Swap DI x Pré.
 
 ## Arquitetura Técnica
@@ -253,5 +255,5 @@ Impacto na precificação: o q baixo eleva o forward e, consequentemente, o pre�
 1. ✅ Calibrar a curva DI e o carry implícito com futuro de Ibovespa
 2. ✅ Calibrar volatilidade pela superfície de opções
 3. ✅ Acrescentar fórmula fechada de Reiner–Rubinstein como benchmark
-4. ✅ Implementar knock-in, up-and-out e paridade in/out (rebate permanece pendente)
+4. ✅ Implementar knock-in, up-and-out, paridade in/out e rebate
 5. Gerar P&L explain, cenários de estresse e tabelas Delta para Databricks
