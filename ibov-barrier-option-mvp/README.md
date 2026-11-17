@@ -7,10 +7,11 @@ Projeto quantitativo em Python, preparado para execução local e em Databricks,
 - **Motor de Opções com Barreira** — Monte Carlo com 200 mil caminhos × 252 passos, monitoramento Brownian Bridge (toque contínuo entre observações) e variável de controle vanilla para redução de variância.
 - **Validação Analítica** — Benchmark de Reiner-Rubinstein com erro < 0,02% vs o motor estocástico, replay determinístico do pricer e cadeia de confiança SHA-256 entre RESULTS, VALIDATION e RISK.
 - **Família A Completa com Rebate** — Calls e Puts, Down/Up, In/Out (DOC, UOC, DIC, UIC, DOP, UOP, DIP, UIP), com rebate opcional pago no vencimento (`price_single_barrier`).
+- **Família B Completa** — Double Knock-Out/Knock-In (com rebate) e dupla barreira KI/KO com ordem parametrizável (`convention` = KI_first, KO_after_KI, KO_first, sequential), Call e Put, cada convenção com benchmark analítico próprio (`pricing_double.py`).
 - **Família C Completa** — Straddle, Strangle, Risk Reversal, Collar, Call/Put Spread e Forward; variantes Up para Collar, Spreads e Strangle; versões Knock-In de Straddle e Forward.
 - **Família D** — One-Touch/No-Touch Up e Down, Double One-Touch/No-Touch e Range Accrual (túnel, Down, Up), cada um com benchmark analítico (`pricing_extensions.py`).
 - **Dashboard em 6 Abas** — Resumo Gestor, Superfície de Volatilidade, Curvas de Mercado, Motor de Monte Carlo, Controle de Qualidade e Structuring Desk.
-- **Structuring Desk** — Simulador interativo com travas de UX bank-grade, diagrama de payoff em tempo real e precificação on-demand de 24 estratégias (mais variantes Up e rebate configurável).
+- **Structuring Desk** — Simulador interativo com travas de UX bank-grade, diagrama de payoff em tempo real e precificação on-demand de 27 estratégias (mais variantes Up e rebate configurável).
 - **Motor de Renda Fixa** — Curvas ANBIMA (pyettj), NTN-B, LTN, LFT e Swap DI x Pré.
 
 ## Arquitetura Técnica

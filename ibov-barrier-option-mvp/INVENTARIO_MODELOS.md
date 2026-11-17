@@ -13,15 +13,31 @@ Com rebate zero, o precificador genérico reproduz exatamente os precificadores 
 | **Down-and-In** | DIC | DIP | Implementado (com rebate) |
 | **Up-and-In** | UIC | UIP | Implementado (com rebate) |
 
-## Família B — Double Barrier Options (Não Implementada)
-Devido à complexidade de monitorar duas barreiras com payoff de opção (Knock-In/Knock-Out cruzados), o motor ainda não possui essas estruturas.
+## Família B — Double Barrier Options (100% Completa)
+Teto e chão monitorados simultaneamente (`pricing_double.py`). O motor registra, por caminho e por passo,
+o toque em cada barreira (Brownian Bridge com um único uniforme particionado em p_L e p_U), o que permite
+precificar estruturas que dependem da **ordem** dos toques. Call e Put; DKO/DKI aceitam rebate.
 
-| Estrutura | Status |
-| :--- | :--- |
-| Double Knock-Out (DKO) | Pendente |
-| Double Knock-In (DKI) | Pendente |
-| Knock-In / Knock-Out (KIKO) | Pendente |
-| Knock-Out / Knock-In (KOKI) | Pendente |
+| Estrutura | Status | Benchmark analítico |
+| :--- | :--- | :--- |
+| **Double Knock-Out (DKO)** | Implementado (com rebate) | Série de Ikeda-Kunitomo (1992) |
+| **Double Knock-In (DKI)** | Implementado (com rebate) | Paridade exata DKO + DKI = vanilla |
+| **Dupla barreira KI/KO** | Implementado (4 convenções) | Ver tabela abaixo |
+
+As estruturas com uma barreira Knock-In e outra Knock-Out (em lados opostos do spot) não seguem uma
+única convenção de mercado: o que acontece depende da **ordem** dos toques. Por isso o precificador
+`price_double_barrier_option` recebe o parâmetro `convention` (no Desk: seletor "Convenção de Ordem KI/KO"):
+
+| `convention` | Evento mestre | Comportamento | Benchmark analítico |
+| :--- | :--- | :--- | :--- |
+| `KI_first` (KIKO) | Knock-In | Só nasce se tocar o KI; o KO mata a qualquer momento, antes ou depois da ativação | Identidade exata: KO simples(H_KO) − DKO(L, U) |
+| `KO_after_KI` (KOKI) | Knock-In | Só nasce se tocar o KI; o KO só é monitorado após a ativação | Markov forte: densidade do 1º toque em H_KI × Reiner-Rubinstein |
+| `KO_first` | Knock-Out | Nasce viva como Knock-Out; se o KI vier primeiro o KO deixa de existir (vira vanilla); se o KO vier primeiro, morre | Densidade de saída do túnel pelo KO (série de Fourier) × vanilla |
+| `sequential` | Ambos | Só paga se tocar o KI e depois o KO (duplo toque sequencial) | Identidade exata: Knock-In simples − KOKI |
+
+Propriedades verificadas nos testes: KIKO ≤ KOKI ≤ Knock-In simples; KO simples < KO_first < vanilla;
+KOKI + Sequential = Knock-In simples; as densidades de saída integram exatamente 1 − P(Double No-Touch).
+Toques nas duas barreiras no mesmo passo de simulação contam como KO (convenção conservadora).
 
 ## Família C — Barrier-Embedded Structures (Completa: Down, Up e Knock-In)
 Estruturas combinadas mais usadas em mesa de tesouraria. Collar, Spreads e Strangle aceitam
@@ -64,6 +80,6 @@ Ainda não implementados: exigem mudanças profundas no motor de simulação.
 | Soft Barriers | Pendente |
 
 ## Resumo Executivo
-- **24 estratégias** no seletor do Structuring Desk, mais as variantes Up de Collar, Call Spread, Put Spread e Strangle e o rebate configurável nas 8 barreiras simples.
-- Cobertura: Família A completa com rebate, Família C completa (Down, Up e Knock-In), Família D completa nos binários de toque simples/duplos e Range Accrual.
-- O que falta: Family B (barreiras duplas com payoff de opção) e os exóticos de terceira geração (Parisian, Step, Soft).
+- **27 estratégias** no seletor do Structuring Desk, mais as variantes Up de Collar, Call Spread, Put Spread e Strangle e o rebate configurável nas 8 barreiras simples.
+- Cobertura: Família A completa com rebate, Família B completa (DKO, DKI e dupla barreira KI/KO com 4 convenções de ordem), Família C completa (Down, Up e Knock-In), Família D completa nos binários de toque simples/duplos e Range Accrual.
+- O que falta: os exóticos de terceira geração (Parisian, Step, Soft).

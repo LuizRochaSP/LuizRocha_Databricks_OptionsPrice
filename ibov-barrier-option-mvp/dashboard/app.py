@@ -41,6 +41,23 @@ from ibov_barrier.pricing_extensions import (
     price_range_accrual,
     price_single_barrier,
 )
+from ibov_barrier.pricing_double import (
+    double_knock_out_analytical,
+    double_barrier_option_analytical,
+    price_double_barrier,
+    price_double_barrier_option,
+)
+
+# Família B completa: dupla barreira (teto e chão monitorados simultaneamente).
+DOUBLE_BARRIER_STRATEGIES = ("Double Knock-Out", "Double Knock-In", "Double Barrier KI/KO")
+
+# Convenções de ordem KI/KO: rótulo no Desk -> (parâmetro do motor, benchmark exibido)
+KIKO_CONVENTIONS = {
+    "KI_first (KIKO)": ("KI_first", "KIKO = KO simples − DKO"),
+    "KO_after_KI (KOKI)": ("KO_after_KI", "integral do primeiro toque × Reiner-Rubinstein"),
+    "KO_first": ("KO_first", "densidade de saída pelo KO × vanilla"),
+    "Sequential": ("sequential", "Knock-In simples − KOKI"),
+}
 
 # Família A: nome no Desk -> (tipo, direção da barreira, knock) do precificador genérico com rebate.
 SINGLE_BARRIER_SPECS = {
@@ -857,6 +874,7 @@ with tab6:
                 "Down-and-In Call", "Up-and-In Call",
                 "Down-and-Out Put", "Up-and-Out Put",
                 "Down-and-In Put", "Up-and-In Put",
+                "Double Knock-Out", "Double Knock-In", "Double Barrier KI/KO",
                 "Knock-Out Straddle", "Knock-In Straddle",
                 "Barrier Strangle", "Barrier Risk Reversal",
                 "Barrier Collar", "Barrier Call Spread", "Barrier Put Spread",
@@ -880,8 +898,29 @@ with tab6:
         # Produtos de duas barreiras (túnel L < S0 < U): Double Touch e Range Accrual
         is_double = sim_strategy in ("Double One-Touch", "Double No-Touch")
         is_range = sim_strategy == "Range Accrual"
-        is_two_barrier = is_double or is_range
+        # Família B: DKO/DKI (túnel) e KI/KO (KI de um lado, KO do outro, ordem parametrizável)
+        is_family_b = sim_strategy in DOUBLE_BARRIER_STRATEGIES
+        is_sequential = sim_strategy == "Double Barrier KI/KO"
+        is_two_barrier = is_double or is_range or is_family_b
         is_single = sim_strategy in SINGLE_BARRIER_SPECS
+
+        dbl_option_type = "call"
+        ki_is_lower = True
+        if is_family_b:
+            dbl_label = st.radio("Tipo da Opção", ["Call", "Put"], horizontal=True)
+            dbl_option_type = dbl_label.lower()
+            if is_sequential:
+                ki_label = st.radio("Barreira Knock-In", ["Inferior (L)", "Superior (U)"], horizontal=True,
+                                    help="A barreira oposta é a Knock-Out.")
+                ki_is_lower = ki_label.startswith("Inferior")
+                sim_convention_label = st.selectbox(
+                    "Convenção de Ordem KI/KO", list(KIKO_CONVENTIONS),
+                    help="KI_first: nasce no KI; o KO mata a qualquer momento. "
+                         "KO_after_KI: nasce no KI; o KO só vale após a ativação. "
+                         "KO_first: nasce viva; o KO só mata se vier antes do KI (KI primeiro = vanilla). "
+                         "Sequential: só paga se tocar o KI e depois o KO.",
+                )
+                sim_convention, sim_convention_bench = KIKO_CONVENTIONS[sim_convention_label]
 
         # Variante Up (barreira superior) para Collar, Spreads e Strangle
         combined_direction = "down"
@@ -896,7 +935,7 @@ with tab6:
             or (is_combined and combined_direction == "down")
         )
         is_knock_in = "and-In" in sim_strategy or sim_strategy.startswith("Knock-In")
-        has_strike = not (is_binary or is_two_barrier)
+        has_strike = not (is_binary or is_double or is_range)
 
         sim_spot = st.number_input("Spot Inicial (R$)", min_value=10000.0, max_value=500000.0, value=172000.0, step=1000.0)
         sim_vol = st.slider("Volatilidade (%)", min_value=5.0, max_value=100.0, value=20.0, step=1.0) / 100.0
@@ -915,7 +954,7 @@ with tab6:
             sim_payout = st.number_input("Notional (R$)", min_value=1.0, max_value=10_000_000.0, value=100.0, step=10.0)
         # Rebate (Família A): pago no vencimento se a opção morrer (KO) ou nunca ativar (KI)
         sim_rebate = 0.0
-        if is_single:
+        if is_single or sim_strategy in ("Double Knock-Out", "Double Knock-In"):
             sim_rebate = st.number_input(
                 "Rebate (R$)", min_value=0.0, max_value=1_000_000.0, value=0.0, step=10.0,
                 help="Pago no vencimento: Knock-Out se a barreira for tocada; Knock-In se nunca for tocada.",
@@ -930,7 +969,7 @@ with tab6:
                 sim_lower = sim_spot * st.slider("Limite Inferior L (% do Spot)", min_value=50, max_value=99, value=90, step=1) / 100.0
             if range_variant != "Down (acima de L)":
                 sim_upper = sim_spot * st.slider("Limite Superior U (% do Spot)", min_value=101, max_value=150, value=110, step=1) / 100.0
-        elif is_double:
+        elif is_double or is_family_b:
             sim_lower = sim_spot * st.slider("Barreira Inferior L (% do Spot)", min_value=50, max_value=99, value=90, step=1) / 100.0
             sim_upper = sim_spot * st.slider("Barreira Superior U (% do Spot)", min_value=101, max_value=150, value=110, step=1) / 100.0
         elif barrier_is_down:
@@ -955,6 +994,22 @@ with tab6:
             lo_level = sim_lower if sim_lower is not None else 0.0
             hi_level = sim_upper if sim_upper is not None else np.inf
             payoff = np.where((s_t >= lo_level) & (s_t <= hi_level), sim_payout, 0.0)
+        elif is_family_b:
+            # Família B: vanilla condicionada às duas barreiras (perfil terminal indicativo).
+            vanilla_payoff = np.maximum(s_t - sim_strike, 0) if dbl_option_type == "call" else np.maximum(sim_strike - s_t, 0)
+            inside = (s_t > sim_lower) & (s_t < sim_upper)
+            if sim_strategy == "Double Knock-Out":
+                payoff = np.where(inside, vanilla_payoff, sim_rebate)
+            elif sim_strategy == "Double Knock-In":
+                payoff = np.where(inside, sim_rebate, vanilla_payoff)
+            elif sim_convention in ("KI_first", "KO_after_KI"):
+                # Terminar além da barreira KO implica estrutura morta nessas convenções.
+                beyond_ko = s_t >= sim_upper if ki_is_lower else s_t <= sim_lower
+                payoff = np.where(beyond_ko, 0.0, vanilla_payoff)
+            else:
+                # KO_first / Sequential: a sobrevivência depende só da ordem dos toques,
+                # não do nível terminal; o perfil exibido é a vanilla condicional.
+                payoff = vanilla_payoff
         elif is_double:
             # Double One-Touch paga fora do túnel (toque implícito); Double No-Touch paga dentro.
             inside = (s_t > sim_lower) & (s_t < sim_upper)
@@ -1009,13 +1064,15 @@ with tab6:
         if is_two_barrier:
             for level, label in ((sim_lower, "L"), (sim_upper, "U")):
                 if level is not None:
+                    if is_sequential:
+                        label += " (KI)" if (label == "L") == ki_is_lower else " (KO)"
                     fig_payoff.add_vline(x=level, line_dash="dash", line_color="red", annotation_text=f"Barreira {label}")
         else:
             barrier_label = "Barreira (Knock-In)" if is_knock_in else ("Barreira" if is_binary else "Barreira (Knock-Out)")
             fig_payoff.add_vline(x=sim_barrier, line_dash="dash", line_color="red", annotation_text=barrier_label)
         if has_strike:
             fig_payoff.add_vline(x=sim_strike, line_dash="dot", line_color="orange", annotation_text="Strike")
-        if is_binary or is_two_barrier:
+        if is_binary or is_double or is_range:
             # Linha horizontal tracejada no nível do Payout/Notional escolhido
             level_label = "Notional" if is_range else "Payout"
             fig_payoff.add_hline(y=sim_payout, line_dash="dash", line_color="#00A3E0", annotation_text=f"{level_label} (R$ {sim_payout:,.0f})")
@@ -1059,8 +1116,39 @@ with tab6:
 
                     try:
                         mc = dict(paths=50_000, steps=126, seed=42)
-                        benchmark = None  # benchmark analítico (Família D), quando disponível
-                        if is_single:
+                        benchmark = None  # benchmark analítico (Famílias B e D), quando disponível
+                        if is_family_b:
+                            # Família B: motor com instante de toque por passo (L e U simultâneas)
+                            bench_args = (sim_spot, sim_strike)
+                            mkt_args = (sim_maturity, sim_rate, 0.02, sim_vol)
+                            if is_sequential:
+                                ki_level, ko_level = (sim_lower, sim_upper) if ki_is_lower else (sim_upper, sim_lower)
+                                result = price_double_barrier_option(
+                                    market_sim, strike=sim_strike, knock_in=ki_level, knock_out=ko_level,
+                                    maturity=sim_maturity, option_type=dbl_option_type,
+                                    convention=sim_convention, **mc,
+                                )
+                                benchmark = double_barrier_option_analytical(
+                                    *bench_args, ki_level, ko_level, *mkt_args,
+                                    option_type=dbl_option_type, convention=sim_convention,
+                                )
+                            else:
+                                knock = "out" if sim_strategy == "Double Knock-Out" else "in"
+                                result = price_double_barrier(
+                                    market_sim, strike=sim_strike, lower=sim_lower, upper=sim_upper,
+                                    maturity=sim_maturity, option_type=dbl_option_type, knock=knock,
+                                    rebate=sim_rebate, **mc,
+                                )
+                                # Ikeda-Kunitomo (DKO) + rebate via P(Double No-Touch) analítica
+                                dko = double_knock_out_analytical(*bench_args, sim_lower, sim_upper, *mkt_args,
+                                                                  option_type=dbl_option_type)
+                                p_dnt = double_no_touch_probability_analytical(sim_spot, sim_lower, sim_upper, *mkt_args)
+                                rebate_pv = sim_rebate * np.exp(-sim_rate * sim_maturity)
+                                if knock == "out":
+                                    benchmark = dko + rebate_pv * (1.0 - p_dnt)
+                                else:
+                                    benchmark = result.vanilla_price - dko + rebate_pv * p_dnt
+                        elif is_single:
                             # Família A (8 tipos) com rebate opcional; rebate=0 reproduz os
                             # precificadores dedicados exatamente (mesmos caminhos e CV).
                             opt_type, direction, knock = SINGLE_BARRIER_SPECS[sim_strategy]
@@ -1159,12 +1247,21 @@ with tab6:
                             # Knock-Ins: o campo reporta P(morrer sem ativação)
                             if is_binary or is_double:
                                 p_label = "P(Tocado)" if is_one_touch else "P(Não Tocado)"
+                            elif is_family_b:
+                                p_label = {"Double Knock-Out": "P(Knock-out)",
+                                           "Double Knock-In": "P(Sem Ativação)"}.get(sim_strategy, "P(Não Viva em T)")
                             else:
                                 p_label = "P(Sem Ativação)" if is_knock_in else "P(Knock-out)"
                             col_r3.metric(p_label, f"{result.knock_out_probability:.2%}")
-                        if is_single and sim_rebate > 0:
+                        if sim_rebate > 0 and (is_single or is_family_b):
+                            never_activates = is_knock_in or sim_strategy == "Double Knock-In"
                             st.caption(f"Inclui rebate de R$ {sim_rebate:,.2f} pago no vencimento "
-                                       + ("se a opção nunca ativar." if is_knock_in else "se a barreira for tocada."))
+                                       + ("se a opção nunca ativar." if never_activates else "se a barreira for tocada."))
+                        if is_family_b:
+                            st.caption("Benchmark analítico: monitoramento contínuo "
+                                       + ("(Ikeda-Kunitomo)." if not is_sequential else
+                                          f"({sim_convention_bench}).")
+                                       + " O MC usa Brownian Bridge, então a diferença é só ruído estatístico.")
                     except Exception:
                         st.error("**Ops!** Não conseguimos calcular essa estrutura. Verifique os parâmetros.")
 
