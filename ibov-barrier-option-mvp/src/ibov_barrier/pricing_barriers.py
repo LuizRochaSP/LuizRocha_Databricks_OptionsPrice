@@ -33,6 +33,7 @@ def price_up_and_out_call(
     steps: int = 252,
     seed: int = 42,
     monitoring: str = "brownian_bridge",
+    rebate: float = 0.0,
 ) -> PriceResult:
     """Preço de uma call up-and-out sem rebate (barreira superior).
 
@@ -41,6 +42,14 @@ def price_up_and_out_call(
     probabilidade condicional de cruzar a barreira logarítmica para cima entre
     observações consecutivas.
     """
+    if rebate:
+        # Rebate pago no vencimento se a barreira for tocada: delega ao motor
+        # genérico (mesma sequência aleatória; rebate=0 segue o caminho original).
+        from ibov_barrier.pricing_extensions import price_single_barrier
+        return price_single_barrier(
+            market, contract, option_type="call", direction="up", knock="out",
+            rebate=rebate, paths=paths, steps=steps, seed=seed, monitoring=monitoring,
+        )
     s0, h, t = market.spot, contract.barrier, contract.maturity
     sigma = market.volatility
     parameters = np.asarray(
@@ -215,6 +224,7 @@ def price_down_and_out_put(
     steps: int = 252,
     seed: int = 42,
     monitoring: str = "brownian_bridge",
+    rebate: float = 0.0,
 ) -> PriceResult:
     """Preço de uma put down-and-out sem rebate (barreira inferior).
 
@@ -224,6 +234,14 @@ def price_down_and_out_put(
     np.maximum(strike - terminal, 0.0). A put vanilla da variável de controle
     vem da paridade put-call.
     """
+    if rebate:
+        # Rebate pago no vencimento se a barreira for tocada: delega ao motor
+        # genérico (mesma sequência aleatória; rebate=0 segue o caminho original).
+        from ibov_barrier.pricing_extensions import price_single_barrier
+        return price_single_barrier(
+            market, contract, option_type="put", direction="down", knock="out",
+            rebate=rebate, paths=paths, steps=steps, seed=seed, monitoring=monitoring,
+        )
     s0, h, t = market.spot, contract.barrier, contract.maturity
     sigma = market.volatility
     parameters = np.asarray(
@@ -299,6 +317,7 @@ def price_up_and_out_put(
     steps: int = 252,
     seed: int = 42,
     monitoring: str = "brownian_bridge",
+    rebate: float = 0.0,
 ) -> PriceResult:
     """Preço de uma put up-and-out sem rebate (barreira superior).
 
@@ -308,6 +327,14 @@ def price_up_and_out_put(
     np.maximum(strike - terminal, 0.0). A put vanilla da variável de controle
     vem da paridade put-call.
     """
+    if rebate:
+        # Rebate pago no vencimento se a barreira for tocada: delega ao motor
+        # genérico (mesma sequência aleatória; rebate=0 segue o caminho original).
+        from ibov_barrier.pricing_extensions import price_single_barrier
+        return price_single_barrier(
+            market, contract, option_type="put", direction="up", knock="out",
+            rebate=rebate, paths=paths, steps=steps, seed=seed, monitoring=monitoring,
+        )
     s0, h, t = market.spot, contract.barrier, contract.maturity
     sigma = market.volatility
     parameters = np.asarray(

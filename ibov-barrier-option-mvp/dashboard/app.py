@@ -950,8 +950,13 @@ with tab6:
         # Payout dos binários de toque (Família D) / Notional do Range Accrual
         if is_binary or is_double:
             sim_payout = st.number_input("Payout (R$)", min_value=1.0, max_value=1_000_000.0, value=100.0, step=10.0)
+        sim_accrual_rate = None
         if is_range:
-            sim_payout = st.number_input("Notional (R$)", min_value=1.0, max_value=10_000_000.0, value=100.0, step=10.0)
+            sim_payout = st.number_input("Notional (R$)", min_value=1.0, max_value=100_000_000.0, value=1_000_000.0, step=10_000.0)
+            sim_accrual_rate = st.number_input(
+                "Taxa de Accrual (% a.a.)", min_value=0.1, max_value=100.0, value=10.0, step=0.5,
+                help="Cupom = Notional × taxa × prazo × fração dos fixings dentro da faixa.",
+            ) / 100.0
         # Rebate (Família A): pago no vencimento se a opção morrer (KO) ou nunca ativar (KI)
         sim_rebate = 0.0
         if is_single or sim_strategy in ("Double Knock-Out", "Double Knock-In"):
@@ -966,12 +971,12 @@ with tab6:
         if is_range:
             range_variant = st.radio("Tipo de Faixa", ["Túnel (L e U)", "Down (acima de L)", "Up (abaixo de U)"], horizontal=True)
             if range_variant != "Up (abaixo de U)":
-                sim_lower = sim_spot * st.slider("Limite Inferior L (% do Spot)", min_value=50, max_value=99, value=90, step=1) / 100.0
+                sim_lower = sim_spot * st.slider("Limite Inferior L (% do Spot)", min_value=50, max_value=99, value=80, step=1) / 100.0
             if range_variant != "Down (acima de L)":
-                sim_upper = sim_spot * st.slider("Limite Superior U (% do Spot)", min_value=101, max_value=150, value=110, step=1) / 100.0
+                sim_upper = sim_spot * st.slider("Limite Superior U (% do Spot)", min_value=101, max_value=150, value=120, step=1) / 100.0
         elif is_double or is_family_b:
-            sim_lower = sim_spot * st.slider("Barreira Inferior L (% do Spot)", min_value=50, max_value=99, value=90, step=1) / 100.0
-            sim_upper = sim_spot * st.slider("Barreira Superior U (% do Spot)", min_value=101, max_value=150, value=110, step=1) / 100.0
+            sim_lower = sim_spot * st.slider("Barreira Inferior L (% do Spot)", min_value=50, max_value=99, value=80, step=1) / 100.0
+            sim_upper = sim_spot * st.slider("Barreira Superior U (% do Spot)", min_value=101, max_value=150, value=120, step=1) / 100.0
         elif barrier_is_down:
             sim_barrier_pct = st.slider("Barreira (% do Spot)", min_value=50, max_value=99, value=80, step=1)
             sim_barrier = sim_spot * (sim_barrier_pct / 100.0)
@@ -993,7 +998,8 @@ with tab6:
             # Perfil = Notional se o ativo permanecesse no nível S em todos os fixings.
             lo_level = sim_lower if sim_lower is not None else 0.0
             hi_level = sim_upper if sim_upper is not None else np.inf
-            payoff = np.where((s_t >= lo_level) & (s_t <= hi_level), sim_payout, 0.0)
+            sim_coupon = sim_payout * sim_accrual_rate * sim_maturity
+            payoff = np.where((s_t >= lo_level) & (s_t <= hi_level), sim_coupon, 0.0)
         elif is_family_b:
             # Família B: vanilla condicionada às duas barreiras (perfil terminal indicativo).
             vanilla_payoff = np.maximum(s_t - sim_strike, 0) if dbl_option_type == "call" else np.maximum(sim_strike - s_t, 0)
@@ -1060,7 +1066,13 @@ with tab6:
                 payoff[s_t >= sim_barrier] = sim_rebate
 
         fig_payoff = go.Figure()
-        fig_payoff.add_trace(go.Scatter(x=s_t, y=payoff, mode='lines', name='Payoff', line=dict(color='#2ca02c', width=3)))
+        if is_range:
+            # Range Accrual não tem payoff linear: barra com o cupom acumulado se S ficar na faixa.
+            fig_payoff.add_trace(go.Scatter(x=s_t, y=payoff, mode='lines', name='Cupom', fill='tozeroy',
+                                            line=dict(color='#2ca02c', width=2, shape='hv'),
+                                            fillcolor='rgba(44, 160, 44, 0.35)'))
+        else:
+            fig_payoff.add_trace(go.Scatter(x=s_t, y=payoff, mode='lines', name='Payoff', line=dict(color='#2ca02c', width=3)))
         if is_two_barrier:
             for level, label in ((sim_lower, "L"), (sim_upper, "U")):
                 if level is not None:
@@ -1072,11 +1084,14 @@ with tab6:
             fig_payoff.add_vline(x=sim_barrier, line_dash="dash", line_color="red", annotation_text=barrier_label)
         if has_strike:
             fig_payoff.add_vline(x=sim_strike, line_dash="dot", line_color="orange", annotation_text="Strike")
-        if is_binary or is_double or is_range:
+        if is_range:
+            fig_payoff.add_hline(y=sim_coupon, line_dash="dash", line_color="#00A3E0",
+                                 annotation_text=f"Cupom máximo {sim_accrual_rate:.2%} a.a. × {sim_maturity:.2f} ano (R$ {sim_coupon:,.2f})")
+        elif is_binary or is_double:
             # Linha horizontal tracejada no nível do Payout/Notional escolhido
             level_label = "Notional" if is_range else "Payout"
             fig_payoff.add_hline(y=sim_payout, line_dash="dash", line_color="#00A3E0", annotation_text=f"{level_label} (R$ {sim_payout:,.0f})")
-        payoff_title = "Perfil de Acúmulo (S constante em todos os fixings)" if is_range else "Payoff no Vencimento"
+        payoff_title = "Diagrama de Accrual (cupom se S ficar na faixa em todos os fixings)" if is_range else "Payoff no Vencimento"
         fig_payoff.update_layout(title=payoff_title, xaxis_title="Preço do Ativo no Vencimento (R$)", yaxis_title="Lucro/Prejuízo (R$)", height=350, margin=dict(l=20, r=20, t=40, b=20))
         st.plotly_chart(fig_payoff, use_container_width=True)
 
@@ -1162,6 +1177,7 @@ with tab6:
                             result = price_range_accrual(
                                 market_sim, sim_maturity, lower=sim_lower, upper=sim_upper,
                                 notional=sim_payout, paths=50_000, steps=n_fixings, seed=42,
+                                accrual_rate=sim_accrual_rate,
                             )
                             benchmark = result.analytical_price
                         elif is_double:
@@ -1241,7 +1257,9 @@ with tab6:
                             col_r2.metric("Preço Vanilla", f"R$ {result.vanilla_price:,.2f}")
                         if is_range:
                             col_r3.metric("Fração Esperada na Faixa", f"{result.expected_fraction:.2%}")
-                            st.caption(f"{result.observations} fixings (1 por dia útil) | IC 95%: "
+                            st.caption(f"Cupom máximo R$ {sim_payout * sim_accrual_rate * sim_maturity:,.2f} "
+                                       f"({sim_accrual_rate:.2%} a.a. × {sim_maturity:.2f} ano) | "
+                                       f"{result.observations} fixings (1 por dia útil) | IC 95%: "
                                        f"[R$ {result.ci_low:,.2f}; R$ {result.ci_high:,.2f}]")
                         else:
                             # Knock-Ins: o campo reporta P(morrer sem ativação)

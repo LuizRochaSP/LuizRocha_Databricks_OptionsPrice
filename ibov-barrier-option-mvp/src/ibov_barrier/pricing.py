@@ -60,6 +60,7 @@ def price_down_and_out_call(
     steps: int = 126,
     seed: int = 42,
     monitoring: str = "brownian_bridge",
+    rebate: float = 0.0,
     normals: np.ndarray | None = None,
     uniforms: np.ndarray | None = None,
 ) -> PriceResult:
@@ -68,6 +69,16 @@ def price_down_and_out_call(
     Brownian-bridge monitoring samples the conditional probability of crossing
     the log-barrier between consecutive simulated observations.
     """
+    if rebate:
+        # Rebate pago no vencimento se a barreira for tocada: delega ao motor
+        # genérico (mesma sequência aleatória; rebate=0 segue o caminho original).
+        if normals is not None or uniforms is not None:
+            raise ValueError("rebate is not supported with injected normals/uniforms")
+        from ibov_barrier.pricing_extensions import price_single_barrier
+        return price_single_barrier(
+            market, contract, option_type="call", direction="down", knock="out",
+            rebate=rebate, paths=paths, steps=steps, seed=seed, monitoring=monitoring,
+        )
     s0, h, t = market.spot, contract.barrier, contract.maturity
     sigma = market.volatility
     parameters = np.asarray(

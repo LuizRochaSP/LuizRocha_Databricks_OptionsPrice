@@ -208,6 +208,21 @@ def double_no_touch_probability_analytical(
     return float(min(max(p, 0.0), 1.0))
 
 
+def _accrual_amount(notional: float, accrual_rate: float | None, maturity: float) -> float:
+    """Valor máximo pago (100% dos fixings na faixa).
+
+    Sem `accrual_rate`: Notional (convenção original, payoff = Notional × fração).
+    Com `accrual_rate` (decimal a.a., ex. 0.10): cupom = Notional × taxa × T.
+    """
+    if not np.isfinite(notional) or notional <= 0:
+        raise ValueError("notional must be a positive finite number")
+    if accrual_rate is None:
+        return notional
+    if not np.isfinite(accrual_rate) or accrual_rate <= 0:
+        raise ValueError("accrual_rate must be a positive finite number")
+    return notional * accrual_rate * maturity
+
+
 def range_accrual_analytical(
     market: MarketData,
     maturity: float,
@@ -216,11 +231,13 @@ def range_accrual_analytical(
     upper: float | None,
     notional: float = 100.0,
     observations: int = 252,
+    accrual_rate: float | None = None,
 ) -> float:
     """Valor exato do Range Accrual sob GBM (linearidade da esperança).
 
     E[fração] = (1/N)·Σᵢ P(L ≤ S_{tᵢ} ≤ U), com S_{tᵢ} lognormal, tᵢ = i·T/N.
-    Preço = Notional · e^{−rT} · E[fração].
+    Preço = Notional · e^{−rT} · E[fração]  (ou Notional · taxa · T · e^{−rT} · E[fração]
+    quando `accrual_rate` é informado).
     """
     lo, hi = _range_bounds(lower, upper)
     sigma = market.volatility
@@ -236,7 +253,7 @@ def range_accrual_analytical(
         return norm.cdf((log(level / market.spot) - mu * t) / scale)
 
     fraction = float(np.mean(cdf(hi) - cdf(lo)))
-    return notional * exp(-market.rate * maturity) * fraction
+    return _accrual_amount(notional, accrual_rate, maturity) * exp(-market.rate * maturity) * fraction
 
 
 # ---------------------------------------------------------------------------
@@ -490,8 +507,13 @@ def price_range_accrual(
     paths: int = 200_000,
     steps: int = 252,
     seed: int = 42,
+    accrual_rate: float | None = None,
 ) -> RangeAccrualResult:
     """Range Accrual: paga Notional × (fixings dentro da faixa) / (total de fixings), no vencimento.
+
+    Com `accrual_rate` (decimal a.a., ex. 0.10 = 10% a.a.) o pagamento vira o
+    cupom de mercado: Notional × taxa × T × fração (a taxa anual é proporcional
+    ao prazo; sem o fator T um cupom de 6 meses seria pago como se fosse de 1 ano).
 
     Cada passo da simulação é uma data de fixing (use `steps` = dias úteis do
     prazo para acúmulo diário). Variantes:
@@ -502,8 +524,7 @@ def price_range_accrual(
     O benchmark exato `analytical_price` é retornado junto para auditoria.
     """
     lo, hi = _range_bounds(lower, upper)
-    if not np.isfinite(notional) or notional <= 0:
-        raise ValueError("notional must be a positive finite number")
+    amount = _accrual_amount(notional, accrual_rate, maturity)
     _validate_market(market, maturity)
     _validate_simulation(paths, steps, "discrete")
 
@@ -512,10 +533,11 @@ def price_range_accrual(
     )
     spots = np.exp(log_paths)
     fraction = ((spots >= lo) & (spots <= hi)).mean(axis=1)
-    payoffs = notional * exp(-market.rate * maturity) * fraction
+    payoffs = amount * exp(-market.rate * maturity) * fraction
     base = _summary(payoffs, 0.0, 0.0)
     analytical = range_accrual_analytical(
-        market, maturity, lower=lower, upper=upper, notional=notional, observations=steps
+        market, maturity, lower=lower, upper=upper, notional=notional, observations=steps,
+        accrual_rate=accrual_rate,
     )
     return RangeAccrualResult(
         price=base.price,

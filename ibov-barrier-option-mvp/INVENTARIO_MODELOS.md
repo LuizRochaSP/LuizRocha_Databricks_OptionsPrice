@@ -5,6 +5,8 @@ Temos as 8 variações clássicas de barreira simples, combinando Call/Put, Up/D
 Todas aceitam **rebate** pago no vencimento via `price_single_barrier` (`pricing_extensions.py`):
 no Knock-Out o rebate é pago se a barreira for tocada; no Knock-In, se ela nunca for tocada.
 Com rebate zero, o precificador genérico reproduz exatamente os precificadores dedicados (teste de regressão).
+As 4 funções Knock-Out originais (`price_down_and_out_call`, `price_up_and_out_call`, `price_down_and_out_put`,
+`price_up_and_out_put`) também aceitam `rebate` e delegam ao motor genérico, com resultado idêntico.
 
 | Tipo | Call | Put | Status |
 | :--- | :--- | :--- | :--- |
@@ -64,9 +66,10 @@ Binários pagos no vencimento. Cada produto tem benchmark analítico exibido no 
 | **No-Touch Up / Down** | Implementado | Complemento exato do One-Touch |
 | **Double One-Touch** | Implementado | Complemento do Double No-Touch |
 | **Double No-Touch** | Implementado | Série de Fourier (Browniano com drift entre duas barreiras absorventes) |
-| **Range Accrual** (túnel, Down, Up) | Implementado | Valor exato: média das probabilidades lognormais por fixing |
+| **Range Accrual** (túnel, Down, Up) | Implementado (com taxa de accrual) | Valor exato: média das probabilidades lognormais por fixing |
 
-O Range Accrual usa 1 fixing por passo de simulação (no Desk: 1 por dia útil do prazo). Os binários
+O Range Accrual usa 1 fixing por passo de simulação (no Desk: 1 por dia útil do prazo). Com `accrual_rate`
+(% a.a.) paga o cupom de mercado Notional × taxa × T × fração dos fixings na faixa; sem ela, Notional × fração. Os binários
 de dupla barreira usam Brownian Bridge com probabilidade de saída por passo p_L + p_U (os termos
 omitidos exigem cruzar as duas barreiras no mesmo passo e são desprezíveis).
 
