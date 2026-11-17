@@ -19,13 +19,7 @@ from types import SimpleNamespace
 
 from ibov_barrier.pricing import price_down_and_out_call, MarketData, BarrierContract
 from ibov_barrier.pricing_barriers import (
-    price_up_and_out_call,
-    price_down_and_in_call,
-    price_up_and_in_call,
     price_down_and_out_put,
-    price_up_and_out_put,
-    price_down_and_in_put,
-    price_up_and_in_put,
     price_barrier_strangle,
     price_barrier_risk_reversal,
     price_one_touch_up,
@@ -35,6 +29,30 @@ from ibov_barrier.pricing_barriers import (
     price_barrier_put_spread,
     price_knock_out_forward,
 )
+from ibov_barrier.pricing_extensions import (
+    barrier_hit_probability_analytical,
+    double_no_touch_probability_analytical,
+    price_double_no_touch,
+    price_double_one_touch,
+    price_knock_in_forward,
+    price_knock_in_straddle,
+    price_no_touch_down,
+    price_one_touch_down,
+    price_range_accrual,
+    price_single_barrier,
+)
+
+# Família A: nome no Desk -> (tipo, direção da barreira, knock) do precificador genérico com rebate.
+SINGLE_BARRIER_SPECS = {
+    "Down-and-Out Call": ("call", "down", "out"),
+    "Up-and-Out Call": ("call", "up", "out"),
+    "Down-and-In Call": ("call", "down", "in"),
+    "Up-and-In Call": ("call", "up", "in"),
+    "Down-and-Out Put": ("put", "down", "out"),
+    "Up-and-Out Put": ("put", "up", "out"),
+    "Down-and-In Put": ("put", "down", "in"),
+    "Up-and-In Put": ("put", "up", "in"),
+}
 
 st.set_page_config(
     page_title="Dashboard Renda Fixa",
@@ -839,50 +857,88 @@ with tab6:
                 "Down-and-In Call", "Up-and-In Call",
                 "Down-and-Out Put", "Up-and-Out Put",
                 "Down-and-In Put", "Up-and-In Put",
-                "Knock-Out Straddle", "Barrier Strangle", "Barrier Risk Reversal",
-                "One-Touch Up", "No-Touch Up",
-                "Barrier Collar", "Barrier Call Spread", "Barrier Put Spread", "Knock-Out Forward",
+                "Knock-Out Straddle", "Knock-In Straddle",
+                "Barrier Strangle", "Barrier Risk Reversal",
+                "Barrier Collar", "Barrier Call Spread", "Barrier Put Spread",
+                "Knock-Out Forward", "Knock-In Forward",
+                "One-Touch Up", "No-Touch Up", "One-Touch Down", "No-Touch Down",
+                "Double One-Touch", "Double No-Touch", "Range Accrual",
             ],
         )
         # Down = barreira inferior; Up = barreira superior.
         # Knock-In: a opção nasce morta e só "acorda" se tocar a barreira.
         # Knock-Out: a opção nasce viva e morre se tocar a barreira.
-        # O Knock-Out Straddle usa barreira para baixo (down): as duas pernas morrem no crash.
-        # Estruturas combinadas (Família C): duas pernas Knock-Out Down com a mesma barreira.
+        # Knock-Out/Knock-In Straddle e Forward usam barreira para baixo (down).
+        # Estruturas combinadas (Família C): duas pernas Knock-Out com a mesma barreira.
         is_combined = sim_strategy in (
             "Barrier Strangle", "Barrier Risk Reversal",
             "Barrier Collar", "Barrier Call Spread", "Barrier Put Spread",
         )
         # Binários de toque (Família D): payoff fixo condicionado ao toque da barreira
-        is_binary = sim_strategy in ("One-Touch Up", "No-Touch Up")
+        is_binary = sim_strategy in ("One-Touch Up", "No-Touch Up", "One-Touch Down", "No-Touch Down")
+        is_one_touch = sim_strategy.startswith("One-Touch") or sim_strategy == "Double One-Touch"
+        # Produtos de duas barreiras (túnel L < S0 < U): Double Touch e Range Accrual
+        is_double = sim_strategy in ("Double One-Touch", "Double No-Touch")
+        is_range = sim_strategy == "Range Accrual"
+        is_two_barrier = is_double or is_range
+        is_single = sim_strategy in SINGLE_BARRIER_SPECS
+
+        # Variante Up (barreira superior) para Collar, Spreads e Strangle
+        combined_direction = "down"
+        if sim_strategy in ("Barrier Strangle", "Barrier Collar", "Barrier Call Spread", "Barrier Put Spread"):
+            combined_label = st.radio("Direção da Barreira", ["Down (inferior)", "Up (superior)"], horizontal=True)
+            combined_direction = "up" if combined_label.startswith("Up") else "down"
+
         barrier_is_down = (
             sim_strategy.startswith("Down")
-            or sim_strategy == "Knock-Out Straddle"
-            or is_combined
-            or sim_strategy == "Knock-Out Forward"
+            or sim_strategy in ("Knock-Out Straddle", "Knock-In Straddle", "Knock-Out Forward", "Knock-In Forward")
+            or sim_strategy.endswith("Touch Down")
+            or (is_combined and combined_direction == "down")
         )
-        is_knock_in = "and-In" in sim_strategy
+        is_knock_in = "and-In" in sim_strategy or sim_strategy.startswith("Knock-In")
+        has_strike = not (is_binary or is_two_barrier)
 
         sim_spot = st.number_input("Spot Inicial (R$)", min_value=10000.0, max_value=500000.0, value=172000.0, step=1000.0)
         sim_vol = st.slider("Volatilidade (%)", min_value=5.0, max_value=100.0, value=20.0, step=1.0) / 100.0
         sim_rate = st.slider("Taxa de Juros (%)", min_value=0.0, max_value=30.0, value=12.0, step=0.5) / 100.0
 
-        sim_strike_pct = st.slider("Strike (% do Spot)", min_value=50, max_value=150, value=90, step=1)
+        sim_strike_pct = st.slider("Strike (% do Spot)", min_value=50, max_value=150, value=90, step=1) if has_strike else 100
         sim_strike = sim_spot * (sim_strike_pct / 100.0)
         # 2ª perna (put) das estruturas combinadas da Família C
         if is_combined:
             sim_strike_2_pct = st.slider("Strike da 2ª Perna (% do Spot)", min_value=50, max_value=150, value=110, step=1)
             sim_strike_2 = sim_spot * (sim_strike_2_pct / 100.0)
-        # Payout dos binários de toque (Família D)
-        if is_binary:
+        # Payout dos binários de toque (Família D) / Notional do Range Accrual
+        if is_binary or is_double:
             sim_payout = st.number_input("Payout (R$)", min_value=1.0, max_value=1_000_000.0, value=100.0, step=10.0)
+        if is_range:
+            sim_payout = st.number_input("Notional (R$)", min_value=1.0, max_value=10_000_000.0, value=100.0, step=10.0)
+        # Rebate (Família A): pago no vencimento se a opção morrer (KO) ou nunca ativar (KI)
+        sim_rebate = 0.0
+        if is_single:
+            sim_rebate = st.number_input(
+                "Rebate (R$)", min_value=0.0, max_value=1_000_000.0, value=0.0, step=10.0,
+                help="Pago no vencimento: Knock-Out se a barreira for tocada; Knock-In se nunca for tocada.",
+            )
 
         # TRAVA DE UX: O range do slider muda conforme a barreira (Down/Up)
-        if barrier_is_down:
+        sim_barrier = None
+        sim_lower = sim_upper = None
+        if is_range:
+            range_variant = st.radio("Tipo de Faixa", ["Túnel (L e U)", "Down (acima de L)", "Up (abaixo de U)"], horizontal=True)
+            if range_variant != "Up (abaixo de U)":
+                sim_lower = sim_spot * st.slider("Limite Inferior L (% do Spot)", min_value=50, max_value=99, value=90, step=1) / 100.0
+            if range_variant != "Down (acima de L)":
+                sim_upper = sim_spot * st.slider("Limite Superior U (% do Spot)", min_value=101, max_value=150, value=110, step=1) / 100.0
+        elif is_double:
+            sim_lower = sim_spot * st.slider("Barreira Inferior L (% do Spot)", min_value=50, max_value=99, value=90, step=1) / 100.0
+            sim_upper = sim_spot * st.slider("Barreira Superior U (% do Spot)", min_value=101, max_value=150, value=110, step=1) / 100.0
+        elif barrier_is_down:
             sim_barrier_pct = st.slider("Barreira (% do Spot)", min_value=50, max_value=99, value=80, step=1)
+            sim_barrier = sim_spot * (sim_barrier_pct / 100.0)
         else:
             sim_barrier_pct = st.slider("Barreira (% do Spot)", min_value=101, max_value=150, value=120, step=1)
-        sim_barrier = sim_spot * (sim_barrier_pct / 100.0)
+            sim_barrier = sim_spot * (sim_barrier_pct / 100.0)
 
         sim_tenor = st.selectbox("Vencimento", ["1 Mês (21 DU)", "3 Meses (63 DU)", "6 Meses (126 DU)", "1 Ano (252 DU)"], index=2)
         tenor_map = {"1 Mês (21 DU)": 21/252, "3 Meses (63 DU)": 63/252, "6 Meses (126 DU)": 126/252, "1 Ano (252 DU)": 1.0}
@@ -893,16 +949,24 @@ with tab6:
 
         # GRÁFICO DE PAYOFF
         s_t = np.linspace(sim_spot * 0.5, sim_spot * 1.5, 200)
-        if is_binary:
+        if is_range:
+            # Range Accrual: cada fixing dentro da faixa acumula Notional/N.
+            # Perfil = Notional se o ativo permanecesse no nível S em todos os fixings.
+            lo_level = sim_lower if sim_lower is not None else 0.0
+            hi_level = sim_upper if sim_upper is not None else np.inf
+            payoff = np.where((s_t >= lo_level) & (s_t <= hi_level), sim_payout, 0.0)
+        elif is_double:
+            # Double One-Touch paga fora do túnel (toque implícito); Double No-Touch paga dentro.
+            inside = (s_t > sim_lower) & (s_t < sim_upper)
+            payoff = np.where(inside, 0.0, sim_payout) if is_one_touch else np.where(inside, sim_payout, 0.0)
+        elif is_binary:
             # Família D: payoff binário — payout fixo do cliente.
-            # One-Touch Up paga acima da barreira (toque implícito no terminal);
-            # No-Touch Up paga abaixo dela (barreira jamais tocada nesse cenário).
-            if sim_strategy == "One-Touch Up":
-                payoff = np.where(s_t >= sim_barrier, sim_payout, 0.0)
-            else:
-                payoff = np.where(s_t < sim_barrier, sim_payout, 0.0)
+            # One-Touch paga além da barreira (toque implícito no terminal);
+            # No-Touch paga aquém dela (barreira jamais tocada nesse cenário).
+            touched_region = s_t <= sim_barrier if barrier_is_down else s_t >= sim_barrier
+            payoff = np.where(touched_region if is_one_touch else ~touched_region, sim_payout, 0.0)
         elif is_combined:
-            # Família C: estruturas de duas pernas Knock-Out Down (Strike 1 + Strike 2)
+            # Família C: estruturas de duas pernas Knock-Out (Strike 1 + Strike 2)
             if sim_strategy == "Barrier Strangle":
                 payoff = np.maximum(s_t - sim_strike, 0) + np.maximum(sim_strike_2 - s_t, 0)
             elif sim_strategy == "Barrier Risk Reversal":
@@ -913,40 +977,50 @@ with tab6:
                 payoff = np.maximum(s_t - sim_strike, 0) - np.maximum(s_t - sim_strike_2, 0)
             else:  # Barrier Put Spread
                 payoff = np.maximum(sim_strike - s_t, 0) - np.maximum(sim_strike_2 - s_t, 0)
-        elif sim_strategy == "Knock-Out Forward":
-            # Forward que morre no crash: payoff linear, zerado abaixo da barreira (KO)
+        elif sim_strategy in ("Knock-Out Forward", "Knock-In Forward"):
+            # Forward sintético: payoff linear; KO morre no crash, KI só nasce no crash
             payoff = s_t - sim_strike
         elif "Put" in sim_strategy:
             payoff = np.maximum(sim_strike - s_t, 0)
-        elif sim_strategy == "Knock-Out Straddle":
+        elif sim_strategy in ("Knock-Out Straddle", "Knock-In Straddle"):
             payoff = np.maximum(s_t - sim_strike, 0) + np.maximum(sim_strike - s_t, 0)
         else:  # Calls
             payoff = np.maximum(s_t - sim_strike, 0)
 
         # Região morta do payoff:
         # Knock-Out zero ONDE a barreira FOI tocada; Knock-In zero onde NÃO foi tocada.
-        # Binários (Família D) já carregam a própria região binária no payoff.
-        if is_binary:
+        # Com rebate, a região morta paga o rebate em vez de zero.
+        # Binários e produtos de túnel (Família D) já carregam a própria região no payoff.
+        if is_binary or is_two_barrier:
             pass
         elif is_knock_in:
             if barrier_is_down:
-                payoff[s_t > sim_barrier] = 0
+                payoff[s_t > sim_barrier] = sim_rebate
             else:
-                payoff[s_t < sim_barrier] = 0
+                payoff[s_t < sim_barrier] = sim_rebate
         else:
             if barrier_is_down:
-                payoff[s_t <= sim_barrier] = 0
+                payoff[s_t <= sim_barrier] = sim_rebate
             else:
-                payoff[s_t >= sim_barrier] = 0
+                payoff[s_t >= sim_barrier] = sim_rebate
 
         fig_payoff = go.Figure()
         fig_payoff.add_trace(go.Scatter(x=s_t, y=payoff, mode='lines', name='Payoff', line=dict(color='#2ca02c', width=3)))
-        fig_payoff.add_vline(x=sim_barrier, line_dash="dash", line_color="red", annotation_text="Barreira (Knock-Out)")
-        fig_payoff.add_vline(x=sim_strike, line_dash="dot", line_color="orange", annotation_text="Strike")
-        if is_binary:
-            # Linha horizontal tracejada no nível do Payout escolhido
-            fig_payoff.add_hline(y=sim_payout, line_dash="dash", line_color="#00A3E0", annotation_text=f"Payout (R$ {sim_payout:,.0f})")
-        fig_payoff.update_layout(title="Payoff no Vencimento", xaxis_title="Preço do Ativo no Vencimento (R$)", yaxis_title="Lucro/Prejuízo (R$)", height=350, margin=dict(l=20, r=20, t=40, b=20))
+        if is_two_barrier:
+            for level, label in ((sim_lower, "L"), (sim_upper, "U")):
+                if level is not None:
+                    fig_payoff.add_vline(x=level, line_dash="dash", line_color="red", annotation_text=f"Barreira {label}")
+        else:
+            barrier_label = "Barreira (Knock-In)" if is_knock_in else ("Barreira" if is_binary else "Barreira (Knock-Out)")
+            fig_payoff.add_vline(x=sim_barrier, line_dash="dash", line_color="red", annotation_text=barrier_label)
+        if has_strike:
+            fig_payoff.add_vline(x=sim_strike, line_dash="dot", line_color="orange", annotation_text="Strike")
+        if is_binary or is_two_barrier:
+            # Linha horizontal tracejada no nível do Payout/Notional escolhido
+            level_label = "Notional" if is_range else "Payout"
+            fig_payoff.add_hline(y=sim_payout, line_dash="dash", line_color="#00A3E0", annotation_text=f"{level_label} (R$ {sim_payout:,.0f})")
+        payoff_title = "Perfil de Acúmulo (S constante em todos os fixings)" if is_range else "Payoff no Vencimento"
+        fig_payoff.update_layout(title=payoff_title, xaxis_title="Preço do Ativo no Vencimento (R$)", yaxis_title="Lucro/Prejuízo (R$)", height=350, margin=dict(l=20, r=20, t=40, b=20))
         st.plotly_chart(fig_payoff, use_container_width=True)
 
         # TRAVAS DE UX COM MENSAGENS AMIGÁVEIS
@@ -954,9 +1028,13 @@ with tab6:
 
         # Travas de UX: Knock-Out nasce além da barreira = morta; Knock-In nasce além = JÁ ATIVA (vanilla).
         # Binários: barreira superior já tocada = One-Touch GANHO integral (não é erro).
-        if is_binary:
+        if is_two_barrier:
+            pass  # sliders garantem L < Spot < U
+        elif is_binary:
             if (not barrier_is_down) and sim_spot >= sim_barrier:
                 st.info("Barreira superior já tocada: o One-Touch paga o Payout integral (o No-Touch vale zero).")
+            elif barrier_is_down and sim_spot <= sim_barrier:
+                st.info("Barreira inferior já tocada: o One-Touch paga o Payout integral (o No-Touch vale zero).")
         elif not is_knock_in:
             if barrier_is_down and sim_spot <= sim_barrier:
                 st.error("**Opa, chefe!** O Spot já está abaixo ou na barreira. A opção morreu antes de começar! Diminua a barreira ou aumente o Spot.")
@@ -970,7 +1048,7 @@ with tab6:
             elif (not barrier_is_down) and sim_spot >= sim_barrier:
                 st.info("A opção JÁ está ativa (spot tocou a barreira) — equivale à vanilla.")
 
-        if barrier_is_down and (not is_knock_in) and sim_strike < sim_barrier:
+        if has_strike and barrier_is_down and (not is_knock_in) and sim_strike < sim_barrier:
             st.warning("**Atenção:** O Strike está abaixo da Barreira. Essa estrutura é atípica.")
 
         if not is_invalid:
@@ -980,25 +1058,52 @@ with tab6:
                     contract_sim = BarrierContract(strike=sim_strike, barrier=sim_barrier, maturity=sim_maturity)
 
                     try:
-                        if sim_strategy == "Down-and-Out Call":
-                            result = price_down_and_out_call(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
-                        elif sim_strategy == "Up-and-Out Call":
-                            result = price_up_and_out_call(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
-                        elif sim_strategy == "Down-and-In Call":
-                            result = price_down_and_in_call(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
-                        elif sim_strategy == "Up-and-In Call":
-                            result = price_up_and_in_call(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
-                        elif sim_strategy == "Down-and-Out Put":
-                            result = price_down_and_out_put(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
-                        elif sim_strategy == "Up-and-Out Put":
-                            result = price_up_and_out_put(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
-                        elif sim_strategy == "Down-and-In Put":
-                            result = price_down_and_in_put(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
-                        elif sim_strategy == "Up-and-In Put":
-                            result = price_up_and_in_put(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
+                        mc = dict(paths=50_000, steps=126, seed=42)
+                        benchmark = None  # benchmark analítico (Família D), quando disponível
+                        if is_single:
+                            # Família A (8 tipos) com rebate opcional; rebate=0 reproduz os
+                            # precificadores dedicados exatamente (mesmos caminhos e CV).
+                            opt_type, direction, knock = SINGLE_BARRIER_SPECS[sim_strategy]
+                            result = price_single_barrier(
+                                market_sim, contract_sim, option_type=opt_type, direction=direction,
+                                knock=knock, rebate=sim_rebate, **mc,
+                            )
+                        elif is_range:
+                            # Range Accrual: 1 fixing por dia útil do prazo
+                            n_fixings = int(round(sim_maturity * 252))
+                            result = price_range_accrual(
+                                market_sim, sim_maturity, lower=sim_lower, upper=sim_upper,
+                                notional=sim_payout, paths=50_000, steps=n_fixings, seed=42,
+                            )
+                            benchmark = result.analytical_price
+                        elif is_double:
+                            double_fn = price_double_one_touch if is_one_touch else price_double_no_touch
+                            result = double_fn(
+                                market_sim, lower=sim_lower, upper=sim_upper, maturity=sim_maturity,
+                                payout=sim_payout, **mc,
+                            )
+                            p_dnt = double_no_touch_probability_analytical(
+                                sim_spot, sim_lower, sim_upper, sim_maturity, sim_rate, 0.02, sim_vol
+                            )
+                            p_pay = (1.0 - p_dnt) if is_one_touch else p_dnt
+                            benchmark = sim_payout * np.exp(-sim_rate * sim_maturity) * p_pay
+                        elif sim_strategy in ("One-Touch Down", "No-Touch Down"):
+                            down_fn = price_one_touch_down if is_one_touch else price_no_touch_down
+                            result = down_fn(market_sim, contract_sim, payout=sim_payout, **mc)
+                            p_hit = barrier_hit_probability_analytical(
+                                sim_spot, sim_barrier, sim_maturity, sim_rate, 0.02, sim_vol
+                            )
+                            p_pay = p_hit if is_one_touch else 1.0 - p_hit
+                            benchmark = sim_payout * np.exp(-sim_rate * sim_maturity) * p_pay
+                        elif sim_strategy == "Knock-In Straddle":
+                            # Call DIC + Put DIP, mesmo Strike: só nasce se tocar a barreira
+                            result = price_knock_in_straddle(market_sim, contract_sim, **mc)
+                        elif sim_strategy == "Knock-In Forward":
+                            # Call DIC - Put DIP, mesmo Strike: forward que só nasce no crash
+                            result = price_knock_in_forward(market_sim, contract_sim, **mc)
                         elif sim_strategy == "Barrier Strangle":
-                            # Família C: Call DOC (Strike 1) + Put DOC (Strike 2), mesma barreira Down
-                            result = price_barrier_strangle(market_sim, contract_sim, sim_strike_2, paths=50_000, steps=126, seed=42)
+                            # Família C: Call KO (Strike 1) + Put KO (Strike 2), mesma barreira
+                            result = price_barrier_strangle(market_sim, contract_sim, sim_strike_2, direction=combined_direction, paths=50_000, steps=126, seed=42)
                         elif sim_strategy == "Barrier Risk Reversal":
                             # Família C: Call DOC (Strike 1) - Put DOC (Strike 2); negativo = crédito líquido
                             result = price_barrier_risk_reversal(market_sim, contract_sim, sim_strike_2, paths=50_000, steps=126, seed=42)
@@ -1010,13 +1115,13 @@ with tab6:
                             result = price_no_touch_up(market_sim, contract_sim, payout=sim_payout, paths=50_000, steps=126, seed=42)
                         elif sim_strategy == "Barrier Collar":
                             # Família C+: Put DOC (Strike 1) - Call DOC (Strike 2); negativo = crédito
-                            result = price_barrier_collar(market_sim, contract_sim, sim_strike_2, paths=50_000, steps=126, seed=42)
+                            result = price_barrier_collar(market_sim, contract_sim, sim_strike_2, direction=combined_direction, paths=50_000, steps=126, seed=42)
                         elif sim_strategy == "Barrier Call Spread":
-                            # Família C+: Call DOC (Strike 1) - Call DOC (Strike 2)
-                            result = price_barrier_call_spread(market_sim, contract_sim, sim_strike_2, paths=50_000, steps=126, seed=42)
+                            # Família C+: Call KO (Strike 1) - Call KO (Strike 2)
+                            result = price_barrier_call_spread(market_sim, contract_sim, sim_strike_2, direction=combined_direction, paths=50_000, steps=126, seed=42)
                         elif sim_strategy == "Barrier Put Spread":
-                            # Família C+: Put DOC (Strike 1) - Put DOC (Strike 2)
-                            result = price_barrier_put_spread(market_sim, contract_sim, sim_strike_2, paths=50_000, steps=126, seed=42)
+                            # Família C+: Put KO (Strike 1) - Put KO (Strike 2)
+                            result = price_barrier_put_spread(market_sim, contract_sim, sim_strike_2, direction=combined_direction, paths=50_000, steps=126, seed=42)
                         elif sim_strategy == "Knock-Out Forward":
                             # Call DOC - Put DOC, mesmo Strike: forward que morre no crash
                             result = price_knock_out_forward(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
@@ -1041,13 +1146,25 @@ with tab6:
 
                         col_r1, col_r2, col_r3 = st.columns(3)
                         col_r1.metric("Preço da Estrutura", f"R$ {result.price:,.2f}")
-                        col_r2.metric("Preço Vanilla", f"R$ {result.vanilla_price:,.2f}")
-                        # Knock-Ins: o campo reporta P(morrer sem ativação)
-                        if is_binary:
-                            p_label = "P(Tocado)" if sim_strategy == "One-Touch Up" else "P(Não Tocado)"
+                        if benchmark is not None:
+                            # Família D: benchmark analítico (monitoramento contínuo) ao lado do MC
+                            col_r2.metric("Benchmark Analítico", f"R$ {benchmark:,.2f}")
                         else:
-                            p_label = "P(Sem Ativação)" if is_knock_in else "P(Knock-out)"
-                        col_r3.metric(p_label, f"{result.knock_out_probability:.2%}")
+                            col_r2.metric("Preço Vanilla", f"R$ {result.vanilla_price:,.2f}")
+                        if is_range:
+                            col_r3.metric("Fração Esperada na Faixa", f"{result.expected_fraction:.2%}")
+                            st.caption(f"{result.observations} fixings (1 por dia útil) | IC 95%: "
+                                       f"[R$ {result.ci_low:,.2f}; R$ {result.ci_high:,.2f}]")
+                        else:
+                            # Knock-Ins: o campo reporta P(morrer sem ativação)
+                            if is_binary or is_double:
+                                p_label = "P(Tocado)" if is_one_touch else "P(Não Tocado)"
+                            else:
+                                p_label = "P(Sem Ativação)" if is_knock_in else "P(Knock-out)"
+                            col_r3.metric(p_label, f"{result.knock_out_probability:.2%}")
+                        if is_single and sim_rebate > 0:
+                            st.caption(f"Inclui rebate de R$ {sim_rebate:,.2f} pago no vencimento "
+                                       + ("se a opção nunca ativar." if is_knock_in else "se a barreira for tocada."))
                     except Exception:
                         st.error("**Ops!** Não conseguimos calcular essa estrutura. Verifique os parâmetros.")
 

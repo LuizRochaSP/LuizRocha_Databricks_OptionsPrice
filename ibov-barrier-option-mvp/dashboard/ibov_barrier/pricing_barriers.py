@@ -631,6 +631,15 @@ def price_up_and_in_put(
     )
 
 
+def _knock_out_legs(direction: str):
+    """(call KO, put KO) para a direção da barreira: 'down' (DOC/DOP) ou 'up' (UOC/UOP)."""
+    if direction == "down":
+        return price_down_and_out_call, price_down_and_out_put
+    if direction == "up":
+        return price_up_and_out_call, price_up_and_out_put
+    raise ValueError("direction must be 'down' or 'up'")
+
+
 def price_barrier_strangle(
     market: MarketData,
     contract: BarrierContract,
@@ -640,6 +649,7 @@ def price_barrier_strangle(
     steps: int = 252,
     seed: int = 42,
     monitoring: str = "brownian_bridge",
+    direction: str = "down",
 ) -> PriceResult:
     """Preço de um Strangle com barreira Down (Família C — estrutura combinada).
 
@@ -651,13 +661,17 @@ def price_barrier_strangle(
     O erro padrão reportado é a soma em quadratura dos SEs das pernas
     (limite conservador: ignora a correlação das pernas, que reduz a variância
     verdadeira da soma).
+
+    `direction='up'` monta a variante com barreira SUPERIOR (pernas
+    Up-and-Out); o padrão 'down' preserva o comportamento original.
     """
     if not np.isfinite(strike_2) or strike_2 <= 0:
         raise ValueError("strike_2 must be a positive finite number")
-    call_leg = price_down_and_out_call(
+    call_ko, put_ko = _knock_out_legs(direction)
+    call_leg = call_ko(
         market, contract, paths=paths, steps=steps, seed=seed, monitoring=monitoring
     )
-    put_leg = price_down_and_out_put(
+    put_leg = put_ko(
         market,
         replace(contract, strike=strike_2),
         paths=paths,
@@ -825,6 +839,7 @@ def price_barrier_collar(
     steps: int = 252,
     seed: int = 42,
     monitoring: str = "brownian_bridge",
+    direction: str = "down",
 ):
     """Collar com barreira Down (Família C — lacuna fácil).
 
@@ -833,11 +848,15 @@ def price_barrier_collar(
     inferior. Preço líquido = put − call (negativo = crédito líquido).
     Mesma seed → mesmos caminhos e knock-outs; SE em quadratura
     (conservador, ignora a correlação das pernas).
+
+    `direction='up'` monta a variante com barreira SUPERIOR (pernas
+    Up-and-Out); o padrão 'down' preserva o comportamento original.
     """
     if not np.isfinite(strike_2) or strike_2 <= 0:
         raise ValueError("strike_2 must be a positive finite number")
-    put_leg = price_down_and_out_put(market, contract, paths=paths, steps=steps, seed=seed, monitoring=monitoring)
-    call_leg = price_down_and_out_call(
+    call_ko, put_ko = _knock_out_legs(direction)
+    put_leg = put_ko(market, contract, paths=paths, steps=steps, seed=seed, monitoring=monitoring)
+    call_leg = call_ko(
         market, replace(contract, strike=strike_2), paths=paths, steps=steps, seed=seed, monitoring=monitoring
     )
     price = put_leg.price - call_leg.price
@@ -861,6 +880,7 @@ def price_barrier_call_spread(
     steps: int = 252,
     seed: int = 42,
     monitoring: str = "brownian_bridge",
+    direction: str = "down",
 ):
     """Call Spread com barreira Down (Família C — lacuna fácil).
 
@@ -868,11 +888,15 @@ def price_barrier_call_spread(
     (Strike 2, tipicamente acima do Strike 1 para débito líquido).
     Payoff limitado nos dois lados: risco e retorno known em troca de
     prêmio menor que a call avulsa.
+
+    `direction='up'` monta a variante com barreira SUPERIOR (pernas
+    Up-and-Out); o padrão 'down' preserva o comportamento original.
     """
     if not np.isfinite(strike_2) or strike_2 <= 0:
         raise ValueError("strike_2 must be a positive finite number")
-    call_1 = price_down_and_out_call(market, contract, paths=paths, steps=steps, seed=seed, monitoring=monitoring)
-    call_2 = price_down_and_out_call(
+    call_ko, put_ko = _knock_out_legs(direction)
+    call_1 = call_ko(market, contract, paths=paths, steps=steps, seed=seed, monitoring=monitoring)
+    call_2 = call_ko(
         market, replace(contract, strike=strike_2), paths=paths, steps=steps, seed=seed, monitoring=monitoring
     )
     price = call_1.price - call_2.price
@@ -896,6 +920,7 @@ def price_barrier_put_spread(
     steps: int = 252,
     seed: int = 42,
     monitoring: str = "brownian_bridge",
+    direction: str = "down",
 ):
     """Put Spread com barreira Down (Família C — lacuna fácil).
 
@@ -903,11 +928,15 @@ def price_barrier_put_spread(
     (Strike 2). Com Strike 2 abaixo do Strike 1, é o spread de put
     clássico de débito (proteção limitada ao crash, mais barato que a
     put avulsa — e a barreira Down corta ainda o custo da perna longa).
+
+    `direction='up'` monta a variante com barreira SUPERIOR (pernas
+    Up-and-Out); o padrão 'down' preserva o comportamento original.
     """
     if not np.isfinite(strike_2) or strike_2 <= 0:
         raise ValueError("strike_2 must be a positive finite number")
-    put_1 = price_down_and_out_put(market, contract, paths=paths, steps=steps, seed=seed, monitoring=monitoring)
-    put_2 = price_down_and_out_put(
+    call_ko, put_ko = _knock_out_legs(direction)
+    put_1 = put_ko(market, contract, paths=paths, steps=steps, seed=seed, monitoring=monitoring)
+    put_2 = put_ko(
         market, replace(contract, strike=strike_2), paths=paths, steps=steps, seed=seed, monitoring=monitoring
     )
     price = put_1.price - put_2.price
