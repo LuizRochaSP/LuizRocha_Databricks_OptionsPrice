@@ -26,6 +26,8 @@ from ibov_barrier.pricing_barriers import (
     price_up_and_out_put,
     price_down_and_in_put,
     price_up_and_in_put,
+    price_barrier_strangle,
+    price_barrier_risk_reversal,
 )
 
 st.set_page_config(
@@ -831,15 +833,21 @@ with tab6:
                 "Down-and-In Call", "Up-and-In Call",
                 "Down-and-Out Put", "Up-and-Out Put",
                 "Down-and-In Put", "Up-and-In Put",
-                "Knock-Out Straddle",
+                "Knock-Out Straddle", "Barrier Strangle", "Barrier Risk Reversal",
             ],
         )
         # Down = barreira inferior; Up = barreira superior.
-        # Knock-In: a opção nasce morta e só "acorda"se tocar a barreira.
+        # Knock-In: a opção nasce morta e só "acorda" se tocar a barreira.
         # Knock-Out: a opção nasce viva e morre se tocar a barreira.
         # O Knock-Out Straddle usa barreira para baixo (down): as duas pernas morrem no crash.
-        barrier_is_down = sim_strategy.startswith("Down") or sim_strategy == "Knock-Out Straddle"
-        is_knock_in = "and-In"in sim_strategy
+        # Estruturas combinadas (Família C): duas pernas Knock-Out Down com a mesma barreira.
+        is_combined = sim_strategy in ("Barrier Strangle", "Barrier Risk Reversal")
+        barrier_is_down = (
+            sim_strategy.startswith("Down")
+            or sim_strategy == "Knock-Out Straddle"
+            or is_combined
+        )
+        is_knock_in = "and-In" in sim_strategy
 
         sim_spot = st.number_input("Spot Inicial (R$)", min_value=10000.0, max_value=500000.0, value=172000.0, step=1000.0)
         sim_vol = st.slider("Volatilidade (%)", min_value=5.0, max_value=100.0, value=20.0, step=1.0) / 100.0
@@ -847,6 +855,10 @@ with tab6:
 
         sim_strike_pct = st.slider("Strike (% do Spot)", min_value=50, max_value=150, value=90, step=1)
         sim_strike = sim_spot * (sim_strike_pct / 100.0)
+        # 2ª perna (put) das estruturas combinadas da Família C
+        if is_combined:
+            sim_strike_2_pct = st.slider("Strike da 2ª Perna (Put, % do Spot)", min_value=50, max_value=150, value=110, step=1)
+            sim_strike_2 = sim_spot * (sim_strike_2_pct / 100.0)
 
         # TRAVA DE UX: O range do slider muda conforme a barreira (Down/Up)
         if barrier_is_down:
@@ -864,11 +876,17 @@ with tab6:
 
         # GRÁFICO DE PAYOFF
         s_t = np.linspace(sim_spot * 0.5, sim_spot * 1.5, 200)
-        if "Put"in sim_strategy:
+        if is_combined:
+            # Família C: Call (Strike 1) + Put (Strike 2), ambas Knock-Out Down
+            if sim_strategy == "Barrier Strangle":
+                payoff = np.maximum(s_t - sim_strike, 0) + np.maximum(sim_strike_2 - s_t, 0)
+            else:  # Barrier Risk Reversal: compra call, vende put
+                payoff = np.maximum(s_t - sim_strike, 0) - np.maximum(sim_strike_2 - s_t, 0)
+        elif "Put" in sim_strategy:
             payoff = np.maximum(sim_strike - s_t, 0)
         elif sim_strategy == "Knock-Out Straddle":
             payoff = np.maximum(s_t - sim_strike, 0) + np.maximum(sim_strike - s_t, 0)
-        else: # Calls
+        else:  # Calls
             payoff = np.maximum(s_t - sim_strike, 0)
 
         # Região morta do payoff:
@@ -934,6 +952,12 @@ with tab6:
                             result = price_down_and_in_put(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
                         elif sim_strategy == "Up-and-In Put":
                             result = price_up_and_in_put(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
+                        elif sim_strategy == "Barrier Strangle":
+                            # Família C: Call DOC (Strike 1) + Put DOC (Strike 2), mesma barreira Down
+                            result = price_barrier_strangle(market_sim, contract_sim, sim_strike_2, paths=50_000, steps=126, seed=42)
+                        elif sim_strategy == "Barrier Risk Reversal":
+                            # Família C: Call DOC (Strike 1) - Put DOC (Strike 2); negativo = crédito líquido
+                            result = price_barrier_risk_reversal(market_sim, contract_sim, sim_strike_2, paths=50_000, steps=126, seed=42)
                         else:
                             # Knock-Out Straddle: perna call + perna put, mesmo Strike e
                             # Barreira down. Mesma seed mesmos caminhos e mesmos eventos
@@ -946,7 +970,9 @@ with tab6:
                                 knock_out_probability=result_call.knock_out_probability,
                             )
 
-                        if result.price <= 0.01:
+                        if sim_strategy == "Barrier Risk Reversal" and result.price < 0:
+                            st.success("Cálculo concluído! Preço negativo = crédito líquido RECEBIDO (a venda da put custeia a call).")
+                        elif sim_strategy != "Barrier Risk Reversal" and result.price <= 0.01:
                             st.warning("**Calma lá!** Com esses parâmetros a opção está valendo praticamente zero. Tente ajustar o Strike ou a Barreira.")
                         else:
                             st.success("Cálculo concluído com sucesso! Estrutura pronta para o cliente.")
@@ -955,7 +981,7 @@ with tab6:
                         col_r1.metric("Preço da Estrutura", f"R$ {result.price:,.2f}")
                         col_r2.metric("Preço Vanilla", f"R$ {result.vanilla_price:,.2f}")
                         # Knock-Ins: o campo reporta P(morrer sem ativação)
-                        p_label = "P(Sem Ativação)"if is_knock_in else "P(Knock-out)"
+                        p_label = "P(Sem Ativação)" if is_knock_in else "P(Knock-out)"
                         col_r3.metric(p_label, f"{result.knock_out_probability:.2%}")
                     except Exception:
                         st.error("**Ops!** Não conseguimos calcular essa estrutura. Verifique os parâmetros.")

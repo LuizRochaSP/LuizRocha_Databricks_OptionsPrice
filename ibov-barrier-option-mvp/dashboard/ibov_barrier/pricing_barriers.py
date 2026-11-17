@@ -10,6 +10,9 @@ paridade put-call: P = C - S·e^(-qT) + K·e^(-rT).
 """
 from __future__ import annotations
 
+from dataclasses import replace
+from types import SimpleNamespace
+
 from math import exp, log, sqrt
 
 import numpy as np
@@ -19,6 +22,7 @@ from ibov_barrier.pricing import (
     MarketData,
     PriceResult,
     black_scholes_call,
+    price_down_and_out_call,
 )
 
 
@@ -624,4 +628,96 @@ def price_up_and_in_put(
         ci_high=price + 1.96 * standard_error,
         knock_out_probability=float(1.0 - knocked_in.mean()),
         vanilla_price=vanilla,
+    )
+
+
+def price_barrier_strangle(
+    market: MarketData,
+    contract: BarrierContract,
+    strike_2: float,
+    *,
+    paths: int = 200_000,
+    steps: int = 252,
+    seed: int = 42,
+    monitoring: str = "brownian_bridge",
+) -> PriceResult:
+    """Preço de um Strangle com barreira Down (Família C — estrutura combinada).
+
+    Compra uma Call Down-and-Out (Strike 1 = `contract.strike`) e uma Put
+    Down-and-Out (Strike 2 = `strike_2`), ambas com a MESMA barreira inferior.
+    Mesma seed → mesmos caminhos e mesmos eventos de knock-out nas duas
+    pernas, logo `knock_out_probability` é idêntica entre as pernas.
+
+    O erro padrão reportado é a soma em quadratura dos SEs das pernas
+    (limite conservador: ignora a correlação das pernas, que reduz a variância
+    verdadeira da soma).
+    """
+    if not np.isfinite(strike_2) or strike_2 <= 0:
+        raise ValueError("strike_2 must be a positive finite number")
+    call_leg = price_down_and_out_call(
+        market, contract, paths=paths, steps=steps, seed=seed, monitoring=monitoring
+    )
+    put_leg = price_down_and_out_put(
+        market,
+        replace(contract, strike=strike_2),
+        paths=paths,
+        steps=steps,
+        seed=seed,
+        monitoring=monitoring,
+    )
+    price = call_leg.price + put_leg.price
+    standard_error = (call_leg.standard_error**2 + put_leg.standard_error**2) ** 0.5
+    return SimpleNamespace(
+        price=price,
+        standard_error=standard_error,
+        ci_low=price - 1.96 * standard_error,
+        ci_high=price + 1.96 * standard_error,
+        knock_out_probability=call_leg.knock_out_probability,
+        vanilla_price=call_leg.vanilla_price + put_leg.vanilla_price,
+    )
+
+
+def price_barrier_risk_reversal(
+    market: MarketData,
+    contract: BarrierContract,
+    strike_2: float,
+    *,
+    paths: int = 200_000,
+    steps: int = 252,
+    seed: int = 42,
+    monitoring: str = "brownian_bridge",
+) -> PriceResult:
+    """Preço de um Risk Reversal com barreira Down (Família C — estrutura combinada).
+
+    Compra uma Call Down-and-Out (Strike 1 = `contract.strike`) e VENDE uma
+    Put Down-and-Out (Strike 2 = `strike_2`), ambas com a MESMA barreira
+    inferior. Preço líquido = call − put: NEGATIVO significa crédito líquido
+    RECEBIDO pela venda da perna put. O payoff delta das pernas usa a mesma
+    seed (mesmos caminhos e knock-outs).
+
+    O erro padrão reportado é a soma em quadratura dos SEs das pernas
+    (limite conservador para a diferença de pernas correlacionadas).
+    """
+    if not np.isfinite(strike_2) or strike_2 <= 0:
+        raise ValueError("strike_2 must be a positive finite number")
+    call_leg = price_down_and_out_call(
+        market, contract, paths=paths, steps=steps, seed=seed, monitoring=monitoring
+    )
+    put_leg = price_down_and_out_put(
+        market,
+        replace(contract, strike=strike_2),
+        paths=paths,
+        steps=steps,
+        seed=seed,
+        monitoring=monitoring,
+    )
+    price = call_leg.price - put_leg.price
+    standard_error = (call_leg.standard_error**2 + put_leg.standard_error**2) ** 0.5
+    return SimpleNamespace(
+        price=price,
+        standard_error=standard_error,
+        ci_low=price - 1.96 * standard_error,
+        ci_high=price + 1.96 * standard_error,
+        knock_out_probability=call_leg.knock_out_probability,
+        vanilla_price=call_leg.vanilla_price - put_leg.vanilla_price,
     )
