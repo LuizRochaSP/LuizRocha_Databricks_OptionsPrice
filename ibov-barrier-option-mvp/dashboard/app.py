@@ -30,6 +30,10 @@ from ibov_barrier.pricing_barriers import (
     price_barrier_risk_reversal,
     price_one_touch_up,
     price_no_touch_up,
+    price_barrier_collar,
+    price_barrier_call_spread,
+    price_barrier_put_spread,
+    price_knock_out_forward,
 )
 
 st.set_page_config(
@@ -837,6 +841,7 @@ with tab6:
                 "Down-and-In Put", "Up-and-In Put",
                 "Knock-Out Straddle", "Barrier Strangle", "Barrier Risk Reversal",
                 "One-Touch Up", "No-Touch Up",
+                "Barrier Collar", "Barrier Call Spread", "Barrier Put Spread", "Knock-Out Forward",
             ],
         )
         # Down = barreira inferior; Up = barreira superior.
@@ -844,13 +849,17 @@ with tab6:
         # Knock-Out: a opção nasce viva e morre se tocar a barreira.
         # O Knock-Out Straddle usa barreira para baixo (down): as duas pernas morrem no crash.
         # Estruturas combinadas (Família C): duas pernas Knock-Out Down com a mesma barreira.
-        is_combined = sim_strategy in ("Barrier Strangle", "Barrier Risk Reversal")
+        is_combined = sim_strategy in (
+            "Barrier Strangle", "Barrier Risk Reversal",
+            "Barrier Collar", "Barrier Call Spread", "Barrier Put Spread",
+        )
         # Binários de toque (Família D): payoff fixo condicionado ao toque da barreira
         is_binary = sim_strategy in ("One-Touch Up", "No-Touch Up")
         barrier_is_down = (
             sim_strategy.startswith("Down")
             or sim_strategy == "Knock-Out Straddle"
             or is_combined
+            or sim_strategy == "Knock-Out Forward"
         )
         is_knock_in = "and-In" in sim_strategy
 
@@ -862,7 +871,7 @@ with tab6:
         sim_strike = sim_spot * (sim_strike_pct / 100.0)
         # 2ª perna (put) das estruturas combinadas da Família C
         if is_combined:
-            sim_strike_2_pct = st.slider("Strike da 2ª Perna (Put, % do Spot)", min_value=50, max_value=150, value=110, step=1)
+            sim_strike_2_pct = st.slider("Strike da 2ª Perna (% do Spot)", min_value=50, max_value=150, value=110, step=1)
             sim_strike_2 = sim_spot * (sim_strike_2_pct / 100.0)
         # Payout dos binários de toque (Família D)
         if is_binary:
@@ -893,11 +902,20 @@ with tab6:
             else:
                 payoff = np.where(s_t < sim_barrier, sim_payout, 0.0)
         elif is_combined:
-            # Família C: Call (Strike 1) + Put (Strike 2), ambas Knock-Out Down
+            # Família C: estruturas de duas pernas Knock-Out Down (Strike 1 + Strike 2)
             if sim_strategy == "Barrier Strangle":
                 payoff = np.maximum(s_t - sim_strike, 0) + np.maximum(sim_strike_2 - s_t, 0)
-            else:  # Barrier Risk Reversal: compra call, vende put
+            elif sim_strategy == "Barrier Risk Reversal":
                 payoff = np.maximum(s_t - sim_strike, 0) - np.maximum(sim_strike_2 - s_t, 0)
+            elif sim_strategy == "Barrier Collar":
+                payoff = np.maximum(sim_strike - s_t, 0) - np.maximum(s_t - sim_strike_2, 0)
+            elif sim_strategy == "Barrier Call Spread":
+                payoff = np.maximum(s_t - sim_strike, 0) - np.maximum(s_t - sim_strike_2, 0)
+            else:  # Barrier Put Spread
+                payoff = np.maximum(sim_strike - s_t, 0) - np.maximum(sim_strike_2 - s_t, 0)
+        elif sim_strategy == "Knock-Out Forward":
+            # Forward que morre no crash: payoff linear, zerado abaixo da barreira (KO)
+            payoff = s_t - sim_strike
         elif "Put" in sim_strategy:
             payoff = np.maximum(sim_strike - s_t, 0)
         elif sim_strategy == "Knock-Out Straddle":
@@ -990,6 +1008,18 @@ with tab6:
                         elif sim_strategy == "No-Touch Up":
                             # Família D: binário — payout fixo se NUNCA tocar a barreira superior
                             result = price_no_touch_up(market_sim, contract_sim, payout=sim_payout, paths=50_000, steps=126, seed=42)
+                        elif sim_strategy == "Barrier Collar":
+                            # Família C+: Put DOC (Strike 1) - Call DOC (Strike 2); negativo = crédito
+                            result = price_barrier_collar(market_sim, contract_sim, sim_strike_2, paths=50_000, steps=126, seed=42)
+                        elif sim_strategy == "Barrier Call Spread":
+                            # Família C+: Call DOC (Strike 1) - Call DOC (Strike 2)
+                            result = price_barrier_call_spread(market_sim, contract_sim, sim_strike_2, paths=50_000, steps=126, seed=42)
+                        elif sim_strategy == "Barrier Put Spread":
+                            # Família C+: Put DOC (Strike 1) - Put DOC (Strike 2)
+                            result = price_barrier_put_spread(market_sim, contract_sim, sim_strike_2, paths=50_000, steps=126, seed=42)
+                        elif sim_strategy == "Knock-Out Forward":
+                            # Call DOC - Put DOC, mesmo Strike: forward que morre no crash
+                            result = price_knock_out_forward(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
                         else:
                             # Knock-Out Straddle: perna call + perna put, mesmo Strike e
                             # Barreira down. Mesma seed mesmos caminhos e mesmos eventos
@@ -1004,7 +1034,7 @@ with tab6:
 
                         if sim_strategy == "Barrier Risk Reversal" and result.price < 0:
                             st.success("Cálculo concluído! Preço negativo = crédito líquido RECEBIDO (a venda da put custeia a call).")
-                        elif sim_strategy != "Barrier Risk Reversal" and result.price <= 0.01:
+                        elif sim_strategy != "Barrier Risk Reversal" and abs(result.price) <= 0.01:
                             st.warning("**Calma lá!** Com esses parâmetros a opção está valendo praticamente zero. Tente ajustar o Strike ou a Barreira.")
                         else:
                             st.success("Cálculo concluído com sucesso! Estrutura pronta para o cliente.")
