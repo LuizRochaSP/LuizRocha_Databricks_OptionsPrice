@@ -20,8 +20,12 @@ from types import SimpleNamespace
 from ibov_barrier.pricing import price_down_and_out_call, MarketData, BarrierContract
 from ibov_barrier.pricing_barriers import (
     price_up_and_out_call,
+    price_down_and_in_call,
+    price_up_and_in_call,
     price_down_and_out_put,
     price_up_and_out_put,
+    price_down_and_in_put,
+    price_up_and_in_put,
 )
 
 st.set_page_config(
@@ -723,11 +727,20 @@ with tab6:
         st.subheader("Parâmetros da Operação")
         sim_strategy = st.selectbox(
             "Estratégia",
-            ["Down-and-Out Call", "Up-and-Out Call", "Down-and-Out Put", "Up-and-Out Put", "Knock-Out Straddle"],
+            [
+                "Down-and-Out Call", "Up-and-Out Call",
+                "Down-and-In Call", "Up-and-In Call",
+                "Down-and-Out Put", "Up-and-Out Put",
+                "Down-and-In Put", "Up-and-In Put",
+                "Knock-Out Straddle",
+            ],
         )
-        # Down = barreira inferior (morre se cair); Up = barreira superior (morre se subir).
+        # Down = barreira inferior; Up = barreira superior.
+        # Knock-In: a opção nasce morta e só "acorda" se tocar a barreira.
+        # Knock-Out: a opção nasce viva e morre se tocar a barreira.
         # O Knock-Out Straddle usa barreira para baixo (down): as duas pernas morrem no crash.
         barrier_is_down = sim_strategy.startswith("Down") or sim_strategy == "Knock-Out Straddle"
+        is_knock_in = "and-In" in sim_strategy
 
         sim_spot = st.number_input("Spot Inicial (R$)", min_value=10000.0, max_value=500000.0, value=172000.0, step=1000.0)
         sim_vol = st.slider("Volatilidade (%)", min_value=5.0, max_value=100.0, value=20.0, step=1.0) / 100.0
@@ -759,10 +772,18 @@ with tab6:
         else:  # Calls
             payoff = np.maximum(s_t - sim_strike, 0)
 
-        if barrier_is_down:
-            payoff[s_t <= sim_barrier] = 0
+        # Região morta do payoff:
+        # Knock-Out → zero ONDE a barreira FOI tocada; Knock-In → zero onde NÃO foi tocada.
+        if is_knock_in:
+            if barrier_is_down:
+                payoff[s_t > sim_barrier] = 0
+            else:
+                payoff[s_t < sim_barrier] = 0
         else:
-            payoff[s_t >= sim_barrier] = 0
+            if barrier_is_down:
+                payoff[s_t <= sim_barrier] = 0
+            else:
+                payoff[s_t >= sim_barrier] = 0
 
         fig_payoff = go.Figure()
         fig_payoff.add_trace(go.Scatter(x=s_t, y=payoff, mode='lines', name='Payoff', line=dict(color='#2ca02c', width=3)))
@@ -774,14 +795,21 @@ with tab6:
         # TRAVAS DE UX COM MENSAGENS AMIGÁVEIS
         is_invalid = False
 
-        if barrier_is_down and sim_spot <= sim_barrier:
-            st.error("🚨 **Opa, chefe!** O Spot já está abaixo ou na barreira. A opção morreu antes de começar! Diminua a barreira ou aumente o Spot.")
-            is_invalid = True
-        elif (not barrier_is_down) and sim_spot >= sim_barrier:
-            st.error("🚨 **Opa, chefe!** O Spot já está acima da barreira. A opção morreu antes de começar! Aumente a barreira ou diminua o Spot.")
-            is_invalid = True
+        # Travas de UX: Knock-Out nasce além da barreira = morta; Knock-In nasce além = JÁ ATIVA (vanilla).
+        if not is_knock_in:
+            if barrier_is_down and sim_spot <= sim_barrier:
+                st.error("🚨 **Opa, chefe!** O Spot já está abaixo ou na barreira. A opção morreu antes de começar! Diminua a barreira ou aumente o Spot.")
+                is_invalid = True
+            elif (not barrier_is_down) and sim_spot >= sim_barrier:
+                st.error("🚨 **Opa, chefe!** O Spot já está acima da barreira. A opção morreu antes de começar! Aumente a barreira ou diminua o Spot.")
+                is_invalid = True
+        else:
+            if barrier_is_down and sim_spot <= sim_barrier:
+                st.info("💡 A opção JÁ está ativa (spot tocou a barreira) — equivale à vanilla.")
+            elif (not barrier_is_down) and sim_spot >= sim_barrier:
+                st.info("💡 A opção JÁ está ativa (spot tocou a barreira) — equivale à vanilla.")
 
-        if barrier_is_down and sim_strike < sim_barrier:
+        if barrier_is_down and (not is_knock_in) and sim_strike < sim_barrier:
             st.warning("⚠️ **Atenção:** O Strike está abaixo da Barreira. Essa estrutura é atípica.")
 
         if not is_invalid:
@@ -795,10 +823,18 @@ with tab6:
                             result = price_down_and_out_call(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
                         elif sim_strategy == "Up-and-Out Call":
                             result = price_up_and_out_call(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
+                        elif sim_strategy == "Down-and-In Call":
+                            result = price_down_and_in_call(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
+                        elif sim_strategy == "Up-and-In Call":
+                            result = price_up_and_in_call(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
                         elif sim_strategy == "Down-and-Out Put":
                             result = price_down_and_out_put(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
                         elif sim_strategy == "Up-and-Out Put":
                             result = price_up_and_out_put(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
+                        elif sim_strategy == "Down-and-In Put":
+                            result = price_down_and_in_put(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
+                        elif sim_strategy == "Up-and-In Put":
+                            result = price_up_and_in_put(market_sim, contract_sim, paths=50_000, steps=126, seed=42)
                         else:
                             # Knock-Out Straddle: perna call + perna put, mesmo Strike e
                             # Barreira down. Mesma seed → mesmos caminhos e mesmos eventos
@@ -819,7 +855,9 @@ with tab6:
                         col_r1, col_r2, col_r3 = st.columns(3)
                         col_r1.metric("Preço da Estrutura", f"R$ {result.price:,.2f}")
                         col_r2.metric("Preço Vanilla", f"R$ {result.vanilla_price:,.2f}")
-                        col_r3.metric("P(Knock-out)", f"{result.knock_out_probability:.2%}")
+                        # Knock-Ins: o campo reporta P(morrer sem ativação)
+                        p_label = "P(Sem Ativação)" if is_knock_in else "P(Knock-out)"
+                        col_r3.metric(p_label, f"{result.knock_out_probability:.2%}")
                     except Exception:
                         st.error("⚠️ **Ops!** Não conseguimos calcular essa estrutura. Verifique os parâmetros.")
 

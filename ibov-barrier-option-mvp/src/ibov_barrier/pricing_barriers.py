@@ -1,8 +1,9 @@
-"""Extensões do motor de precificação: barreiras Up-and-Out, Down-and-In e Puts.
+"""Extensões do motor de precificação: Família A completa de barreiras.
 
-Reutiliza as estruturas de dados, o gerador de caminhos, o monitoramento
+Calls e Puts, Down/Up, In/Out (DOC, UOC, DIC, UIC, DOP, UOP, DIP, UIP) —
+reutiliza as estruturas de dados, o gerador de caminhos, o monitoramento
 Brownian Bridge e a variável de controle vanilla do módulo `pricing`, alterando
-apenas a lógica de ativação/knock-out da barreira e, nas Puts, o payoff final.
+apenas a lógica de ativação/knock-out da barreira e o payoff final.
 
 O preço da put vanilla (necessário para a variável de controle) é obtido pela
 paridade put-call: P = C - S·e^(-qT) + K·e^(-rT).
@@ -367,5 +368,260 @@ def price_up_and_out_put(
         ci_low=price - 1.96 * standard_error,
         ci_high=price + 1.96 * standard_error,
         knock_out_probability=float(1.0 - alive.mean()),
+        vanilla_price=vanilla,
+    )
+
+
+def price_down_and_in_put(
+    market: MarketData,
+    contract: BarrierContract,
+    paths: int = 200_000,
+    steps: int = 252,
+    seed: int = 42,
+    monitoring: str = "brownian_bridge",
+) -> PriceResult:
+    """Preço de uma put down-and-in sem rebate (barreira inferior).
+
+    A opção SÓ paga se o ativo DESCER e tocar a barreira inferior em algum
+    momento até o vencimento; caso contrário expira sem valor. Se o spot já
+    nasce na barreira ou abaixo dela, a opção já está ativa e equivale à put
+    vanilla (obtida por paridade put-call). `knock_out_probability` reporta a
+    probabilidade de a opção morrer sem ativação (nunca tocar a barreira).
+    """
+    s0, h, t = market.spot, contract.barrier, contract.maturity
+    sigma = market.volatility
+    parameters = np.asarray(
+        [s0, h, contract.strike, t, sigma, market.rate, market.dividend_yield],
+        dtype=float,
+    )
+    if not np.isfinite(parameters).all():
+        raise ValueError("market and contract parameters must be finite")
+    if min(s0, h, contract.strike, t, sigma) <= 0:
+        raise ValueError("spot, strike, barrier, maturity and volatility must be positive")
+    if paths < 2 or steps < 1:
+        raise ValueError("paths must be >= 2 and steps must be >= 1")
+    if monitoring not in {"discrete", "brownian_bridge"}:
+        raise ValueError("monitoring must be 'discrete' or 'brownian_bridge'")
+    vanilla = _black_scholes_put_by_parity(market, contract, black_scholes_call(market, contract))
+    if s0 <= h:
+        return PriceResult(vanilla, 0.0, vanilla, vanilla, 0.0, vanilla)
+
+    rng = np.random.default_rng(seed)
+    dt = t / steps
+    z = rng.standard_normal((paths, steps))
+    uniforms = rng.random((paths, steps)) if monitoring == "brownian_bridge" else None
+
+    drift = (market.rate - market.dividend_yield - 0.5 * sigma**2) * dt
+    diffusion = sigma * sqrt(dt)
+    log_paths = log(s0) + np.cumsum(drift + diffusion * z, axis=1)
+    log_h = log(h)
+    previous = np.concatenate((np.full((paths, 1), log(s0)), log_paths[:, :-1]), axis=1)
+
+    if monitoring == "discrete":
+        knocked_in = np.any(log_paths <= log_h, axis=1)
+    else:
+        endpoints_above = (previous > log_h) & (log_paths > log_h)
+        crossing_probability = np.ones_like(log_paths)
+        crossing_probability[endpoints_above] = np.exp(
+            -2.0
+            * (previous[endpoints_above] - log_h)
+            * (log_paths[endpoints_above] - log_h)
+            / (sigma**2 * dt)
+        )
+        survived = np.all(endpoints_above & (uniforms > crossing_probability), axis=1)
+        knocked_in = ~survived
+
+    terminal = np.exp(log_paths[:, -1])
+    discount = exp(-market.rate * t)
+    vanilla_payoffs = discount * np.maximum(contract.strike - terminal, 0.0)
+    barrier_payoffs = vanilla_payoffs * knocked_in
+
+    # Variável de controle: payoff da put vanilla, com expectação exata
+    # conhecida via paridade put-call.
+    vanilla_variance = float(vanilla_payoffs.var(ddof=1))
+    beta = (
+        float(np.cov(barrier_payoffs, vanilla_payoffs, ddof=1)[0, 1]) / vanilla_variance
+        if vanilla_variance > 0.0
+        else 0.0
+    )
+    adjusted_payoffs = barrier_payoffs - beta * (vanilla_payoffs - vanilla)
+    price = float(adjusted_payoffs.mean())
+    standard_error = float(adjusted_payoffs.std(ddof=1) / sqrt(paths))
+    return PriceResult(
+        price=price,
+        standard_error=standard_error,
+        ci_low=price - 1.96 * standard_error,
+        ci_high=price + 1.96 * standard_error,
+        knock_out_probability=float(1.0 - knocked_in.mean()),
+        vanilla_price=vanilla,
+    )
+
+
+def price_up_and_in_call(
+    market: MarketData,
+    contract: BarrierContract,
+    paths: int = 200_000,
+    steps: int = 252,
+    seed: int = 42,
+    monitoring: str = "brownian_bridge",
+) -> PriceResult:
+    """Preço de uma call up-and-in sem rebate (barreira superior).
+
+    A opção SÓ paga se o ativo SUBIR e tocar a barreira superior em algum
+    momento até o vencimento; caso contrário expira sem valor. Se o spot já
+    nasce na barreira ou acima dela, a opção já está ativa e equivale à call
+    vanilla. `knock_out_probability` reporta a probabilidade de a opção morrer
+    sem ativação (nunca tocar a barreira).
+    """
+    s0, h, t = market.spot, contract.barrier, contract.maturity
+    sigma = market.volatility
+    parameters = np.asarray(
+        [s0, h, contract.strike, t, sigma, market.rate, market.dividend_yield],
+        dtype=float,
+    )
+    if not np.isfinite(parameters).all():
+        raise ValueError("market and contract parameters must be finite")
+    if min(s0, h, contract.strike, t, sigma) <= 0:
+        raise ValueError("spot, strike, barrier, maturity and volatility must be positive")
+    if paths < 2 or steps < 1:
+        raise ValueError("paths must be >= 2 and steps must be >= 1")
+    if monitoring not in {"discrete", "brownian_bridge"}:
+        raise ValueError("monitoring must be 'discrete' or 'brownian_bridge'")
+    vanilla = black_scholes_call(market, contract)
+    if s0 >= h:
+        return PriceResult(vanilla, 0.0, vanilla, vanilla, 0.0, vanilla)
+
+    rng = np.random.default_rng(seed)
+    dt = t / steps
+    z = rng.standard_normal((paths, steps))
+    uniforms = rng.random((paths, steps)) if monitoring == "brownian_bridge" else None
+
+    drift = (market.rate - market.dividend_yield - 0.5 * sigma**2) * dt
+    diffusion = sigma * sqrt(dt)
+    log_paths = log(s0) + np.cumsum(drift + diffusion * z, axis=1)
+    log_h = log(h)
+    previous = np.concatenate((np.full((paths, 1), log(s0)), log_paths[:, :-1]), axis=1)
+
+    if monitoring == "discrete":
+        knocked_in = np.any(log_paths >= log_h, axis=1)
+    else:
+        endpoints_below = (previous < log_h) & (log_paths < log_h)
+        crossing_probability = np.ones_like(log_paths)
+        crossing_probability[endpoints_below] = np.exp(
+            -2.0
+            * (log_h - previous[endpoints_below])
+            * (log_h - log_paths[endpoints_below])
+            / (sigma**2 * dt)
+        )
+        survived = np.all(endpoints_below & (uniforms > crossing_probability), axis=1)
+        knocked_in = ~survived
+
+    terminal = np.exp(log_paths[:, -1])
+    discount = exp(-market.rate * t)
+    vanilla_payoffs = discount * np.maximum(terminal - contract.strike, 0.0)
+    barrier_payoffs = vanilla_payoffs * knocked_in
+
+    # Variável de controle: payoff da call vanilla, com expectação exata
+    # conhecida (Black-Scholes).
+    vanilla_variance = float(vanilla_payoffs.var(ddof=1))
+    beta = (
+        float(np.cov(barrier_payoffs, vanilla_payoffs, ddof=1)[0, 1]) / vanilla_variance
+        if vanilla_variance > 0.0
+        else 0.0
+    )
+    adjusted_payoffs = barrier_payoffs - beta * (vanilla_payoffs - vanilla)
+    price = float(adjusted_payoffs.mean())
+    standard_error = float(adjusted_payoffs.std(ddof=1) / sqrt(paths))
+    return PriceResult(
+        price=price,
+        standard_error=standard_error,
+        ci_low=price - 1.96 * standard_error,
+        ci_high=price + 1.96 * standard_error,
+        knock_out_probability=float(1.0 - knocked_in.mean()),
+        vanilla_price=vanilla,
+    )
+
+
+def price_up_and_in_put(
+    market: MarketData,
+    contract: BarrierContract,
+    paths: int = 200_000,
+    steps: int = 252,
+    seed: int = 42,
+    monitoring: str = "brownian_bridge",
+) -> PriceResult:
+    """Preço de uma put up-and-in sem rebate (barreira superior).
+
+    A opção SÓ paga se o ativo SUBIR e tocar a barreira superior em algum
+    momento até o vencimento; caso contrário expira sem valor. Se o spot já
+    nasce na barreira ou acima dela, a opção já está ativa e equivale à put
+    vanilla (obtida por paridade put-call). `knock_out_probability` reporta a
+    probabilidade de a opção morrer sem ativação (nunca tocar a barreira).
+    """
+    s0, h, t = market.spot, contract.barrier, contract.maturity
+    sigma = market.volatility
+    parameters = np.asarray(
+        [s0, h, contract.strike, t, sigma, market.rate, market.dividend_yield],
+        dtype=float,
+    )
+    if not np.isfinite(parameters).all():
+        raise ValueError("market and contract parameters must be finite")
+    if min(s0, h, contract.strike, t, sigma) <= 0:
+        raise ValueError("spot, strike, barrier, maturity and volatility must be positive")
+    if paths < 2 or steps < 1:
+        raise ValueError("paths must be >= 2 and steps must be >= 1")
+    if monitoring not in {"discrete", "brownian_bridge"}:
+        raise ValueError("monitoring must be 'discrete' or 'brownian_bridge'")
+    vanilla = _black_scholes_put_by_parity(market, contract, black_scholes_call(market, contract))
+    if s0 >= h:
+        return PriceResult(vanilla, 0.0, vanilla, vanilla, 0.0, vanilla)
+
+    rng = np.random.default_rng(seed)
+    dt = t / steps
+    z = rng.standard_normal((paths, steps))
+    uniforms = rng.random((paths, steps)) if monitoring == "brownian_bridge" else None
+
+    drift = (market.rate - market.dividend_yield - 0.5 * sigma**2) * dt
+    diffusion = sigma * sqrt(dt)
+    log_paths = log(s0) + np.cumsum(drift + diffusion * z, axis=1)
+    log_h = log(h)
+    previous = np.concatenate((np.full((paths, 1), log(s0)), log_paths[:, :-1]), axis=1)
+
+    if monitoring == "discrete":
+        knocked_in = np.any(log_paths >= log_h, axis=1)
+    else:
+        endpoints_below = (previous < log_h) & (log_paths < log_h)
+        crossing_probability = np.ones_like(log_paths)
+        crossing_probability[endpoints_below] = np.exp(
+            -2.0
+            * (log_h - previous[endpoints_below])
+            * (log_h - log_paths[endpoints_below])
+            / (sigma**2 * dt)
+        )
+        survived = np.all(endpoints_below & (uniforms > crossing_probability), axis=1)
+        knocked_in = ~survived
+
+    terminal = np.exp(log_paths[:, -1])
+    discount = exp(-market.rate * t)
+    vanilla_payoffs = discount * np.maximum(contract.strike - terminal, 0.0)
+    barrier_payoffs = vanilla_payoffs * knocked_in
+
+    # Variável de controle: payoff da put vanilla, com expectação exata
+    # conhecida via paridade put-call.
+    vanilla_variance = float(vanilla_payoffs.var(ddof=1))
+    beta = (
+        float(np.cov(barrier_payoffs, vanilla_payoffs, ddof=1)[0, 1]) / vanilla_variance
+        if vanilla_variance > 0.0
+        else 0.0
+    )
+    adjusted_payoffs = barrier_payoffs - beta * (vanilla_payoffs - vanilla)
+    price = float(adjusted_payoffs.mean())
+    standard_error = float(adjusted_payoffs.std(ddof=1) / sqrt(paths))
+    return PriceResult(
+        price=price,
+        standard_error=standard_error,
+        ci_low=price - 1.96 * standard_error,
+        ci_high=price + 1.96 * standard_error,
+        knock_out_probability=float(1.0 - knocked_in.mean()),
         vanilla_price=vanilla,
     )

@@ -1,6 +1,21 @@
-# Precificação de Opção com Barreira no Ibovespa
+# Precificação e Risco de Opções com Barreira no Ibovespa
 
-Projeto quantitativo em Python, preparado para execução local e em Databricks, para precificar uma call down-and-out sem rebate sobre o Ibovespa. Mais precisamente, um pipeline end-to-end que consome dados públicos da B3, constrói superfície de volatilidade implícita, precifica uma opção com barreira por Monte Carlo com variável de controle e monitoramento Brownian Bridge, valida a qualidade dos dados e do modelo com controles auditáveis, e calcula métricas de risco de mercado (gregas, VaR, ES) — tudo reprodutível, testado e versionado. Cada execução estabelece uma cadeia de confiança criptográfica via SHA-256 (função de hash determinística que gera uma impressão digital única de 256 bits para cada arquivo, permitindo verificar sua integridade sem acessar o conteúdo) entre os artefatos de preço, validação e risco, garantindo rastreabilidade total. A data de mercado é selecionada automaticamente como D-1 via calendário de feriados da B3, sem parâmetros manuais. O projeto inclui 75 testes unitários cobrindo domínio, reprodutibilidade e casos extremos, com replay determinístico do motor de precificação para auditoria.
+Projeto quantitativo em Python, preparado para execução local e em Databricks, para precificar e medir o risco da família completa de opções com barreira sobre o Ibovespa (Calls e Puts, Down/Up, Knock-In/Knock-Out). Mais precisamente, um pipeline end-to-end que consome dados públicos da B3, constrói superfície de volatilidade implícita, precifica uma opção com barreira por Monte Carlo com variável de controle e monitoramento Brownian Bridge, valida a qualidade dos dados e do modelo com controles auditáveis, e calcula métricas de risco de mercado (gregas, VaR, ES) — tudo reprodutível, testado e versionado. Cada execução estabelece uma cadeia de confiança criptográfica via SHA-256 (função de hash determinística que gera uma impressão digital única de 256 bits para cada arquivo, permitindo verificar sua integridade sem acessar o conteúdo) entre os artefatos de preço, validação e risco, garantindo rastreabilidade total. A data de mercado é selecionada automaticamente como D-1 via calendário de feriados da B3, sem parâmetros manuais. O projeto inclui 75 testes unitários cobrindo domínio, reprodutibilidade e casos extremos, com replay determinístico do motor de precificação para auditoria.
+
+## Funcionalidades Principais
+
+- **Motor de Opções com Barreira** — Monte Carlo com 200 mil caminhos × 252 passos, monitoramento Brownian Bridge (toque contínuo entre observações) e variável de controle vanilla para redução de variância.
+- **Validação Analítica** — Benchmark de Reiner-Rubinstein com erro < 0,02% vs o motor estocástico, replay determinístico do pricer e cadeia de confiança SHA-256 entre RESULTS, VALIDATION e RISK.
+- **Família A Completa** — Calls e Puts, Down/Up, In/Out (DOC, UOC, DIC, UIC, DOP, UOP, DIP, UIP) + Knock-Out Straddle, todas no mesmo motor MC e no simulador.
+- **Dashboard em 6 Abas** — Resumo Gestor, Superfície de Volatilidade, Curvas de Mercado, Motor de Monte Carlo, Controle de Qualidade e Structuring Desk.
+- **Structuring Desk** — Simulador interativo com travas de UX bank-grade, diagrama de payoff em tempo real e precificação on-demand de 9 estratégias.
+- **Motor de Renda Fixa** — Curvas ANBIMA (pyettj), NTN-B, LTN, LFT e Swap DI x Pré.
+
+## Arquitetura Técnica
+
+- **Databricks Apps** — o dashboard roda como Databricks App (Streamlit, compute MEDIUM) com deploy SNAPSHOT e URL HTTPS permanente, lendo os artefatos da workspace via Databricks SDK.
+- **Databricks + Unity Catalog** — pipeline orquestrado na plataforma Databricks (serverless), dados B3 e artefatos versionados na workspace com governança centralizada do catálogo.
+- **Streamlit bank-grade** — UX institucional: travas de validação de parâmetros, mensagens de erro amigáveis e KPIs em cards.
 
 ## Objetivo
 
@@ -238,5 +253,5 @@ Impacto na precificação: o q baixo eleva o forward e, consequentemente, o pre�
 1. ✅ Calibrar a curva DI e o carry implícito com futuro de Ibovespa
 2. ✅ Calibrar volatilidade pela superfície de opções
 3. ✅ Acrescentar fórmula fechada de Reiner–Rubinstein como benchmark
-4. Implementar rebate, knock-in, up-and-out e paridade in/out
+4. ✅ Implementar knock-in, up-and-out e paridade in/out (rebate permanece pendente)
 5. Gerar P&L explain, cenários de estresse e tabelas Delta para Databricks
