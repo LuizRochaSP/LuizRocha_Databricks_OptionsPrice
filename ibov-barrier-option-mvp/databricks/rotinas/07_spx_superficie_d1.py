@@ -64,9 +64,11 @@ print("Código de:", ibov_barrier.__file__)
 from dataclasses import replace
 from datetime import date
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import plotly
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from ibov_barrier.markets.base import CleaningReport
 from ibov_barrier.markets.cleaning import clean_against_forwards, clean_quotes
@@ -79,24 +81,48 @@ Q_RANGE = (0.0, 0.03)
 
 dbutils.widgets.text("data_mercado", "", "Data (AAAA-MM-DD; vazio = D-1)")
 
-# Tema dos gráficos: fundo preto, textos brancos, curvas em tons quentes.
+# Tema dos gráficos (padrão do projeto): fundo preto, textos brancos, curvas em tons quentes.
 # Os vencimentos são ordenados (1m -> 24m), então a paleta é uma rampa quente do claro ao escuro,
 # com marcador e traço diferentes por série: tons quentes ficam próximos entre si, e o formato
 # garante a leitura (inclusive para daltonismo).
+# Plotly: cada gráfico tem barra com zoom (caixa ou roda do mouse; duplo clique volta), pan,
+# autoescala e download em PNG (2x, nome com a data). Passar o mouse mostra os valores.
 BG, GRID, MUTED = "#0B0B0B", "#2A2A2A", "#8C8C8C"
 WARM = ["#FFF3B0", "#FFC233", "#FF8A1F", "#F0432F", "#D6246E"]   # amarelo -> âmbar -> laranja -> vermelho -> magenta
-MARKERS = ["o", "s", "^", "D", "v"]
-LINESTYLES = ["-", "--", "-.", ":", (0, (5, 1, 1, 1))]
-plt.rcParams.update({
-    "figure.facecolor": BG, "axes.facecolor": BG, "savefig.facecolor": BG,
-    "text.color": "white", "axes.labelcolor": "white", "axes.titlecolor": "white",
-    "xtick.color": "white", "ytick.color": "white",
-    "axes.edgecolor": MUTED, "axes.grid": True, "grid.color": GRID, "grid.linewidth": 0.6,
-    "legend.facecolor": "#141414", "legend.edgecolor": "#3A3A3A", "legend.labelcolor": "white",
-    "axes.prop_cycle": plt.cycler(color=WARM),
-    "lines.linewidth": 2.0, "lines.markersize": 5,
-    "axes.titleweight": "bold", "axes.titlesize": 13,
-})
+SYMBOLS = ["circle", "square", "triangle-up", "diamond", "triangle-down"]
+DASHES = ["solid", "dash", "dashdot", "dot", "longdashdot"]
+AXIS = dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=MUTED, showline=True,
+            tickfont=dict(color="white"), title_font=dict(color="white"))
+print("plotly:", plotly.__version__)
+
+
+def style_fig(fig, title, height=460):
+    fig.update_layout(
+        paper_bgcolor=BG, plot_bgcolor=BG, font=dict(color="white", size=12),
+        title=dict(text=f"<b>{title}</b>", x=0.5, xanchor="center", font=dict(color="white", size=16)),
+        legend=dict(bgcolor="#141414", bordercolor="#3A3A3A", borderwidth=1, font=dict(color="white"),
+                    itemsizing="constant"),
+        hoverlabel=dict(bgcolor="#141414", bordercolor="#3A3A3A", font=dict(color="white")),
+        height=height, margin=dict(t=80, l=60, r=20, b=50),
+    )
+    fig.update_xaxes(**AXIS)
+    fig.update_yaxes(**AXIS)
+    fig.update_annotations(font=dict(color="white"))
+    return fig
+
+
+def show(fig, name):
+    """Exibe com a barra de ferramentas (zoom, pan, reset, salvar PNG)."""
+    fig.show(config={
+        "displaylogo": False, "displayModeBar": True, "scrollZoom": True,
+        "toImageButtonOptions": {"format": "png", "scale": 2, "filename": f"spx_{name}_{market_date}"},
+    })
+
+
+def sparse_sizes(n, size=7, points=12):
+    """Marcador visível em ~12 pontos da curva (o resto fica com tamanho 0, mas o hover continua)."""
+    every = max(1, n // points)
+    return [size if i % every == 0 else 0 for i in range(n)]
 
 # COMMAND ----------
 
@@ -178,22 +204,29 @@ except Exception as exc:  # a SOFR de D-1 sai às 08:00 ET de D+0
     sofr = None
     print("SOFR indisponível:", exc)
 
-fig, (ax_r, ax_q) = plt.subplots(1, 2, figsize=(13, 4.5))
 own = forwards["origem de r"].eq("regressão")
-ax_r.plot(forwards.loc[own, "T"], forwards.loc[own, "r"] * 100, "o-", color=WARM[2], label="r implícito (paridade)")
-ax_r.plot(forwards.loc[~own, "T"], forwards.loc[~own, "r"] * 100, "o", mfc="none", color=MUTED,
-          label="r emprestado (T < 3m)")
-if sofr is not None:
-    ax_r.axhline(sofr * 100, ls="--", color=WARM[0], label=f"SOFR contínua {sofr:.3%}")
-ax_r.set(title="r(T)", xlabel="T (anos)", ylabel="% a.a.")
-ax_r.legend()
+venc = forwards["vencimento"].astype(str)
+hover = "%{customdata}<br>T = %{x:.3f}<br>%{y:.3f}% a.a.<extra>%{fullData.name}</extra>"
 
-ax_q.plot(forwards["T"], forwards["q"] * 100, "o-", color=WARM[1], label="q implícito")
-ax_q.axhspan(Q_RANGE[0] * 100, Q_RANGE[1] * 100, color=WARM[2], alpha=0.12, label="faixa razoável")
-ax_q.set(title="q(T) implícito", xlabel="T (anos)", ylabel="% a.a.")
-ax_q.legend()
-plt.tight_layout()
-plt.show()
+fig = make_subplots(rows=1, cols=2, subplot_titles=("r(T)", "q(T) implícito"), horizontal_spacing=0.08)
+fig.add_trace(go.Scatter(x=forwards.loc[own, "T"], y=forwards.loc[own, "r"] * 100, mode="lines+markers",
+                         name="r implícito (paridade)", line=dict(color=WARM[2], width=2), marker=dict(size=7),
+                         customdata=venc[own], hovertemplate=hover), row=1, col=1)
+fig.add_trace(go.Scatter(x=forwards.loc[~own, "T"], y=forwards.loc[~own, "r"] * 100, mode="markers",
+                         name="r emprestado (T < 3m)", marker=dict(symbol="circle-open", size=7, color=MUTED),
+                         customdata=venc[~own], hovertemplate=hover), row=1, col=1)
+if sofr is not None:
+    fig.add_trace(go.Scatter(x=[0, forwards["T"].max()], y=[sofr * 100] * 2, mode="lines",
+                             name=f"SOFR contínua {sofr:.3%}", line=dict(color=WARM[0], dash="dash", width=1.5),
+                             hoverinfo="skip"), row=1, col=1)
+fig.add_trace(go.Scatter(x=forwards["T"], y=forwards["q"] * 100, mode="lines+markers", name="q implícito",
+                         line=dict(color=WARM[1], width=2), marker=dict(size=7),
+                         customdata=venc, hovertemplate=hover), row=1, col=2)
+fig.add_hrect(y0=Q_RANGE[0] * 100, y1=Q_RANGE[1] * 100, fillcolor=WARM[2], opacity=0.12, line_width=0,
+              row=1, col=2, annotation_text="faixa razoável", annotation_position="top left")
+fig.update_xaxes(title_text="T (anos)")
+fig.update_yaxes(title_text="% a.a.")
+show(style_fig(fig, f"SPX - estrutura a termo implícita em {market_date}", height=480), "r_q")
 
 if sofr is not None:
     long_r = forwards.loc[own, ["vencimento", "dias", "r"]].assign(**{"r - SOFR (bps)": lambda d: (d["r"] - sofr) * 1e4})
@@ -261,24 +294,33 @@ for label, t in targets.items():
     if exp not in chosen.values():
         chosen[label] = exp
 
-fig, ax = plt.subplots(figsize=(11, 6))
+SMILE_HOVER = "K = %{customdata:,.0f}<br>ln(K/F) = %{x:.3f}<br>vol = %{y:.2f}%<extra>%{fullData.name}</extra>"
+
+fig = go.Figure()
 for i, (label, exp) in enumerate(chosen.items()):
     s = opts.loc[opts["expiration"].eq(exp)].sort_values("log_moneyness")
-    ax.plot(s["log_moneyness"], s["implied_vol"] * 100, color=WARM[i], ls=LINESTYLES[i], lw=1.6,
-            marker=MARKERS[i], ms=4, markevery=max(1, len(s) // 12),
-            label=f"{label}: {exp} (T={expiries[exp]:.2f}, {len(s)} pts)")
-ax.axvline(0, color=MUTED, lw=0.8)
-ax.set(title=f"SPX - smiles em {market_date}", xlabel="ln(K/F)", ylabel="vol implícita (%)")
-ax.legend()
-plt.show()
+    fig.add_trace(go.Scatter(
+        x=s["log_moneyness"], y=s["implied_vol"] * 100, mode="lines+markers",
+        name=f"{label}: {exp} (T={expiries[exp]:.2f}, {len(s)} pts)",
+        line=dict(color=WARM[i], dash=DASHES[i], width=1.8),
+        marker=dict(symbol=SYMBOLS[i], size=sparse_sizes(len(s)), color=WARM[i]),
+        customdata=s["strike"], hovertemplate=SMILE_HOVER))
+fig.add_vline(x=0, line_color=MUTED, line_width=1)
+fig.update_xaxes(title_text="ln(K/F)")
+fig.update_yaxes(title_text="vol implícita (%)")
+show(style_fig(fig, f"SPX - smiles em {market_date}", height=560), "smiles")
 
 # ATM por vencimento: vol do ponto mais próximo de K = F.
 atm = (opts.assign(dist=opts["log_moneyness"].abs()).sort_values("dist")
        .groupby("expiration").first()[["T", "strike", "forward", "implied_vol"]].sort_values("T"))
-fig, ax = plt.subplots(figsize=(11, 4))
-ax.plot(atm["T"], atm["implied_vol"] * 100, "o-", color=WARM[2])
-ax.set(title="Vol ATM por prazo", xlabel="T (anos)", ylabel="vol implícita (%)")
-plt.show()
+fig = go.Figure(go.Scatter(
+    x=atm["T"], y=atm["implied_vol"] * 100, mode="lines+markers", name="vol ATM",
+    line=dict(color=WARM[2], width=2), marker=dict(size=7),
+    customdata=atm.index.astype(str),
+    hovertemplate="%{customdata}<br>T = %{x:.3f}<br>vol ATM = %{y:.2f}%<extra></extra>"))
+fig.update_xaxes(title_text="T (anos)")
+fig.update_yaxes(title_text="vol implícita (%)")
+show(style_fig(fig, "Vol ATM por prazo", height=420), "vol_atm")
 
 # COMMAND ----------
 
@@ -452,20 +494,30 @@ for t in (1 / 12, 0.25, 1.0, 2.0):
 if picked:
     ncols = 2
     nrows = int(np.ceil(len(picked) / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(13, 4.5 * nrows), squeeze=False)
-    for ax, e in zip(axes.flat, picked):
-        for (name, (_, s)), color, ls, mk in zip(VARIANTS.items(), (WARM[1], WARM[4]), ("-", "--"), ("o", "s")):
-            sm = s.options.loc[s.options["expiration"].eq(e)].sort_values("log_moneyness")
-            label = f"{name} ({sm['root'].iloc[0] if len(sm) else '-'}): {len(sm)} pts"
-            ax.plot(sm["log_moneyness"], sm["implied_vol"] * 100, color=color, ls=ls, lw=1.6,
-                    marker=mk, ms=4, markevery=max(1, len(sm) // 12), label=label)
-        ax.axvline(0, color=MUTED, lw=0.8)
-        ax.set(title=f"{e} (T={both.loc[e, 'T PM']:.2f})", xlabel="ln(K/F)", ylabel="vol implícita (%)")
-        ax.legend()
-    for ax in list(axes.flat)[len(picked):]:
-        ax.set_visible(False)
-    fig.suptitle("Smiles nos vencimentos mensais: PM (SPXW) x AM (SPX)", color="white", fontweight="bold")
-    plt.tight_layout()
-    plt.show()
+    styles = {"PM": (WARM[1], "solid", "circle", "PM (SPXW)"), "AM": (WARM[4], "dash", "square", "AM (SPX)")}
+
+    def smile_of(s, e):
+        return s.options.loc[s.options["expiration"].eq(e)].sort_values("log_moneyness")
+
+    titles = [f"{e} (T={both.loc[e, 'T PM']:.2f}) · PM {len(smile_of(snap, e))} / AM {len(smile_of(snap_am, e))} pts"
+              for e in picked]
+    fig = make_subplots(rows=nrows, cols=ncols, subplot_titles=titles,
+                        horizontal_spacing=0.08, vertical_spacing=0.14)
+    for k, e in enumerate(picked):
+        row, col = k // ncols + 1, k % ncols + 1
+        for name, (_, s) in VARIANTS.items():
+            color, dash, symbol, label = styles[name]
+            sm = smile_of(s, e)
+            fig.add_trace(go.Scatter(
+                x=sm["log_moneyness"], y=sm["implied_vol"] * 100, mode="lines+markers", name=label,
+                legendgroup=name, showlegend=(k == 0),
+                line=dict(color=color, dash=dash, width=1.8),
+                marker=dict(symbol=symbol, size=sparse_sizes(len(sm)), color=color),
+                customdata=sm["strike"], hovertemplate=SMILE_HOVER), row=row, col=col)
+        fig.add_vline(x=0, line_color=MUTED, line_width=1, row=row, col=col)
+    fig.update_xaxes(title_text="ln(K/F)")
+    fig.update_yaxes(title_text="vol implícita (%)")
+    show(style_fig(fig, "Smiles nos vencimentos mensais: PM (SPXW) x AM (SPX)", height=430 * nrows),
+         "smiles_pm_x_am")
 else:
     print("Nenhum vencimento mensal presente nas duas versões.")
