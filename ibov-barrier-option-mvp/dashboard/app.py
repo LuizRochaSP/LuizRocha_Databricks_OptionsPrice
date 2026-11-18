@@ -1362,10 +1362,11 @@ with tab6:
                             col_r2.metric("Preço Vanilla", f"R$ {result.vanilla_price:,.2f}")
                         if is_range:
                             col_r3.metric("Fração Esperada na Faixa", f"{result.expected_fraction:.2%}")
-                            st.caption(f"Cupom máximo R$ {sim_payout * sim_accrual_rate * sim_maturity:,.2f} "
+                            # "R\$": dois "$" na mesma legenda viram fórmula LaTeX no Streamlit
+                            st.caption(f"Cupom máximo R\\$ {sim_payout * sim_accrual_rate * sim_maturity:,.2f} "
                                        f"({sim_accrual_rate:.2%} a.a. × {sim_maturity:.2f} ano) | "
                                        f"{result.observations} fixings (1 por dia útil) | IC 95%: "
-                                       f"[R$ {result.ci_low:,.2f}; R$ {result.ci_high:,.2f}]")
+                                       f"[R\\$ {result.ci_low:,.2f}; R\\$ {result.ci_high:,.2f}]")
                         else:
                             # Knock-Ins: o campo reporta P(morrer sem ativação)
                             if is_binary or is_double:
@@ -1378,7 +1379,7 @@ with tab6:
                             col_r3.metric(p_label, f"{result.knock_out_probability:.2%}")
                         if sim_rebate > 0 and (is_single or is_family_b or is_path_barrier):
                             never_activates = is_knock_in or sim_strategy == "Double Knock-In"
-                            st.caption(f"Inclui rebate de R$ {sim_rebate:,.2f} pago no vencimento "
+                            st.caption(f"Inclui rebate de R\\$ {sim_rebate:,.2f} pago no vencimento "
                                        + ("se a opção nunca ativar." if never_activates else "se a barreira for tocada."))
                         if is_family_b:
                             st.caption("Benchmark analítico: monitoramento contínuo "
@@ -1391,13 +1392,13 @@ with tab6:
                                           + ("no total" if sim_cumulative else "consecutivos")
                                           + " além da barreira. ")
                             elif is_step:
-                                detail = (f"Barreira R$ {sim_barrier:,.0f} até {step_change_time:.3f} ano, "
-                                          f"depois R$ {sim_barrier_2:,.0f}. ")
+                                detail = (f"Barreira R\\$ {sim_barrier:,.0f} até {step_change_time:.3f} ano, "
+                                          f"depois R\\$ {sim_barrier_2:,.0f}. ")
                             else:
                                 detail = (f"Barreira monitorada de {sim_windows[0][0]:.3f} a "
                                           f"{sim_windows[0][1]:.3f} ano. ")
                             st.caption(detail + f"{n_days} passos (1 por dia útil). Benchmark: {path_bench_text}. "
-                                       f"IC 95% do MC: [R$ {result.ci_low:,.2f}; R$ {result.ci_high:,.2f}].")
+                                       f"IC 95% do MC: [R\\$ {result.ci_low:,.2f}; R\\$ {result.ci_high:,.2f}].")
                     except Exception:
                         st.error("**Ops!** Não conseguimos calcular essa estrutura. Verifique os parâmetros.")
 
