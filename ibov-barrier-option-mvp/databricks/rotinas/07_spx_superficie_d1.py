@@ -8,8 +8,8 @@
 # MAGIC
 # MAGIC 1. cadeia EOD de SPX e SPXW na ThetaData (plano FREE, D-1);
 # MAGIC 2. limpeza de cotações;
-# MAGIC 3. paridade put-call: forward e fator de desconto por vencimento, $C - P = DF\,(F - K)$;
-# MAGIC 4. spot oficial do índice; $r(T) = -\ln(DF)/T$ e $q(T) = r(T) - \ln(F/S)/T$;
+# MAGIC 3. paridade put-call: forward e fator de desconto por vencimento, `C − P = DF·(F − K)`;
+# MAGIC 4. spot oficial do índice; `r(T) = −ln(DF)/T` e `q(T) = r(T) − ln(F/S)/T`;
 # MAGIC 5. limpeza contra o forward (limites de arbitragem, só OTM, moneyness, vertical/butterfly);
 # MAGIC 6. volatilidade implícita e limpeza do smile.
 # MAGIC
@@ -79,6 +79,25 @@ Q_RANGE = (0.0, 0.03)
 
 dbutils.widgets.text("data_mercado", "", "Data (AAAA-MM-DD; vazio = D-1)")
 
+# Tema dos gráficos: fundo preto, textos brancos, curvas em tons quentes.
+# Os vencimentos são ordenados (1m -> 24m), então a paleta é uma rampa quente do claro ao escuro,
+# com marcador e traço diferentes por série: tons quentes ficam próximos entre si, e o formato
+# garante a leitura (inclusive para daltonismo).
+BG, GRID, MUTED = "#0B0B0B", "#2A2A2A", "#8C8C8C"
+WARM = ["#FFF3B0", "#FFC233", "#FF8A1F", "#F0432F", "#D6246E"]   # amarelo -> âmbar -> laranja -> vermelho -> magenta
+MARKERS = ["o", "s", "^", "D", "v"]
+LINESTYLES = ["-", "--", "-.", ":", (0, (5, 1, 1, 1))]
+plt.rcParams.update({
+    "figure.facecolor": BG, "axes.facecolor": BG, "savefig.facecolor": BG,
+    "text.color": "white", "axes.labelcolor": "white", "axes.titlecolor": "white",
+    "xtick.color": "white", "ytick.color": "white",
+    "axes.edgecolor": MUTED, "axes.grid": True, "grid.color": GRID, "grid.linewidth": 0.6,
+    "legend.facecolor": "#141414", "legend.edgecolor": "#3A3A3A", "legend.labelcolor": "white",
+    "axes.prop_cycle": plt.cycler(color=WARM),
+    "lines.linewidth": 2.0, "lines.markersize": 5,
+    "axes.titleweight": "bold", "axes.titlesize": 13,
+})
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -122,7 +141,7 @@ else:
 # MAGIC %md
 # MAGIC ## 3. Forwards e estrutura a termo
 # MAGIC
-# MAGIC Abaixo de 3 meses, a taxa não vem da regressão (o ruído de cotação explode em $-\ln(DF)/T$):
+# MAGIC Abaixo de 3 meses, a taxa não vem da regressão (o ruído de cotação explode em `−ln(DF)/T`):
 # MAGIC usa-se a taxa do vencimento confiável mais curto, e só o forward é estimado. Esses prazos aparecem
 # MAGIC como `r emprestado`.
 
@@ -161,16 +180,16 @@ except Exception as exc:  # a SOFR de D-1 sai às 08:00 ET de D+0
 
 fig, (ax_r, ax_q) = plt.subplots(1, 2, figsize=(13, 4.5))
 own = forwards["origem de r"].eq("regressão")
-ax_r.plot(forwards.loc[own, "T"], forwards.loc[own, "r"] * 100, "o-", label="r implícito (paridade)")
-ax_r.plot(forwards.loc[~own, "T"], forwards.loc[~own, "r"] * 100, "o", mfc="none", color="grey",
+ax_r.plot(forwards.loc[own, "T"], forwards.loc[own, "r"] * 100, "o-", color=WARM[2], label="r implícito (paridade)")
+ax_r.plot(forwards.loc[~own, "T"], forwards.loc[~own, "r"] * 100, "o", mfc="none", color=MUTED,
           label="r emprestado (T < 3m)")
 if sofr is not None:
-    ax_r.axhline(sofr * 100, ls="--", color="tab:red", label=f"SOFR contínua {sofr:.3%}")
+    ax_r.axhline(sofr * 100, ls="--", color=WARM[0], label=f"SOFR contínua {sofr:.3%}")
 ax_r.set(title="r(T)", xlabel="T (anos)", ylabel="% a.a.")
 ax_r.legend()
 
-ax_q.plot(forwards["T"], forwards["q"] * 100, "o-", color="tab:green")
-ax_q.axhspan(Q_RANGE[0] * 100, Q_RANGE[1] * 100, color="tab:green", alpha=0.08, label="faixa razoável")
+ax_q.plot(forwards["T"], forwards["q"] * 100, "o-", color=WARM[1], label="q implícito")
+ax_q.axhspan(Q_RANGE[0] * 100, Q_RANGE[1] * 100, color=WARM[2], alpha=0.12, label="faixa razoável")
 ax_q.set(title="q(T) implícito", xlabel="T (anos)", ylabel="% a.a.")
 ax_q.legend()
 plt.tight_layout()
@@ -243,11 +262,12 @@ for label, t in targets.items():
         chosen[label] = exp
 
 fig, ax = plt.subplots(figsize=(11, 6))
-for label, exp in chosen.items():
+for i, (label, exp) in enumerate(chosen.items()):
     s = opts.loc[opts["expiration"].eq(exp)].sort_values("log_moneyness")
-    ax.plot(s["log_moneyness"], s["implied_vol"] * 100, ".-", ms=3, lw=1,
+    ax.plot(s["log_moneyness"], s["implied_vol"] * 100, color=WARM[i], ls=LINESTYLES[i], lw=1.6,
+            marker=MARKERS[i], ms=4, markevery=max(1, len(s) // 12),
             label=f"{label}: {exp} (T={expiries[exp]:.2f}, {len(s)} pts)")
-ax.axvline(0, color="grey", lw=0.8)
+ax.axvline(0, color=MUTED, lw=0.8)
 ax.set(title=f"SPX - smiles em {market_date}", xlabel="ln(K/F)", ylabel="vol implícita (%)")
 ax.legend()
 plt.show()
@@ -256,7 +276,7 @@ plt.show()
 atm = (opts.assign(dist=opts["log_moneyness"].abs()).sort_values("dist")
        .groupby("expiration").first()[["T", "strike", "forward", "implied_vol"]].sort_values("T"))
 fig, ax = plt.subplots(figsize=(11, 4))
-ax.plot(atm["T"], atm["implied_vol"] * 100, "o-")
+ax.plot(atm["T"], atm["implied_vol"] * 100, "o-", color=WARM[2])
 ax.set(title="Vol ATM por prazo", xlabel="T (anos)", ylabel="vol implícita (%)")
 plt.show()
 
