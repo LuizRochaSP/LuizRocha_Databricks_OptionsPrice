@@ -1,6 +1,11 @@
 # Precificação e Risco de Opções com Barreira no Ibovespa
 
-Projeto quantitativo em Python, preparado para execução local e em Databricks, para precificar e medir o risco da família completa de opções com barreira sobre o Ibovespa (Calls e Puts, Down/Up, Knock-In/Knock-Out). Mais precisamente, um pipeline end-to-end que consome dados públicos da B3, constrói superfície de volatilidade implícita, precifica uma opção com barreira por Monte Carlo com variável de controle e monitoramento Brownian Bridge, valida a qualidade dos dados e do modelo com controles auditáveis, e calcula métricas de risco de mercado (gregas, VaR, ES) — tudo reprodutível, testado e versionado. Cada execução estabelece uma cadeia de confiança criptográfica via SHA-256 (função de hash determinística que gera uma impressão digital única de 256 bits para cada arquivo, permitindo verificar sua integridade sem acessar o conteúdo) entre os artefatos de preço, validação e risco, garantindo rastreabilidade total. A data de mercado é selecionada automaticamente como D-1 via calendário de feriados da B3, sem parâmetros manuais. O projeto inclui 137 testes unitários cobrindo domínio, reprodutibilidade e casos extremos, com replay determinístico do motor de precificação para auditoria.
+> **Status: Feature Freeze (congelado para apresentação).** Os 10 modelos do roadmap estão implementados
+> (Famílias A, B, C, D e exóticos dependentes da trajetória), com 30 estratégias no Structuring Desk em
+> produção no Databricks Apps. A partir daqui, só correções de bugs; novas funcionalidades ficam para depois
+> da apresentação.
+
+Projeto quantitativo em Python, preparado para execução local e em Databricks, para precificar e medir o risco da família completa de opções com barreira sobre o Ibovespa (Calls e Puts, Down/Up, Knock-In/Knock-Out). Mais precisamente, um pipeline end-to-end que consome dados públicos da B3, constrói superfície de volatilidade implícita, precifica uma opção com barreira por Monte Carlo com variável de controle e monitoramento Brownian Bridge, valida a qualidade dos dados e do modelo com controles auditáveis, e calcula métricas de risco de mercado (gregas, VaR, ES) — tudo reprodutível, testado e versionado. Cada execução estabelece uma cadeia de confiança criptográfica via SHA-256 (função de hash determinística que gera uma impressão digital única de 256 bits para cada arquivo, permitindo verificar sua integridade sem acessar o conteúdo) entre os artefatos de preço, validação e risco, garantindo rastreabilidade total. A data de mercado é selecionada automaticamente como D-1 via calendário de feriados da B3, sem parâmetros manuais. O projeto inclui 159 testes unitários cobrindo domínio, reprodutibilidade, casos extremos e benchmarks analíticos de todos os modelos de barreira, com replay determinístico do motor de precificação para auditoria.
 
 ## Funcionalidades Principais
 
@@ -10,6 +15,7 @@ Projeto quantitativo em Python, preparado para execução local e em Databricks,
 - **Família B Completa** — Double Knock-Out/Knock-In (com rebate) e dupla barreira KI/KO com ordem parametrizável (`convention` = KI_first, KO_after_KI, KO_first, sequential), Call e Put, cada convenção com benchmark analítico próprio (`pricing_double.py`).
 - **Família C Completa** — Straddle, Strangle, Risk Reversal, Collar, Call/Put Spread e Forward; variantes Up para Collar, Spreads e Strangle; versões Knock-In de Straddle e Forward.
 - **Família D** — One-Touch/No-Touch Up e Down, Double One-Touch/No-Touch e Range Accrual (túnel, Down, Up, com taxa de accrual % a.a.), cada um com benchmark analítico (`pricing_extensions.py`).
+- **Exóticos Dependentes da Trajetória** — Parisian (dias úteis consecutivos além da barreira) e ParAsian (cumulativa), Step Barrier (nível muda em datas definidas) e Soft Barrier (barreira monitorada só em janelas), com Call/Put, Down/Up, Knock-Out/Knock-In e rebate, cada um com benchmark semi-analítico (`pricing_path_barriers.py`).
 - **Dashboard em 6 Abas** — Resumo Gestor, Superfície de Volatilidade, Curvas de Mercado, Motor de Monte Carlo, Controle de Qualidade e Structuring Desk.
 - **Structuring Desk** — Simulador interativo com travas de UX bank-grade, diagrama de payoff em tempo real e precificação on-demand de 30 estratégias (mais variantes Up e rebate configurável), incluindo as barreiras dependentes da trajetória Parisian, Step e Soft (janela), cada uma com benchmark semi-analítico.
 - **Motor de Renda Fixa** — Curvas ANBIMA (pyettj), NTN-B, LTN, LFT e Swap DI x Pré.
@@ -206,6 +212,22 @@ Dados ausentes, corrompidos ou incompatíveis bloqueiam sem alterar arquivos.
 
 Verificação local: `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m unittest discover -s tests -v`.
 
+Cobertura de testes unitários (159 no total):
+
+| Módulo de teste | Testes | O que cobre |
+| :--- | ---: | :--- |
+| `test_pricing.py` | 40 | Motor Monte Carlo, validações de entrada, reprodutibilidade, gregas |
+| `test_extensions.py` | 23 | Rebate, binários Down, estruturas Knock-In, Range Accrual, Double Touch |
+| `test_double_barriers.py` | 19 | Família B: DKO/DKI e as 4 convenções KI/KO contra benchmarks analíticos |
+| `test_market_date.py` | 16 | Seleção automática de D-1 pelo calendário B3 |
+| `test_di_curve/` | 17 | Curva DI, convenções, curvas de mercado e swap |
+| `test_path_barriers.py` | 14 | Parisian, Step e Soft contra quadraturas semi-analíticas |
+| `test_stress.py` | 12 | Cenários de stress |
+| `test_rebate_accrual.py` | 8 | Rebate nas funções Knock-Out originais e taxa de accrual |
+| `test_risk.py` | 7 | VaR, ES e métricas de risco |
+| `test_analytical.py` | 2 | Reiner-Rubinstein |
+| `test_barrier_types.py` | 1 | Paridade e tipos de barreira |
+
 - a opção com barreira não pode valer mais que a call vanilla;
 - barreira já violada implica preço zero;
 - barreira muito baixa converge para a call vanilla;
@@ -258,3 +280,4 @@ Impacto na precificação: o q baixo eleva o forward e, consequentemente, o pre�
 3. ✅ Acrescentar fórmula fechada de Reiner–Rubinstein como benchmark
 4. ✅ Implementar knock-in, up-and-out, paridade in/out e rebate
 5. Gerar P&L explain, cenários de estresse e tabelas Delta para Databricks
+6. ✅ Roadmap de 10 modelos de barreira concluído (Famílias A-D, Parisian, Step e Soft); projeto em Feature Freeze
