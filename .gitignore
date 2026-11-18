@@ -35,3 +35,8 @@ ibov-barrier-option-mvp/tests/testes_1.ipynb
 ibov-barrier-option-mvp/dashboard/data/results/
 ibov-barrier-option-mvp/dashboard/.venv/
 ibov-barrier-option-mvp/dashboard/__pycache__/
+
+# === Credenciais (nunca versionar) ===
+thetadata_key/
+.env
+creds.txt
