@@ -73,16 +73,26 @@ O Range Accrual usa 1 fixing por passo de simulação (no Desk: 1 por dia útil 
 de dupla barreira usam Brownian Bridge com probabilidade de saída por passo p_L + p_U (os termos
 omitidos exigem cruzar as duas barreiras no mesmo passo e são desprezíveis).
 
-## Modelos Adicionais (Exóticos)
-Ainda não implementados: exigem mudanças profundas no motor de simulação.
+## Modelos Adicionais (Exóticos dependentes da trajetória) — Completos
+Módulo `pricing_path_barriers.py`. Todos aceitam Call/Put, barreira Down/Up, Knock-Out/Knock-In e rebate
+pago no vencimento. Cada um tem um benchmark semi-analítico independente do Monte Carlo.
 
-| Modelo | Status |
-| :--- | :--- |
-| Parisian Barriers | Pendente |
-| Step Barriers | Pendente |
-| Soft Barriers | Pendente |
+| Modelo | Regra do evento de barreira | Benchmark | Status |
+| :--- | :--- | :--- | :--- |
+| **Parisian** | `window` fechamentos CONSECUTIVOS além da barreira (1 fechamento por dia útil) | Cadeia de Markov exata do monitoramento discreto (log-preço × contador de dias) | Implementado |
+| **ParAsian** (`cumulative=True`) | `window` fechamentos no TOTAL além da barreira | Mesma cadeia, contador sem reset | Implementado |
+| **Step** | Nível muda em datas pré-definidas: `schedule = [(0, H1), (t1, H2), ...]` | Densidade de transição morta na barreira (reflexão com drift) encadeada por degrau | Implementado |
+| **Soft (janela)** | Barreira monitorada só dentro de `windows = [(t_ini, t_fim), ...]` | Mesma quadratura por segmentos (barreira ligada/desligada) | Implementado |
+
+Identidades verificadas nos testes: Parisian com `window=1` = barreira simples discreta (mesmos caminhos);
+Step com um único nível e Soft com janela [0, T] = barreira simples com Brownian Bridge (mesmos caminhos);
+quadratura por segmentos com um nível = Reiner-Rubinstein (erro < 0,01%); Knock-In + Knock-Out = vanilla.
+Step e Soft usam Brownian Bridge com um nível de barreira por passo; a data de mudança/janela é aplicada pelo
+ponto médio de cada passo (o Desk arredonda as datas para o dia útil mais próximo).
+Obs.: na literatura (Hart-Ross, Haug) "soft barrier" também designa o knock-out proporcional dentro de uma
+faixa; o projeto segue a definição do roadmap (monitoramento em janelas, ou partial-time barrier).
 
 ## Resumo Executivo
-- **27 estratégias** no seletor do Structuring Desk, mais as variantes Up de Collar, Call Spread, Put Spread e Strangle e o rebate configurável nas 8 barreiras simples.
-- Cobertura: Família A completa com rebate, Família B completa (DKO, DKI e dupla barreira KI/KO com 4 convenções de ordem), Família C completa (Down, Up e Knock-In), Família D completa nos binários de toque simples/duplos e Range Accrual.
-- O que falta: os exóticos de terceira geração (Parisian, Step, Soft).
+- **30 estratégias** no seletor do Structuring Desk, mais as variantes Up de Collar, Call Spread, Put Spread e Strangle e o rebate configurável nas 8 barreiras simples.
+- Cobertura: Família A completa com rebate, Família B completa (DKO, DKI e dupla barreira KI/KO com 4 convenções de ordem), Família C completa (Down, Up e Knock-In), Família D completa nos binários de toque simples/duplos e Range Accrual, e os exóticos dependentes da trajetória (Parisian/ParAsian, Step e Soft) com Call/Put, Down/Up e Out/In.
+- Roadmap de 10 lacunas concluído. Extensões naturais: rebate pago no toque e Parisian com monitoramento contínuo.

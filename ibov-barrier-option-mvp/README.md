@@ -11,7 +11,7 @@ Projeto quantitativo em Python, preparado para execução local e em Databricks,
 - **Família C Completa** — Straddle, Strangle, Risk Reversal, Collar, Call/Put Spread e Forward; variantes Up para Collar, Spreads e Strangle; versões Knock-In de Straddle e Forward.
 - **Família D** — One-Touch/No-Touch Up e Down, Double One-Touch/No-Touch e Range Accrual (túnel, Down, Up, com taxa de accrual % a.a.), cada um com benchmark analítico (`pricing_extensions.py`).
 - **Dashboard em 6 Abas** — Resumo Gestor, Superfície de Volatilidade, Curvas de Mercado, Motor de Monte Carlo, Controle de Qualidade e Structuring Desk.
-- **Structuring Desk** — Simulador interativo com travas de UX bank-grade, diagrama de payoff em tempo real e precificação on-demand de 27 estratégias (mais variantes Up e rebate configurável).
+- **Structuring Desk** — Simulador interativo com travas de UX bank-grade, diagrama de payoff em tempo real e precificação on-demand de 30 estratégias (mais variantes Up e rebate configurável), incluindo as barreiras dependentes da trajetória Parisian, Step e Soft (janela), cada uma com benchmark semi-analítico.
 - **Motor de Renda Fixa** — Curvas ANBIMA (pyettj), NTN-B, LTN, LFT e Swap DI x Pré.
 
 ## Arquitetura Técnica

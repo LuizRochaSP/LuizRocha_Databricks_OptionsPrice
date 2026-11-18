@@ -47,9 +47,20 @@ from ibov_barrier.pricing_double import (
     price_double_barrier,
     price_double_barrier_option,
 )
+from ibov_barrier.pricing_path_barriers import (
+    parisian_barrier_quadrature,
+    price_parisian_barrier,
+    price_soft_barrier,
+    price_step_barrier,
+    soft_barrier_quadrature,
+    step_barrier_quadrature,
+)
 
 # Família B completa: dupla barreira (teto e chão monitorados simultaneamente).
 DOUBLE_BARRIER_STRATEGIES = ("Double Knock-Out", "Double Knock-In", "Double Barrier KI/KO")
+
+# Barreiras dependentes da trajetória (roadmap 8, 9, 10): Parisian, Step e Soft (janela).
+PATH_BARRIER_STRATEGIES = ("Parisian Barrier", "Step Barrier", "Soft Barrier (Janela)")
 
 # Convenções de ordem KI/KO: rótulo no Desk -> (parâmetro do motor, benchmark exibido)
 KIKO_CONVENTIONS = {
@@ -874,6 +885,7 @@ with tab6:
                 "Down-and-In Call", "Up-and-In Call",
                 "Down-and-Out Put", "Up-and-Out Put",
                 "Down-and-In Put", "Up-and-In Put",
+                "Parisian Barrier", "Step Barrier", "Soft Barrier (Janela)",
                 "Double Knock-Out", "Double Knock-In", "Double Barrier KI/KO",
                 "Knock-Out Straddle", "Knock-In Straddle",
                 "Barrier Strangle", "Barrier Risk Reversal",
@@ -903,6 +915,17 @@ with tab6:
         is_sequential = sim_strategy == "Double Barrier KI/KO"
         is_two_barrier = is_double or is_range or is_family_b
         is_single = sim_strategy in SINGLE_BARRIER_SPECS
+        # Barreiras dependentes da trajetória: call/put, Down/Up, Out/In escolhidos no Desk
+        is_path_barrier = sim_strategy in PATH_BARRIER_STRATEGIES
+        is_step = sim_strategy == "Step Barrier"
+        path_option_type, path_direction, path_knock = "call", "down", "out"
+        if is_path_barrier:
+            path_option_type = st.radio("Tipo da Opção", ["Call", "Put"], horizontal=True,
+                                        key="path_type").lower()
+            path_direction = "up" if st.radio("Direção da Barreira", ["Down (inferior)", "Up (superior)"],
+                                              horizontal=True, key="path_dir").startswith("Up") else "down"
+            path_knock = "in" if st.radio("Knock", ["Knock-Out", "Knock-In"], horizontal=True,
+                                          key="path_knock") == "Knock-In" else "out"
 
         dbl_option_type = "call"
         ki_is_lower = True
@@ -933,8 +956,10 @@ with tab6:
             or sim_strategy in ("Knock-Out Straddle", "Knock-In Straddle", "Knock-Out Forward", "Knock-In Forward")
             or sim_strategy.endswith("Touch Down")
             or (is_combined and combined_direction == "down")
+            or (is_path_barrier and path_direction == "down")
         )
-        is_knock_in = "and-In" in sim_strategy or sim_strategy.startswith("Knock-In")
+        is_knock_in = ("and-In" in sim_strategy or sim_strategy.startswith("Knock-In")
+                       or (is_path_barrier and path_knock == "in"))
         has_strike = not (is_binary or is_double or is_range)
 
         sim_spot = st.number_input("Spot Inicial (R$)", min_value=10000.0, max_value=500000.0, value=172000.0, step=1000.0)
@@ -959,7 +984,7 @@ with tab6:
             ) / 100.0
         # Rebate (Família A): pago no vencimento se a opção morrer (KO) ou nunca ativar (KI)
         sim_rebate = 0.0
-        if is_single or sim_strategy in ("Double Knock-Out", "Double Knock-In"):
+        if is_single or is_path_barrier or sim_strategy in ("Double Knock-Out", "Double Knock-In"):
             sim_rebate = st.number_input(
                 "Rebate (R$)", min_value=0.0, max_value=1_000_000.0, value=0.0, step=10.0,
                 help="Pago no vencimento: Knock-Out se a barreira for tocada; Knock-In se nunca for tocada.",
@@ -977,6 +1002,16 @@ with tab6:
         elif is_double or is_family_b:
             sim_lower = sim_spot * st.slider("Barreira Inferior L (% do Spot)", min_value=50, max_value=99, value=80, step=1) / 100.0
             sim_upper = sim_spot * st.slider("Barreira Superior U (% do Spot)", min_value=101, max_value=150, value=120, step=1) / 100.0
+        elif is_step:
+            lo_pct, hi_pct = (50, 99) if barrier_is_down else (101, 150)
+            step_1 = st.slider("Barreira 1 (% do Spot)", min_value=lo_pct, max_value=hi_pct,
+                               value=80 if barrier_is_down else 120, step=1)
+            step_2 = st.slider("Barreira 2 (% do Spot)", min_value=lo_pct, max_value=hi_pct,
+                               value=90 if barrier_is_down else 110, step=1,
+                               help="Nível que passa a valer a partir da data de mudança.")
+            step_change_pct = st.slider("Data da Mudança (% do prazo)", min_value=5, max_value=95, value=50, step=5)
+            sim_barrier = sim_spot * step_1 / 100.0
+            sim_barrier_2 = sim_spot * step_2 / 100.0
         elif barrier_is_down:
             sim_barrier_pct = st.slider("Barreira (% do Spot)", min_value=50, max_value=99, value=80, step=1)
             sim_barrier = sim_spot * (sim_barrier_pct / 100.0)
@@ -987,6 +1022,25 @@ with tab6:
         sim_tenor = st.selectbox("Vencimento", ["1 Mês (21 DU)", "3 Meses (63 DU)", "6 Meses (126 DU)", "1 Ano (252 DU)"], index=2)
         tenor_map = {"1 Mês (21 DU)": 21/252, "3 Meses (63 DU)": 63/252, "6 Meses (126 DU)": 126/252, "1 Ano (252 DU)": 1.0}
         sim_maturity = tenor_map[sim_tenor]
+        # Monitoramento em dias úteis: 1 fechamento por DU; datas arredondadas para o DU mais próximo.
+        n_days = int(round(sim_maturity * 252))
+        dt_day = sim_maturity / n_days
+        if sim_strategy == "Parisian Barrier":
+            sim_window = st.slider("Fechamentos Além da Barreira (DU)", min_value=1, max_value=min(20, n_days),
+                                   value=min(5, n_days), step=1,
+                                   help="O evento de barreira só ocorre após esse número de fechamentos além do nível.")
+            sim_cumulative = st.checkbox("Contagem cumulativa (ParAsian)",
+                                         help="Desmarcado: dias CONSECUTIVOS (zera ao voltar). Marcado: total de dias no prazo.")
+        if is_step:
+            step_change_time = max(1, min(n_days - 1, round(step_change_pct / 100 * n_days))) * dt_day
+            sim_schedule = [(0.0, sim_barrier), (step_change_time, sim_barrier_2)]
+        if sim_strategy == "Soft Barrier (Janela)":
+            win_lo, win_hi = st.slider("Janela de Monitoramento (% do prazo)", min_value=0, max_value=100,
+                                       value=(50, 100), step=5,
+                                       help="A barreira só vale dentro da janela; fora dela o ativo pode cruzar o nível.")
+            win_start = min(round(win_lo / 100 * n_days), n_days - 1)
+            win_end = max(round(win_hi / 100 * n_days), win_start + 1)
+            sim_windows = [(win_start * dt_day, win_end * dt_day)]
 
     with col_dir:
         st.subheader("Diagrama de Payoff e Precificação")
@@ -1041,6 +1095,13 @@ with tab6:
         elif sim_strategy in ("Knock-Out Forward", "Knock-In Forward"):
             # Forward sintético: payoff linear; KO morre no crash, KI só nasce no crash
             payoff = s_t - sim_strike
+        elif is_path_barrier:
+            # Path-dependent: viver/morrer depende da trajetória, não do nível terminal.
+            # O perfil exibido é a vanilla condicional ao estado (viva/ativada) no vencimento.
+            if path_option_type == "call":
+                payoff = np.maximum(s_t - sim_strike, 0)
+            else:
+                payoff = np.maximum(sim_strike - s_t, 0)
         elif "Put" in sim_strategy:
             payoff = np.maximum(sim_strike - s_t, 0)
         elif sim_strategy in ("Knock-Out Straddle", "Knock-In Straddle"):
@@ -1052,7 +1113,7 @@ with tab6:
         # Knock-Out zero ONDE a barreira FOI tocada; Knock-In zero onde NÃO foi tocada.
         # Com rebate, a região morta paga o rebate em vez de zero.
         # Binários e produtos de túnel (Família D) já carregam a própria região no payoff.
-        if is_binary or is_two_barrier:
+        if is_binary or is_two_barrier or is_path_barrier:
             pass
         elif is_knock_in:
             if barrier_is_down:
@@ -1079,6 +1140,12 @@ with tab6:
                     if is_sequential:
                         label += " (KI)" if (label == "L") == ki_is_lower else " (KO)"
                     fig_payoff.add_vline(x=level, line_dash="dash", line_color="red", annotation_text=f"Barreira {label}", annotation_position=pos)
+        elif is_step:
+            fig_payoff.add_vline(x=sim_barrier, line_dash="dash", line_color="red",
+                                 annotation_text="Barreira 1", annotation_position="top left")
+            fig_payoff.add_vline(x=sim_barrier_2, line_dash="dash", line_color="#d62728",
+                                 annotation_text=f"Barreira 2 (a partir de {step_change_time:.2f} ano)",
+                                 annotation_position="bottom left")
         else:
             barrier_label = "Barreira (Knock-In)" if is_knock_in else ("Barreira" if is_binary else "Barreira (Knock-Out)")
             fig_payoff.add_vline(x=sim_barrier, line_dash="dash", line_color="red", annotation_text=barrier_label, annotation_position="top left")
@@ -1092,6 +1159,9 @@ with tab6:
             level_label = "Notional" if is_range else "Payout"
             fig_payoff.add_hline(y=sim_payout, line_dash="dash", line_color="#00A3E0", annotation_text=f"{level_label} (R$ {sim_payout:,.0f})")
         payoff_title = "Diagrama de Accrual (cupom se S ficar na faixa em todos os fixings)" if is_range else "Payoff no Vencimento"
+        if is_path_barrier:
+            payoff_title = ("Payoff no Vencimento (se " + ("viva" if path_knock == "out" else "ativada")
+                            + "; o evento de barreira depende da trajetória)")
         fig_payoff.update_layout(title=payoff_title, xaxis_title="Preço do Ativo no Vencimento (R$)", yaxis_title="Lucro/Prejuízo (R$)", height=350, margin=dict(l=20, r=20, t=40, b=20))
         st.plotly_chart(fig_payoff, use_container_width=True)
 
@@ -1163,6 +1233,41 @@ with tab6:
                                     benchmark = dko + rebate_pv * (1.0 - p_dnt)
                                 else:
                                     benchmark = result.vanilla_price - dko + rebate_pv * p_dnt
+                        elif is_path_barrier:
+                            # Roadmap 8-10: 1 passo por dia útil (fechamentos diários)
+                            path_kw = dict(option_type=path_option_type, direction=path_direction,
+                                           knock=path_knock, rebate=sim_rebate)
+                            path_mc = dict(paths=50_000, steps=n_days, seed=42)
+                            mkt_args = (sim_maturity, sim_rate, 0.02, sim_vol)
+                            if sim_strategy == "Parisian Barrier":
+                                result = price_parisian_barrier(
+                                    market_sim, strike=sim_strike, barrier=sim_barrier, maturity=sim_maturity,
+                                    window=sim_window, cumulative=sim_cumulative, **path_kw, **path_mc,
+                                )
+                                benchmark = parisian_barrier_quadrature(
+                                    sim_spot, sim_strike, sim_barrier, *mkt_args, steps=n_days,
+                                    window=sim_window, cumulative=sim_cumulative, **path_kw,
+                                )
+                                path_bench_text = ("cadeia de Markov exata do monitoramento diário "
+                                                   "(log-preço × contador de dias além da barreira)")
+                            elif is_step:
+                                result = price_step_barrier(
+                                    market_sim, strike=sim_strike, schedule=sim_schedule, maturity=sim_maturity,
+                                    **path_kw, **path_mc,
+                                )
+                                benchmark = step_barrier_quadrature(sim_spot, sim_strike, *mkt_args,
+                                                                    schedule=sim_schedule, **path_kw)
+                                path_bench_text = ("monitoramento contínuo, densidade de transição morta "
+                                                   "na barreira encadeada por degrau")
+                            else:
+                                result = price_soft_barrier(
+                                    market_sim, strike=sim_strike, barrier=sim_barrier, maturity=sim_maturity,
+                                    windows=sim_windows, **path_kw, **path_mc,
+                                )
+                                benchmark = soft_barrier_quadrature(sim_spot, sim_strike, sim_barrier, *mkt_args,
+                                                                    windows=sim_windows, **path_kw)
+                                path_bench_text = ("monitoramento contínuo na janela, densidade de transição "
+                                                   "morta na barreira encadeada por segmento")
                         elif is_single:
                             # Família A (8 tipos) com rebate opcional; rebate=0 reproduz os
                             # precificadores dedicados exatamente (mesmos caminhos e CV).
@@ -1271,7 +1376,7 @@ with tab6:
                             else:
                                 p_label = "P(Sem Ativação)" if is_knock_in else "P(Knock-out)"
                             col_r3.metric(p_label, f"{result.knock_out_probability:.2%}")
-                        if sim_rebate > 0 and (is_single or is_family_b):
+                        if sim_rebate > 0 and (is_single or is_family_b or is_path_barrier):
                             never_activates = is_knock_in or sim_strategy == "Double Knock-In"
                             st.caption(f"Inclui rebate de R$ {sim_rebate:,.2f} pago no vencimento "
                                        + ("se a opção nunca ativar." if never_activates else "se a barreira for tocada."))
@@ -1280,6 +1385,19 @@ with tab6:
                                        + ("(Ikeda-Kunitomo)." if not is_sequential else
                                           f"({sim_convention_bench}).")
                                        + " O MC usa Brownian Bridge, então a diferença é só ruído estatístico.")
+                        if is_path_barrier:
+                            if sim_strategy == "Parisian Barrier":
+                                detail = (f"Evento após {sim_window} fechamento(s) "
+                                          + ("no total" if sim_cumulative else "consecutivos")
+                                          + " além da barreira. ")
+                            elif is_step:
+                                detail = (f"Barreira R$ {sim_barrier:,.0f} até {step_change_time:.3f} ano, "
+                                          f"depois R$ {sim_barrier_2:,.0f}. ")
+                            else:
+                                detail = (f"Barreira monitorada de {sim_windows[0][0]:.3f} a "
+                                          f"{sim_windows[0][1]:.3f} ano. ")
+                            st.caption(detail + f"{n_days} passos (1 por dia útil). Benchmark: {path_bench_text}. "
+                                       f"IC 95% do MC: [R$ {result.ci_low:,.2f}; R$ {result.ci_high:,.2f}].")
                     except Exception:
                         st.error("**Ops!** Não conseguimos calcular essa estrutura. Verifique os parâmetros.")
 
