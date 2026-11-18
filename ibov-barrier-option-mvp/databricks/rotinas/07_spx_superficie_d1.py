@@ -315,3 +315,157 @@ summary = pd.Series({
     "vencimentos com q fora da faixa": n_alert,
 }, name="resumo")
 display(summary.to_frame())
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 7. Teste: série SPX (AM) nos vencimentos mensais
+# MAGIC
+# MAGIC Nas terceiras sextas-feiras existem duas séries com a mesma data: **SPX** (liquidação pela abertura, AM,
+# MAGIC o contrato mensal tradicional) e **SPXW** (liquidação pelo fechamento, PM). O padrão atual fica com a
+# MAGIC SPXW. Nos vencimentos mensais e longos, a série mais líquida costuma ser a SPX AM, e foi justamente
+# MAGIC nessas datas que a checagem de vertical/butterfly cortou de 39% a 57% dos pontos.
+# MAGIC
+# MAGIC Aqui as duas escolhas rodam sobre a **mesma cadeia em cache** (sem nova chamada à API):
+# MAGIC
+# MAGIC - **PM (atual):** `preferred_roots=("SPXW",)`;
+# MAGIC - **AM nos mensais (teste):** `preferred_roots=("SPX", "SPXW")`. Nas datas só com SPXW nada muda.
+# MAGIC
+# MAGIC O padrão do pipeline só muda depois de alguns dias de comparação.
+
+# COMMAND ----------
+
+cfg_am = replace(adapter.cleaning, preferred_roots=("SPX", "SPXW"))
+adapter_am = SPXAdapter(fetch_chain_cached, spot_source=source.index_close, cleaning=cfg_am)
+snap_am = adapter_am.load_snapshot(market_date)
+
+chain_all = adapter.load_chain(market_date)
+monthly = sorted(set(chain_all.loc[chain_all["root"].eq("SPX"), "expiration"])
+                 & set(chain_all.loc[chain_all["root"].eq("SPXW"), "expiration"]))
+print(f"Datas com as duas séries (mensais): {len(monthly)}")
+
+VARIANTS = {"PM": (adapter, snap), "AM": (adapter_am, snap_am)}
+
+
+def forwards_frame(s):
+    f = pd.DataFrame([{"expiration": p.expiration, "T": p.T, "forward": p.forward, "r": p.rate,
+                       "pares": p.n_pairs, "resíduo": p.residual_std} for p in s.forwards])
+    f["q"] = f["r"] - np.log(f["forward"] / s.spot) / f["T"]
+    return f.set_index("expiration")
+
+
+def arb_counts(adp, s):
+    """Pontos antes/depois da checagem de vertical/butterfly, por vencimento (mesma técnica da seção 4)."""
+    f = forwards_frame(s).reset_index()[["expiration", "T", "forward", "r", "q"]]
+    m = clean_quotes(adp.load_chain(market_date), adp.cleaning, CleaningReport()).merge(f, on=["expiration", "T"])
+    before = clean_against_forwards(m, s.spot, replace(adp.cleaning, arb_tolerance=np.inf), CleaningReport())
+    after = clean_against_forwards(m, s.spot, adp.cleaning, CleaningReport())
+    return pd.DataFrame({"antes": before.groupby("expiration").size(),
+                         "depois": after.groupby("expiration").size()}).fillna(0).astype(int)
+
+
+def atm_vol(s):
+    o = s.options.assign(dist=s.options["log_moneyness"].abs()).sort_values("dist")
+    return o.groupby("expiration")["implied_vol"].first()
+
+
+per_variant = {}
+for name, (adp, s) in VARIANTS.items():
+    f = forwards_frame(s)
+    a = arb_counts(adp, s)
+    per_variant[name] = pd.DataFrame({
+        "série": s.options.groupby("expiration")["root"].first(),
+        "T": f["T"],
+        "pontos": s.options.groupby("expiration").size(),
+        "% cortado arb": 1 - a["depois"] / a["antes"],
+        "resíduo paridade": f["resíduo"],
+        "r": f["r"],
+        "vol ATM": atm_vol(s),
+    })
+
+# COMMAND ----------
+
+# Funil de limpeza lado a lado.
+rep_pm, rep_am = snap.report.to_frame(), snap_am.report.to_frame()
+funnel = pd.DataFrame({"etapa": rep_pm["etapa"], "PM (atual)": rep_pm["quantidade"],
+                       "AM nos mensais": rep_am["quantidade"]})
+funnel["diferença"] = funnel["AM nos mensais"] - funnel["PM (atual)"]
+display(funnel)
+
+# Só os vencimentos mensais: é onde as duas escolhas diferem.
+cols = ["série", "T", "pontos", "% cortado arb", "resíduo paridade", "r", "vol ATM"]
+cmp = per_variant["PM"][cols].join(per_variant["AM"][cols], lsuffix=" PM", rsuffix=" AM", how="outer")
+cmp = cmp.loc[cmp.index.isin(monthly)].sort_values("T PM")
+cmp["Δ pontos"] = cmp["pontos AM"].fillna(0) - cmp["pontos PM"].fillna(0)
+cmp["Δ vol ATM (pts)"] = (cmp["vol ATM AM"] - cmp["vol ATM PM"]) * 100
+display(cmp.reset_index(names="vencimento").style.format({
+    "T PM": "{:.3f}", "T AM": "{:.3f}",
+    "% cortado arb PM": "{:.1%}", "% cortado arb AM": "{:.1%}",
+    "resíduo paridade PM": "{:.3f}", "resíduo paridade AM": "{:.3f}",
+    "r PM": "{:.3%}", "r AM": "{:.3%}", "vol ATM PM": "{:.2%}", "vol ATM AM": "{:.2%}",
+    "Δ pontos": "{:+.0f}", "Δ vol ATM (pts)": "{:+.2f}",
+}, na_rep="-"))
+
+# COMMAND ----------
+
+def arb_total(s):
+    rep = s.report.to_frame()
+    i = rep.index[rep["etapa"].eq("Sem arbitragem de vertical/butterfly")][0]
+    return int(rep.loc[i - 1, "quantidade"] - rep.loc[i, "quantidade"])
+
+
+def r_minus_sofr(s):
+    f = forwards_frame(s)
+    gap = (f.loc[f["T"] >= MIN_T_RATE, "r"] - sofr) * 1e4 if sofr is not None else pd.Series(dtype=float)
+    return gap
+
+
+rows = {}
+for name, (adp, s) in VARIANTS.items():
+    gap = r_minus_sofr(s)
+    in_monthly = s.options.loc[s.options["expiration"].isin(monthly)]
+    rows[name] = {
+        "vencimentos": len(s.forwards),
+        "pontos": len(s.options),
+        "pontos nos mensais": len(in_monthly),
+        "removidos vertical/butterfly": arb_total(s),
+        "avisos": len(s.report.warnings),
+        "resíduo médio da paridade (mensais)": per_variant[name].loc[
+            per_variant[name].index.isin(monthly), "resíduo paridade"].mean(),
+        "r - SOFR mediana, T >= 3m (bps)": gap.median() if len(gap) else np.nan,
+        "r - SOFR desvio-padrão (bps)": gap.std() if len(gap) else np.nan,
+    }
+verdict = pd.DataFrame(rows).rename(columns={"PM": "PM (atual)", "AM": "AM nos mensais"})
+display(verdict.style.format("{:,.2f}"))
+
+# COMMAND ----------
+
+# Smiles PM x AM em até 4 vencimentos mensais (perto de 1, 3, 12 e 24 meses).
+both = cmp.dropna(subset=["T PM", "T AM"])
+picked = []
+for t in (1 / 12, 0.25, 1.0, 2.0):
+    if len(both):
+        e = (both["T PM"] - t).abs().idxmin()
+        if e not in picked:
+            picked.append(e)
+
+if picked:
+    ncols = 2
+    nrows = int(np.ceil(len(picked) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(13, 4.5 * nrows), squeeze=False)
+    for ax, e in zip(axes.flat, picked):
+        for (name, (_, s)), color, ls, mk in zip(VARIANTS.items(), (WARM[1], WARM[4]), ("-", "--"), ("o", "s")):
+            sm = s.options.loc[s.options["expiration"].eq(e)].sort_values("log_moneyness")
+            label = f"{name} ({sm['root'].iloc[0] if len(sm) else '-'}): {len(sm)} pts"
+            ax.plot(sm["log_moneyness"], sm["implied_vol"] * 100, color=color, ls=ls, lw=1.6,
+                    marker=mk, ms=4, markevery=max(1, len(sm) // 12), label=label)
+        ax.axvline(0, color=MUTED, lw=0.8)
+        ax.set(title=f"{e} (T={both.loc[e, 'T PM']:.2f})", xlabel="ln(K/F)", ylabel="vol implícita (%)")
+        ax.legend()
+    for ax in list(axes.flat)[len(picked):]:
+        ax.set_visible(False)
+    fig.suptitle("Smiles nos vencimentos mensais: PM (SPXW) x AM (SPX)", color="white", fontweight="bold")
+    plt.tight_layout()
+    plt.show()
+else:
+    print("Nenhum vencimento mensal presente nas duas versões.")
