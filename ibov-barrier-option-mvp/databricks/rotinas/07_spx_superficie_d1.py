@@ -521,3 +521,146 @@ if picked:
          "smiles_pm_x_am")
 else:
     print("Nenhum vencimento mensal presente nas duas versões.")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 8. Relatório único para enviar
+# MAGIC
+# MAGIC Junta em texto tudo o que as seções acima calcularam. Rode depois das outras células e copie a saída
+# MAGIC inteira. Se uma seção anterior falhou, o bloco dela aparece como `[não disponível]`, com o motivo.
+
+# COMMAND ----------
+
+import platform
+import subprocess
+import traceback
+from importlib import metadata as _md
+
+_g = globals()
+
+
+def _need(*names):
+    missing = [n for n in names if n not in _g]
+    if missing:
+        raise NameError("ausente (a célula que cria isso falhou ou não rodou): " + ", ".join(missing))
+
+
+def _fmt(spec):
+    return {c: (lambda f: (lambda v: "-" if pd.isna(v) else f.format(v)))(f) for c, f in (spec or {}).items()}
+
+
+def _df(frame, spec=None):
+    frame = frame.reset_index() if not isinstance(frame.index, pd.RangeIndex) else frame
+    spec = {c: f for c, f in (spec or {}).items() if c in frame.columns}
+    with pd.option_context("display.max_rows", 500, "display.max_columns", None, "display.width", 300):
+        print(frame.to_string(index=False, formatters=_fmt(spec)))
+
+
+def _block(title, fn):
+    print("\n" + "=" * 110 + f"\n{title}\n" + "=" * 110)
+    try:
+        fn()
+    except Exception as exc:
+        print(f"[não disponível] {type(exc).__name__}: {exc}")
+        print("".join(traceback.format_exc().splitlines(keepends=True)[-4:]))
+
+
+def _r0_ambiente():
+    print("python:", platform.python_version())
+    for pkg in ("thetadata", "grpcio", "exchange-calendars", "lxml", "pandas", "numpy", "plotly"):
+        try:
+            print(f"{pkg}: {_md.version(pkg)}")
+        except Exception:
+            print(f"{pkg}: não instalado")
+    try:
+        sha = subprocess.run(["git", "-C", project_dir, "log", "-1", "--format=%h %s"],
+                             capture_output=True, text=True, timeout=10).stdout.strip()
+        print("commit do Git folder:", sha or "n/d")
+    except Exception:
+        print("commit do Git folder: n/d")
+
+
+def _r1_foto():
+    _need("market_date", "snap", "source")
+    print("data de mercado:", market_date, "| origem da chave:", source.key_source)
+    print(f"spot: {snap.spot:,.2f} ({snap.spot_source}) | vencimentos: {len(snap.forwards)} | pontos: {len(snap.options):,}")
+    _df(snap.report.to_frame())
+    print("avisos:", *(snap.report.warnings or ["nenhum"]), sep="\n - ")
+
+
+def _r2_forwards():
+    _need("forwards", "n_alert")
+    _df(forwards, {"T": "{:.4f}", "forward": "{:,.2f}", "DF": "{:.6f}", "r": "{:.3%}", "q": "{:.3%}",
+                   "F/S - 1": "{:+.3%}", "resíduo": "{:.3f}"})
+    print(f"\nq fora de [{Q_RANGE[0]:.0%}, {Q_RANGE[1]:.0%}]: {n_alert} de {len(forwards)}")
+    print("SOFR:", f"{sofr:.3%}" if _g.get("sofr") is not None else "n/d")
+    if "long_r" in _g:
+        print("\nr - SOFR (T >= 3m):")
+        _df(long_r, {"r": "{:.3%}", "r - SOFR (bps)": "{:+.0f}"})
+
+
+def _r3_arb():
+    _need("arb", "where")
+    print(f"total removido: {arb['removidos'].sum()} de {arb['antes'].sum()}\n")
+    _df(arb.sort_values(["T", "option_type"]), {"T": "{:.3f}", "% removido": "{:.1%}"})
+    print("\npor moneyness:")
+    _df(where, {"% removido": "{:.1%}"})
+
+
+def _r4_smiles():
+    _need("opts", "chosen", "atm")
+    grid = [-0.30, -0.20, -0.10, -0.05, 0.0, 0.05, 0.10]
+    rows = []
+    for label, exp in chosen.items():
+        s = opts.loc[opts["expiration"].eq(exp)].sort_values("log_moneyness")
+        row = {"prazo": label, "vencimento": exp, "T": s["T"].iloc[0], "pontos": len(s),
+               "ln(K/F) min": s["log_moneyness"].min(), "ln(K/F) max": s["log_moneyness"].max()}
+        for x in grid:
+            inside = s["log_moneyness"].min() <= x <= s["log_moneyness"].max()
+            row[f"vol@{x:+.2f}"] = np.interp(x, s["log_moneyness"], s["implied_vol"]) if inside else np.nan
+        rows.append(row)
+    spec = {"T": "{:.3f}", "ln(K/F) min": "{:+.3f}", "ln(K/F) max": "{:+.3f}",
+            **{f"vol@{x:+.2f}": "{:.2%}" for x in grid}}
+    _df(pd.DataFrame(rows), spec)
+    print("\nvol ATM por vencimento:")
+    _df(atm, {"T": "{:.4f}", "strike": "{:,.0f}", "forward": "{:,.2f}", "implied_vol": "{:.2%}"})
+
+
+def _r5_resumo():
+    _need("summary")
+    _df(summary.to_frame())
+
+
+def _r6_am_pm():
+    _need("monthly", "funnel", "cmp", "verdict")
+    print("vencimentos mensais (SPX e SPXW):", ", ".join(map(str, monthly)), "\n")
+    _df(funnel)
+    print()
+    _df(cmp, {"T PM": "{:.3f}", "T AM": "{:.3f}", "% cortado arb PM": "{:.1%}", "% cortado arb AM": "{:.1%}",
+              "resíduo paridade PM": "{:.3f}", "resíduo paridade AM": "{:.3f}", "r PM": "{:.3%}",
+              "r AM": "{:.3%}", "vol ATM PM": "{:.2%}", "vol ATM AM": "{:.2%}", "Δ pontos": "{:+.0f}",
+              "Δ vol ATM (pts)": "{:+.2f}"})
+    print()
+    _df(verdict.map(lambda v: f"{v:,.2f}") if hasattr(verdict, "map") else verdict.round(2))
+
+
+def _r7_amostra():
+    _need("opts", "sample_cols")
+    _df(opts[sample_cols].sort_values(["T", "strike"]).head(10),
+        {"T": "{:.4f}", "forward": "{:,.2f}", "log_moneyness": "{:+.4f}", "implied_vol": "{:.2%}"})
+
+
+print(f"RELATÓRIO SPX D-1 | gerado em {pd.Timestamp.now(tz='America/Sao_Paulo'):%Y-%m-%d %H:%M} (Brasília)")
+for _title, _fn in [
+    ("0. Ambiente", _r0_ambiente),
+    ("1. Fotografia D-1 e funil de limpeza", _r1_foto),
+    ("2. Forwards, r, q e SOFR", _r2_forwards),
+    ("3. Cortes de vertical/butterfly", _r3_arb),
+    ("4. Smiles (vol interpolada em ln(K/F)) e vol ATM", _r4_smiles),
+    ("5. Resumo do dia", _r5_resumo),
+    ("6. Teste AM x PM nos mensais", _r6_am_pm),
+    ("7. Amostra (10 linhas)", _r7_amostra),
+]:
+    _block(_title, _fn)
+print("\nFIM DO RELATÓRIO")
