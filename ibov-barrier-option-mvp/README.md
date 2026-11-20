@@ -28,7 +28,7 @@ Projeto quantitativo em Python, preparado para execução local e em Databricks,
 
 ## Objetivo
 
-Estimar o valor justo e os principais riscos de uma opção que deixa de existir quando o índice toca uma barreira inferior. O motor usa Monte Carlo sob medida neutra ao risco, uma call Black–Scholes como variável de controle para redução de variância e duas formas de monitoramento:
+Estimar o valor justo e os principais riscos de opções com barreira sobre o Ibovespa — da barreira simples (Família A) às estruturas de dupla barreira, combinações, binárias e exóticos dependentes da trajetória (Famílias B, C, D, Parisian, Step e Soft). O contrato de referência do pipeline diário é uma **call down-and-out**: a opção deixa de existir quando o índice toca uma barreira inferior. O motor usa Monte Carlo sob medida neutra ao risco, uma call Black–Scholes como variável de controle para redução de variância e duas formas de monitoramento:
 
 - `discrete`: verifica a barreira somente nas datas simuladas;
 - `brownian_bridge`: estima o toque entre duas datas consecutivas e reduz o viés de discretização.
@@ -39,7 +39,7 @@ $$
 dS_t=(r-q)S_t\,dt+\sigma S_t\,dW_t,
 $$
 
-e o payoff é
+e o payoff do contrato de referência (call down-and-out) é
 
 $$
 e^{-rT}(S_T-K)^+\mathbf{1}_{\{\min_{0\leq t\leq T}S_t>H\}}.
@@ -175,7 +175,7 @@ Motor reutilizável para reprecificação sob choques:
 > O VaR/ES inicial usa choques lognormais de spot e aproximação delta-gamma. Não é VaR
 > histórico e não inclui choques conjuntos de volatilidade e curva.
 >
-> Cenários e stress testing são implementados no módulo 04 (ver abaixo).
+> Cenários e stress testing são implementados no notebook 04 (ver acima).
 
 ## Validações implementadas
 
@@ -279,5 +279,5 @@ Impacto na precificação: o q baixo eleva o forward e, consequentemente, o pre�
 2. ✅ Calibrar volatilidade pela superfície de opções
 3. ✅ Acrescentar fórmula fechada de Reiner–Rubinstein como benchmark
 4. ✅ Implementar knock-in, up-and-out, paridade in/out e rebate
-5. Gerar P&L explain, cenários de estresse e tabelas Delta para Databricks
+5. ✅ Cenários de estresse (`rotinas/04_cenarios_stress.py`); P&L explain e tabelas Delta para Databricks ficam para depois do Feature Freeze
 6. ✅ Roadmap de 10 modelos de barreira concluído (Famílias A-D, Parisian, Step e Soft); projeto em Feature Freeze
