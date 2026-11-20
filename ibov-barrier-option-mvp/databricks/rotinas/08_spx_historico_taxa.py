@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # SPX: histórico diário e investigação de r acima da SOFR
 # MAGIC
-# MAGIC Roda a fotografia D-1 do notebook 07 em **todos os pregões** de um intervalo (padrão: 01/10/2026 até D-1)
+# MAGIC Roda a fotografia D-1 do notebook 07 em **todos os pregões** de um intervalo (padrão: 03/08/2026 até D-1, o último pregão com dados)
 # MAGIC e monta um painel por dia e por vencimento. O objetivo é ter uma base sólida para entender por que o r
 # MAGIC implícito pela paridade fica ~100 bps acima da SOFR.
 # MAGIC
@@ -75,7 +75,7 @@ PAUSE_S = 0.5            # pausa entre chamadas à API
 
 # Pasta fora do Git folder (os parquets não devem ir para o repositório).
 user_home = "/".join(notebook_path.split("/")[:4])          # /Workspace/Users/<usuário>
-dbutils.widgets.text("inicio", "2026-10-01", "Início (AAAA-MM-DD)")
+dbutils.widgets.text("inicio", "2026-08-03", "Início (AAAA-MM-DD)")
 dbutils.widgets.text("fim", "", "Fim (vazio = D-1)")
 dbutils.widgets.text("pasta", f"{user_home}/spx_dados", "Pasta dos dados")
 
