@@ -332,3 +332,93 @@ class AdapterEndToEndTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SmoothRateTests(unittest.TestCase):
+    """Curva r(T) suavizada, regressão ampla e descarte de vencimentos incoerentes."""
+
+    def test_fit_rate_curve_linear_with_outlier(self):
+        from ibov_barrier.markets.parity import fit_rate_curve
+        T = np.array([0.25, 0.4, 0.5, 0.75, 1.0, 1.2, 1.6])
+        r = 0.045 + 0.004 * T
+        r[2] -= 0.25  # vencimento quebrado: -2.500 bps
+        curve, used = fit_rate_curve(T, r)
+        self.assertFalse(used[2])
+        self.assertTrue(used[[0, 1, 3, 4, 5, 6]].all())
+        for t in (0.3, 1.0, 1.5):
+            self.assertAlmostEqual(curve(t), 0.045 + 0.004 * t, places=10)
+        self.assertAlmostEqual(curve(0.05), curve(0.25), places=12)  # constante abaixo do menor prazo
+        self.assertAlmostEqual(curve(3.0), curve(1.6), places=12)    # e acima do maior
+
+    def test_fit_rate_curve_few_points_is_median(self):
+        from ibov_barrier.markets.parity import fit_rate_curve
+        curve, used = fit_rate_curve([0.3, 0.6], [0.04, 0.05])
+        self.assertTrue(used.all())
+        self.assertAlmostEqual(curve(0.1), 0.045)
+        self.assertAlmostEqual(curve(2.0), 0.045)
+
+    def test_wide_regression_recovers_discount(self):
+        from ibov_barrier.markets.parity import implied_discount_factor
+        exp = date(2027, 3, 19)
+        T = _T(exp, "PM")
+        quotes = normalize_thetadata_eod(synthetic_raw("SPXW", [exp], "PM"), "SPXW")
+        df, n = implied_discount_factor(quotes, exp)
+        self.assertAlmostEqual(-np.log(df) / T, R, delta=1e-9)
+        self.assertGreater(n, 30)
+
+    def test_smooth_is_default_and_fills_diagnostics(self):
+        snap = adapter(clean_raw(tick=0.05), spot_source=lambda d: S0).load_snapshot(MARKET_DATE)
+        long_ = [p for p in snap.forwards if p.T >= 0.25]
+        self.assertTrue(long_)
+        for p in long_:
+            self.assertIsNotNone(p.fit_rate)
+            self.assertTrue(p.in_fit)
+        for p in snap.forwards:
+            self.assertAlmostEqual(p.rate, R, delta=0.002)
+            self.assertAlmostEqual(p.forward, S0 * np.exp((R - Q) * p.T), delta=0.1)
+        self.assertEqual(snap.report.warnings, [])
+
+    def test_atm_method_still_available(self):
+        snap = adapter(clean_raw(tick=0.05), spot_source=lambda d: S0, rate_method="atm").load_snapshot(MARKET_DATE)
+        short = [p for p in snap.forwards if p.T < 0.25]
+        first_reliable = min((p for p in snap.forwards if p.T >= 0.25), key=lambda p: p.T)
+        for p in short:
+            self.assertAlmostEqual(p.rate, first_reliable.rate, places=12)
+            self.assertIsNone(p.fit_rate)
+
+    def test_unknown_method(self):
+        with self.assertRaises(ValueError):
+            adapter(clean_raw(), spot_source=lambda d: S0, rate_method="xyz").load_snapshot(MARKET_DATE)
+
+    def test_incoherent_expiry_is_dropped_with_warning(self):
+        """Cotações das calls perto do ATM deslocadas ±15 pontos (spreads normais): forward incoerente."""
+        raw = clean_raw()
+        w = raw["SPXW"]
+        bad_exp = 20270319
+        near = w["expiration"].eq(bad_exp) & w["right"].eq("C") & w["strike"].between(5500_000, 6800_000)
+        shift = np.where((w.loc[near, "strike"] // 25_000) % 2 == 0, 15.0, -15.0)
+        w.loc[near, "bid"] += shift
+        w.loc[near, "ask"] += shift
+        snap = adapter(raw, spot_source=lambda d: S0).load_snapshot(MARKET_DATE)
+        self.assertNotIn(date(2027, 3, 19), {p.expiration for p in snap.forwards})
+        self.assertTrue(any("2027-03-19" in m and "descartado" in m for m in snap.report.warnings))
+        self.assertNotIn(date(2027, 3, 19), set(snap.options["expiration"]))
+        self.assertIn(date(2027, 6, 18), {p.expiration for p in snap.forwards})
+
+
+class CoverageTests(unittest.TestCase):
+    def test_flags_low_days_against_previous_median(self):
+        from ibov_barrier.markets.quality import low_coverage_flags
+        pts = pd.Series([8700, 8600, 8800, 8700, 8650, 8750, 4500, 8700, 5000])
+        out = low_coverage_flags(pts)
+        self.assertFalse(out["baixa cobertura"].iloc[:6].any())  # sem histórico ou normais
+        self.assertTrue(out.loc[6, "baixa cobertura"])
+        self.assertFalse(out.loc[7, "baixa cobertura"])
+        self.assertTrue(out.loc[8, "baixa cobertura"])
+
+    def test_warning_message(self):
+        from ibov_barrier.markets.quality import coverage_warning
+        hist = pd.Series([8700, 8600, 8800, 8700, 8650])
+        self.assertIsNone(coverage_warning(8000, hist))
+        self.assertIn("Baixa cobertura", coverage_warning(5000, hist))
+        self.assertIsNone(coverage_warning(100, hist.head(3)))  # histórico curto: sem referência

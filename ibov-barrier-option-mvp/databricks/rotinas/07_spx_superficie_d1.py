@@ -74,7 +74,7 @@ from ibov_barrier.markets.base import CleaningReport
 from ibov_barrier.markets.cleaning import clean_against_forwards, clean_quotes
 from ibov_barrier.markets.spx import SPXAdapter, ThetaDataSource
 
-# Prazo a partir do qual a taxa vem da própria regressão da paridade (igual ao padrão de implied_forwards).
+# Prazo a partir do qual cada vencimento mede a própria taxa e entra no ajuste da curva r(T).
 MIN_T_RATE = 0.25
 # Faixa considerada razoável para o dividend yield implícito do SPX (alerta, não filtro).
 Q_RANGE = (0.0, 0.03)
@@ -152,6 +152,17 @@ print(f"Spot SPX: {snap.spot:,.2f} ({snap.spot_source})")
 print(f"Vencimentos com forward: {len(snap.forwards)}")
 print(f"Pontos na superfície: {len(snap.options):,}")
 
+# Alerta de baixa cobertura: compara com o histórico do notebook 08, se existir.
+from ibov_barrier.markets.quality import coverage_warning
+coverage_msg = None
+try:
+    _hist = pd.read_parquet("/".join(notebook_path.split("/")[:4]) + "/spx_dados/resumo_diario.parquet")
+    _hist = _hist.loc[pd.to_datetime(_hist["data"]).dt.date < market_date].sort_values("data")
+    coverage_msg = coverage_warning(len(snap.options), _hist["pontos"])
+    print(coverage_msg or f"Cobertura normal (referência: {min(len(_hist), 20)} pregões do notebook 08).")
+except Exception as exc:
+    print("Sem histórico para checar cobertura (rode o notebook 08):", type(exc).__name__)
+
 # COMMAND ----------
 
 display(snap.report.to_frame())
@@ -167,9 +178,10 @@ else:
 # MAGIC %md
 # MAGIC ## 3. Forwards e estrutura a termo
 # MAGIC
-# MAGIC Abaixo de 3 meses, a taxa não vem da regressão (o ruído de cotação explode em `−ln(DF)/T`):
-# MAGIC usa-se a taxa do vencimento confiável mais curto, e só o forward é estimado. Esses prazos aparecem
-# MAGIC como `r emprestado`.
+# MAGIC Cada vencimento com T >= 3 meses mede a própria taxa por uma regressão ampla (pares em ±10% do ATM).
+# MAGIC Uma reta r(T) = a + b·T robusta é ajustada a essas taxas (as que ficam fora da curva são ignoradas,
+# MAGIC com aviso) e aplicada a **todos** os vencimentos; o forward vem dos pares perto do ATM com esse DF.
+# MAGIC Abaixo de 3 meses o ruído de cotação explode em `−ln(DF)/T`, então esses prazos só usam a curva.
 
 # COMMAND ----------
 
@@ -182,16 +194,20 @@ forwards = pd.DataFrame([{
     "r": p.rate,
     "pares": p.n_pairs,
     "resíduo": p.residual_std,
+    "r do vencimento": p.fit_rate,
+    "no ajuste": p.in_fit,
 } for p in snap.forwards]).sort_values("T").reset_index(drop=True)
 forwards["q"] = forwards["r"] - np.log(forwards["forward"] / snap.spot) / forwards["T"]
 forwards["F/S - 1"] = forwards["forward"] / snap.spot - 1
-forwards["origem de r"] = np.where(forwards["T"] >= MIN_T_RATE, "regressão", "r emprestado")
+forwards["origem de r"] = np.select(
+    [forwards["no ajuste"], forwards["r do vencimento"].notna()],
+    ["curva (no ajuste)", "curva (fora do ajuste)"], "curva (prazo curto)")
 forwards["alerta q"] = ~forwards["q"].between(*Q_RANGE)
 
 display(forwards.style.format({
     "T": "{:.4f}", "forward": "{:,.2f}", "DF": "{:.6f}", "r": "{:.3%}", "q": "{:.3%}",
-    "F/S - 1": "{:+.3%}", "resíduo": "{:.3f}",
-}))
+    "F/S - 1": "{:+.3%}", "resíduo": "{:.3f}", "r do vencimento": "{:.3%}",
+}, na_rep="-"))
 
 n_alert = int(forwards["alerta q"].sum())
 print(f"Vencimentos com q fora de [{Q_RANGE[0]:.0%}, {Q_RANGE[1]:.0%}]: {n_alert} de {len(forwards)}")
@@ -204,17 +220,23 @@ except Exception as exc:  # a SOFR de D-1 sai às 08:00 ET de D+0
     sofr = None
     print("SOFR indisponível:", exc)
 
-own = forwards["origem de r"].eq("regressão")
+own = forwards["no ajuste"]
+out_fit = forwards["r do vencimento"].notna() & ~own
 venc = forwards["vencimento"].astype(str)
 hover = "%{customdata}<br>T = %{x:.3f}<br>%{y:.3f}% a.a.<extra>%{fullData.name}</extra>"
 
 fig = make_subplots(rows=1, cols=2, subplot_titles=("r(T)", "q(T) implícito"), horizontal_spacing=0.08)
-fig.add_trace(go.Scatter(x=forwards.loc[own, "T"], y=forwards.loc[own, "r"] * 100, mode="lines+markers",
-                         name="r implícito (paridade)", line=dict(color=WARM[2], width=2), marker=dict(size=7),
+fig.add_trace(go.Scatter(x=forwards["T"], y=forwards["r"] * 100, mode="lines",
+                         name="r(T) curva suavizada", line=dict(color=WARM[2], width=2),
+                         customdata=venc, hovertemplate=hover), row=1, col=1)
+fig.add_trace(go.Scatter(x=forwards.loc[own, "T"], y=forwards.loc[own, "r do vencimento"] * 100, mode="markers",
+                         name="taxa por vencimento (no ajuste)", marker=dict(symbol="circle", size=7, color=WARM[1]),
                          customdata=venc[own], hovertemplate=hover), row=1, col=1)
-fig.add_trace(go.Scatter(x=forwards.loc[~own, "T"], y=forwards.loc[~own, "r"] * 100, mode="markers",
-                         name="r emprestado (T < 3m)", marker=dict(symbol="circle-open", size=7, color=MUTED),
-                         customdata=venc[~own], hovertemplate=hover), row=1, col=1)
+if out_fit.any():
+    fig.add_trace(go.Scatter(x=forwards.loc[out_fit, "T"], y=forwards.loc[out_fit, "r do vencimento"] * 100,
+                             mode="markers", name="fora do ajuste",
+                             marker=dict(symbol="x", size=9, color=WARM[3]),
+                             customdata=venc[out_fit], hovertemplate=hover), row=1, col=1)
 if sofr is not None:
     fig.add_trace(go.Scatter(x=[0, forwards["T"].max()], y=[sofr * 100] * 2, mode="lines",
                              name=f"SOFR contínua {sofr:.3%}", line=dict(color=WARM[0], dash="dash", width=1.5),
@@ -229,8 +251,11 @@ fig.update_yaxes(title_text="% a.a.")
 show(style_fig(fig, f"SPX - estrutura a termo implícita em {market_date}", height=480), "r_q")
 
 if sofr is not None:
-    long_r = forwards.loc[own, ["vencimento", "dias", "r"]].assign(**{"r - SOFR (bps)": lambda d: (d["r"] - sofr) * 1e4})
-    display(long_r.style.format({"r": "{:.3%}", "r - SOFR (bps)": "{:+.0f}"}))
+    long_r = forwards.loc[forwards["T"] >= MIN_T_RATE, ["vencimento", "dias", "r", "r do vencimento", "no ajuste"]]
+    long_r = long_r.assign(**{"curva - SOFR (bps)": (long_r["r"] - sofr) * 1e4,
+                              "vencimento - SOFR (bps)": (long_r["r do vencimento"] - sofr) * 1e4})
+    display(long_r.style.format({"r": "{:.3%}", "r do vencimento": "{:.3%}", "curva - SOFR (bps)": "{:+.0f}",
+                                 "vencimento - SOFR (bps)": "{:+.0f}"}, na_rep="-"))
 
 # COMMAND ----------
 
@@ -355,6 +380,7 @@ summary = pd.Series({
     "q 1a": f"{nearest(forwards, 1.0, 'q'):.3%}",
     "SOFR": f"{sofr:.3%}" if sofr is not None else "n/d",
     "vencimentos com q fora da faixa": n_alert,
+    "cobertura": coverage_msg or "normal / sem histórico",
 }, name="resumo")
 display(summary.to_frame())
 
@@ -587,17 +613,19 @@ def _r1_foto():
     print(f"spot: {snap.spot:,.2f} ({snap.spot_source}) | vencimentos: {len(snap.forwards)} | pontos: {len(snap.options):,}")
     _df(snap.report.to_frame())
     print("avisos:", *(snap.report.warnings or ["nenhum"]), sep="\n - ")
+    print("cobertura:", _g.get("coverage_msg") or "normal / sem histórico")
 
 
 def _r2_forwards():
     _need("forwards", "n_alert")
     _df(forwards, {"T": "{:.4f}", "forward": "{:,.2f}", "DF": "{:.6f}", "r": "{:.3%}", "q": "{:.3%}",
-                   "F/S - 1": "{:+.3%}", "resíduo": "{:.3f}"})
+                   "F/S - 1": "{:+.3%}", "resíduo": "{:.3f}", "r do vencimento": "{:.3%}"})
     print(f"\nq fora de [{Q_RANGE[0]:.0%}, {Q_RANGE[1]:.0%}]: {n_alert} de {len(forwards)}")
     print("SOFR:", f"{sofr:.3%}" if _g.get("sofr") is not None else "n/d")
     if "long_r" in _g:
         print("\nr - SOFR (T >= 3m):")
-        _df(long_r, {"r": "{:.3%}", "r - SOFR (bps)": "{:+.0f}"})
+        _df(long_r, {"r": "{:.3%}", "r do vencimento": "{:.3%}", "curva - SOFR (bps)": "{:+.0f}",
+                     "vencimento - SOFR (bps)": "{:+.0f}"})
 
 
 def _r3_arb():

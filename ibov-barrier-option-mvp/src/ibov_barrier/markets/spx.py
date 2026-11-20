@@ -122,12 +122,14 @@ class SPXAdapter:
                  cleaning: CleaningConfig = SPX_CLEANING,
                  assumed_dividend_yield: float = 0.013,
                  strike_scale: float | str = "auto",
+                 rate_method: str = "smooth",
                  calendar=None):
         """
         fetch_chain: (root, data) -> EOD bruto do fornecedor para todas as opções da série.
         spot_source: (data) -> fechamento do índice; se ausente, spot implícito pela paridade.
         rate_curve: (T anos) -> r contínuo (SOFR/Treasuries); se ausente, DF implícito pela paridade.
         assumed_dividend_yield: só usado no spot implícito (erro ~ q·T do vencimento mais curto).
+        rate_method: "smooth" (curva r(T) suavizada, padrão) ou "atm" (regressão de 10 pares, anterior).
         calendar: calendário injetável para o D-1 (testes); padrão XNYS do exchange_calendars.
         """
         self.fetch_chain = fetch_chain
@@ -136,6 +138,7 @@ class SPXAdapter:
         self.cleaning = cleaning
         self.assumed_dividend_yield = assumed_dividend_yield
         self.strike_scale = strike_scale
+        self.rate_method = rate_method
         self.calendar = calendar
 
     def market_date(self, now=None) -> date:
@@ -154,7 +157,8 @@ class SPXAdapter:
         report = CleaningReport()
         quotes = clean_quotes(self.load_chain(market_date), self.cleaning, report)
 
-        forwards = implied_forwards(quotes, discount_curve=self.rate_curve, report_warnings=report.warnings)
+        forwards = implied_forwards(quotes, discount_curve=self.rate_curve, rate_method=self.rate_method,
+                                    report_warnings=report.warnings)
         if self.spot_source is not None:
             spot, spot_source = float(self.spot_source(market_date)), "fornecedor"
         else:

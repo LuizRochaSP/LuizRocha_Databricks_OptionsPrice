@@ -97,14 +97,27 @@ execução; o D-1 é a última sessão do calendário dessa bolsa estritamente a
 
 ### 4.2 Forward e dividendos pela paridade put-call (`markets/parity.py`)
 
-`C − P = DF·(F − K)`. Em cada vencimento, usamos os 10 strikes mais próximos do ATM com call e put cotadas:
+`C − P = DF·(F − K)`. A inclinação da reta de `C − P` em K dá `−DF`; com DF conhecido, o forward sai da
+média de `K + (C−P)/DF` nos 10 strikes mais próximos do ATM com call e put cotadas.
 
-- **Sem curva externa:** regressão linear de `C − P` em K. A inclinação dá `−DF` e o intercepto `DF·F`.
-- **Com curva externa** (`rate_curve`, SOFR/Treasuries): DF fixo e F estimado como a média de `K + (C−P)/DF`.
-- **Prazos curtos sem curva externa:** a regressão só define a taxa para T ≥ 3 meses (`min_T_rate`). Abaixo
-  disso, `r = −ln(DF)/T` amplifica o ruído das cotações. Nos dados reais de 17/11/2026 saíram taxas de −21% a
-  +26% em vencimentos de 1 a 3 semanas, então esses prazos usam a taxa do vencimento confiável mais curto e
-  estimam só o forward.
+- **Com curva externa** (`rate_curve`, SOFR/Treasuries): DF fixo pela curva.
+- **Sem curva externa, método padrão `rate_method="smooth"`:**
+  1. cada vencimento com T ≥ 3 meses (`min_T_rate`) mede a própria taxa pela regressão **ampla**, com todos
+     os pares em ±10% do ATM (~60 strikes, contra ~50 pontos de faixa nos 10 pares);
+  2. uma reta `r(T) = a + b·T` robusta (início Theil-Sen, descarte por MAD) é ajustada a essas taxas; as que
+     ficam fora da curva são ignoradas no ajuste, com aviso;
+  3. a curva vale para **todos** os vencimentos (constante fora da faixa de prazos ajustados). Abaixo de
+     3 meses, `r = −ln(DF)/T` amplifica o ruído das cotações (em 17/11/2026 saíram taxas de −21% a +26% em
+     vencimentos de 1 a 3 semanas), então esses prazos só usam a curva.
+- **Método anterior `rate_method="atm"`:** regressão com os 10 pares do ATM em cada T ≥ 3 meses; prazos
+  curtos usam a taxa do vencimento confiável mais curto. Fica disponível para comparação (notebook 08).
+- **Vencimento incoerente:** resíduo acima de max(1,0; 10 × mediana do dia) descarta o vencimento, com aviso.
+- **Taxa acima da SOFR:** em 78 pregões (03/08 a 19/11/2026), o r implícito ficou de +75 a +115 bps acima
+  da SOFR overnight, crescendo com o prazo, igual nos três métodos (10 pares, regressão ampla, box spread).
+  Comprar o box no ask ainda rendeu acima da SOFR em ~60% das observações de 6 a 18 meses. É característica
+  do mercado de opções, não do método: o pipeline usa o r implícito, coerente com os preços.
+- **Dia de baixa cobertura** (`markets/quality.py`): superfície com menos de 70% da mediana de pontos dos 20
+  pregões anteriores é marcada (não descartada). Ex.: 16/10 a 30/10/2026, 05/11 e 19/11/2026.
 - `q(T) = r(T) − ln(F/S)/T` por vencimento. Não é preciso coletar dividendos.
 - **Spot:** se o plano de dados não trouxer o fechamento do índice, ele é inferido do vencimento mais curto:
   `S = F·DF·exp(q·T)`, com q assumido de 1,3% a.a. O erro é da ordem de q·T, centésimos de % para uma ou duas

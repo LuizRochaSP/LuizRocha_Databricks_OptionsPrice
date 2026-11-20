@@ -55,6 +55,8 @@ class ForwardPoint:
     discount_factor: float
     n_pairs: int
     residual_std: float
+    fit_rate: float | None = None   # taxa da regressão ampla deste vencimento (antes da suavização)
+    in_fit: bool = False            # True se essa taxa entrou no ajuste da curva r(T)
 
     @property
     def rate(self) -> float:
