@@ -42,19 +42,14 @@ dashboard/
 
 Databricks Apps vai ler o `app.yaml`, instalar as deps do `requirements.txt`, rodar o `app.py` e gerar uma URL HTTPS.
 
-## Seções do Dashboard
+## Abas do Dashboard
 
-1. Resumo do Pricer
-2. Curva de Juros (DI)
-3. Dividend Yield q(T)
-4. Superfície de Volatilidade (3D)
-4b. Smile de Volatilidade por Vencimento
-5. Diagnóstico Monte Carlo
-5b. Visualização Monte Carlo (caminhos, convergência, payoff)
-6. Validação e Qualidade (6 checks)
-7. Exportação CSV
-8. Histórico comparativo
-9. Dados Brutos
+1. **Resumo do Gestor** — KPIs do pricer (data de mercado, spot, preço da barreira, probabilidade de knock-out)
+2. **Superfície e Volatilidade** — superfície 3D e smile por vencimento
+3. **Curvas de Mercado** — curva DI e dividend yield q(T)
+4. **Motor de Precificação** — diagnóstico e visualização do Monte Carlo (caminhos, convergência, payoff)
+5. **Controle e Ingestão** — checks de validação e qualidade dos dados
+6. **Structuring Desk** — simulador interativo com 30 estratégias, diagrama de payoff e precificação on-demand
 
 ## Configuração
 
