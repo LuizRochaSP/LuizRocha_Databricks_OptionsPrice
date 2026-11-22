@@ -17,6 +17,8 @@ import pandas as pd
 SGS_URL = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.{code}/dados"
 PTAX_SELL = 1           # SGS 1: dólar americano (venda), PTAX
 SGS_MAX_YEARS = 10      # séries diárias do SGS aceitam no máximo 10 anos por consulta
+OLINDA_PTAX_URL = ("https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/"
+                   "CotacaoDolarPeriodo(dataInicial=@dataInicial,dataFinalCotacao=@dataFinalCotacao)")
 
 
 def parse_sgs(payload) -> pd.Series:
@@ -29,25 +31,75 @@ def parse_sgs(payload) -> pd.Series:
     return pd.Series(values.to_numpy(), index=index, name="ptax").dropna().sort_index()
 
 
-def fetch_sgs(code: int, start: date, end: date, *, session=None, timeout: float = 30.0) -> pd.Series:
-    """Baixa uma série diária do SGS em blocos de até 10 anos."""
+def _get_with_retry(session, url, *, timeout, params=None, attempts=4, backoff=2.0):
+    """GET com novas tentativas: o SGS devolve 502/503/504 com frequência."""
+    import time
+    last = None
+    for k in range(attempts):
+        try:
+            resp = session.get(url, timeout=timeout, params=params) if params is not None                 else session.get(url, timeout=timeout)
+            resp.raise_for_status()
+            return resp
+        except Exception as exc:  # noqa: BLE001 - HTTPError, Timeout, ConnectionError
+            last = exc
+            if k < attempts - 1:
+                time.sleep(backoff * (k + 1))
+    raise last
+
+
+def fetch_sgs(code: int, start: date, end: date, *, session=None, timeout: float = 30.0,
+              block_years: int = SGS_MAX_YEARS, attempts: int = 4, backoff: float = 2.0) -> pd.Series:
+    """Baixa uma série diária do SGS em blocos (até 10 anos), com novas tentativas por bloco."""
     if session is None:
         import requests
         session = requests
     parts, cursor = [], start
     while cursor <= end:
-        stop = min(end, date(cursor.year + SGS_MAX_YEARS, cursor.month, 1) - timedelta(days=1))
-        resp = session.get(SGS_URL.format(code=code), timeout=timeout, params={
-            "formato": "json", "dataInicial": cursor.strftime("%d/%m/%Y"), "dataFinal": stop.strftime("%d/%m/%Y")})
-        resp.raise_for_status()
+        stop = min(end, date(cursor.year + block_years, cursor.month, 1) - timedelta(days=1))
+        resp = _get_with_retry(session, SGS_URL.format(code=code), timeout=timeout, attempts=attempts,
+                               backoff=backoff, params={"formato": "json",
+                                                        "dataInicial": cursor.strftime("%d/%m/%Y"),
+                                                        "dataFinal": stop.strftime("%d/%m/%Y")})
         parts.append(parse_sgs(resp.json()))
         cursor = stop + timedelta(days=1)
     out = pd.concat(parts)
     return out[~out.index.duplicated(keep="last")].sort_index()
 
 
-def fetch_ptax(start: date, end: date, **kw) -> pd.Series:
-    return fetch_sgs(PTAX_SELL, start, end, **kw)
+def parse_olinda_ptax(payload) -> pd.Series:
+    """JSON do PTAX/Olinda ({"value": [{"cotacaoVenda": .., "dataHoraCotacao": ..}]}) -> Series por data."""
+    frame = pd.DataFrame(payload.get("value", []))
+    if frame.empty or not {"cotacaoVenda", "dataHoraCotacao"}.issubset(frame.columns):
+        raise ValueError("Resposta do PTAX/Olinda vazia ou sem cotacaoVenda/dataHoraCotacao.")
+    frame["data"] = pd.to_datetime(frame["dataHoraCotacao"]).dt.date
+    frame = frame.sort_values("dataHoraCotacao").drop_duplicates("data", keep="last")
+    return pd.Series(pd.to_numeric(frame["cotacaoVenda"]).to_numpy(), index=frame["data"], name="ptax").sort_index()
+
+
+def fetch_ptax_olinda(start: date, end: date, *, session=None, timeout: float = 30.0, attempts: int = 4,
+                      backoff: float = 2.0) -> pd.Series:
+    """PTAX venda pelo serviço Olinda do BCB (alternativa ao SGS, mesma cotação de fechamento)."""
+    if session is None:
+        import requests
+        session = requests
+    url = (f"{OLINDA_PTAX_URL}?@dataInicial='{start:%m-%d-%Y}'&@dataFinalCotacao='{end:%m-%d-%Y}'"
+           "&$format=json&$select=cotacaoVenda,dataHoraCotacao")
+    return parse_olinda_ptax(_get_with_retry(session, url, timeout=timeout, attempts=attempts,
+                                             backoff=backoff).json())
+
+
+def fetch_ptax(start: date, end: date, **kw) -> tuple[pd.Series, str]:
+    """PTAX venda: SGS 1 em blocos anuais; se o SGS falhar, Olinda. Devolve (série, fonte)."""
+    errors = []
+    try:
+        return fetch_sgs(PTAX_SELL, start, end, block_years=1, **kw), "BCB SGS 1"
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"SGS: {type(exc).__name__} {str(exc)[:120]}")
+    try:
+        return fetch_ptax_olinda(start, end, **kw), "BCB PTAX Olinda"
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"Olinda: {type(exc).__name__} {str(exc)[:120]}")
+    raise RuntimeError("PTAX indisponível | " + " | ".join(errors))
 
 
 def value_on_or_before(series: pd.Series, when: date) -> tuple[date, float]:

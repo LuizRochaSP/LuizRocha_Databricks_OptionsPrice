@@ -9,7 +9,9 @@ import pandas as pd
 from ibov_barrier.markets.fx_inputs import (
     continuous_from_effective,
     ettj_rate,
+    fetch_ptax,
     fetch_sgs,
+    parse_olinda_ptax,
     index_closes,
     latest_sprd,
     parse_sgs,
@@ -62,6 +64,42 @@ class SgsTests(unittest.TestCase):
         self.assertEqual(value_on_or_before(s, date(2026, 11, 20)), (date(2026, 11, 19), 5.40))
         with self.assertRaises(ValueError):
             value_on_or_before(s, date(2026, 1, 1))
+
+
+class _FlakySession:
+    """Falha com 502 nas primeiras chamadas ao SGS; Olinda responde."""
+    def __init__(self, sgs_failures):
+        self.sgs_failures, self.calls = sgs_failures, []
+
+    def get(self, url, timeout, params=None):
+        self.calls.append(url)
+        if "sgs" in url:
+            if self.sgs_failures > 0:
+                self.sgs_failures -= 1
+                raise RuntimeError("502 Server Error: Bad Gateway")
+            return _Resp([{"data": "19/11/2026", "valor": "5,40"}])
+        return _Resp({"value": [{"cotacaoVenda": 5.39, "dataHoraCotacao": "2026-11-19 10:04:00.1"},
+                                {"cotacaoVenda": 5.41, "dataHoraCotacao": "2026-11-19 13:05:00.2"},
+                                {"cotacaoVenda": 5.38, "dataHoraCotacao": "2026-11-20 13:04:00.0"}]})
+
+
+class PtaxFallbackTests(unittest.TestCase):
+    def test_retry_recovers_from_transient_502(self):
+        s, source = fetch_ptax(date(2026, 11, 1), date(2026, 11, 20), session=_FlakySession(2), backoff=0)
+        self.assertEqual(source, "BCB SGS 1")
+        self.assertAlmostEqual(s.iloc[-1], 5.40)
+
+    def test_falls_back_to_olinda_and_keeps_closing_quote(self):
+        session = _FlakySession(99)
+        s, source = fetch_ptax(date(2026, 11, 1), date(2026, 11, 20), session=session, backoff=0)
+        self.assertEqual(source, "BCB PTAX Olinda")
+        self.assertEqual(list(s.index), [date(2026, 11, 19), date(2026, 11, 20)])
+        self.assertAlmostEqual(s.iloc[0], 5.41)
+        self.assertIn("'11-01-2026'", session.calls[-1])
+
+    def test_parse_olinda_rejects_empty(self):
+        with self.assertRaises(ValueError):
+            parse_olinda_ptax({"value": []})
 
 
 class BrlRateTests(unittest.TestCase):

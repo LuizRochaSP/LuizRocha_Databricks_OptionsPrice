@@ -8,7 +8,7 @@
 # MAGIC | :--- | :--- |
 # MAGIC | spot, r_USD, q, vol do SPX | superfície do adaptador SPX (cadeia em disco do notebook 08 ou ThetaData) |
 # MAGIC | r_BRL | curva DI1 do SPRD da B3 (notebook 00); alternativa: curva PRE da ANBIMA (`pyettj`); ou valor manual |
-# MAGIC | câmbio USDBRL | PTAX venda, SGS 1 do Banco Central |
+# MAGIC | câmbio USDBRL | PTAX venda do Banco Central (SGS 1; Olinda se o SGS falhar; cache em disco) |
 # MAGIC | vol do câmbio e correlação | históricas, retornos semanais SPX x PTAX |
 # MAGIC
 # MAGIC Produtos (strike em % do spot do SPX; barreira knock-out observada no SPX):
@@ -251,9 +251,22 @@ display(pd.Series(brl, name="BRL").to_frame())
 # COMMAND ----------
 
 hist_start = market_date - timedelta(days=int(HIST_YEARS * 365.25) + 14)
-ptax = fetch_ptax(hist_start, market_date)
+# PTAX: SGS (blocos anuais, com novas tentativas) -> Olinda -> cache em disco da última execução.
+ptax_path = SPX_DIR / "ptax.parquet"
+try:
+    ptax, ptax_source = fetch_ptax(hist_start, market_date)
+    SPX_DIR.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"data": [d.isoformat() for d in ptax.index], "ptax": ptax.to_numpy()})         .to_parquet(ptax_path, index=False)
+except Exception as exc:
+    if not ptax_path.exists():
+        raise
+    print("BCB indisponível, usando cache:", str(exc)[:300])
+    cached_ptax = pd.read_parquet(ptax_path)
+    ptax = pd.Series(cached_ptax["ptax"].to_numpy(), index=pd.to_datetime(cached_ptax["data"]).dt.date)
+    ptax_source = f"cache em disco (até {ptax.index[-1]})"
 ptax_date, X0 = value_on_or_before(ptax, market_date)
-print(f"PTAX: {len(ptax)} dias de {ptax.index[0]} a {ptax.index[-1]} | X_0 = {X0:.4f} ({ptax_date})")
+print(f"PTAX: {len(ptax)} dias de {ptax.index[0]} a {ptax.index[-1]} | X_0 = {X0:.4f} ({ptax_date}) "
+      f"| fonte: {ptax_source}")
 
 # Fechamentos do SPX: cache em disco, completado pela ThetaData quando faltar período.
 closes_path = SPX_DIR / "spx_fechamentos.parquet"
@@ -427,7 +440,7 @@ print("widgets:", W)
 _block("1. SPX", lambda: (print("cadeia:", chain_source), _df(spx_inputs.to_frame())))
 _block("2. r_BRL", lambda: ([print("tentativa:", m) for m in rate_attempts], _df(pd.Series(brl).to_frame())))
 _block("3. Câmbio e correlação", lambda: (
-    print(f"PTAX X_0 = {X0:.4f} ({ptax_date}) | SPX histórico: {close_source}"),
+    print(f"PTAX X_0 = {X0:.4f} ({ptax_date}, {ptax_source}) | SPX histórico: {close_source}"),
     _df(est_table), print(f"usado: vol USDBRL {vol_fx:.4f} | rho {rho:+.4f}"),
     print("correlação 26 semanas: min {:+.2f} | med {:+.2f} | max {:+.2f} | última {:+.2f}".format(
         roll.min(), roll.median(), roll.max(), roll.iloc[-1]))))
