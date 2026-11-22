@@ -142,12 +142,17 @@ def price_two_factor_mc(market: QuantoMarket, strike: float, maturity: float, *,
                         option_type: str = "call", fx_fixed: float | None = None,
                         barrier: float | None = None, barrier_direction: str = "down",
                         monitoring: str = "brownian_bridge", paths: int = 200_000, steps: int = 126,
-                        seed: int = 42) -> TwoFactorResult:
+                        seed: int = 42, local_vol=None) -> TwoFactorResult:
     """Monte Carlo conjunto de S (USD) e X (USDBRL) sob a medida BRL.
 
     product: 'quanto' (strike em USD, câmbio fixo), 'compo' (strike em BRL sobre S X) ou 'converted'
     (strike em USD, convertido em X_T). A barreira, se houver, é knock-out observada em S (USD). O vanilla
     correspondente entra como variável de controle, como no motor principal.
+
+    local_vol: `LocalVolSurface` opcional (vol local de Dupire em k = ln(S/F_usd(t))). Nesse caso
+    `vol_asset` é ignorado na simulação, o ajuste Quanto usa a vol local de cada passo e a variável de
+    controle passa a ser S_T X_T (martingal com valor conhecido sob qualquer vol); `vanilla_price` é o
+    vanilla simulado com vol local, sem barreira.
     """
     if product not in {"quanto", "compo", "converted"}:
         raise ValueError("product must be 'quanto', 'compo' or 'converted'")
@@ -174,6 +179,10 @@ def price_two_factor_mc(market: QuantoMarket, strike: float, maturity: float, *,
     breached = barrier is not None and (m.spot <= barrier if barrier_direction == "down" else m.spot >= barrier)
     if breached:
         return TwoFactorResult(0.0, 0.0, 0.0, 0.0, 1.0, vanilla)
+
+    if local_vol is not None:
+        return _two_factor_local_vol(m, strike, maturity, product, option_type, fx, barrier, barrier_direction,
+                                     monitoring, paths, steps, seed, local_vol)
 
     rng = np.random.default_rng(seed)
     dt = maturity / steps
@@ -212,6 +221,57 @@ def price_two_factor_mc(market: QuantoMarket, strike: float, maturity: float, *,
     adjusted = barrier_pv - beta * (vanilla_pv - vanilla)
     price = float(adjusted.mean())
     se = float(adjusted.std(ddof=1) / sqrt(paths))
+    return TwoFactorResult(price, se, price - 1.96 * se, price + 1.96 * se, float(1.0 - alive.mean()), vanilla)
+
+
+def _two_factor_local_vol(m, strike, maturity, product, option_type, fx, barrier, barrier_direction,
+                          monitoring, paths, steps, seed, surface) -> TwoFactorResult:
+    """Euler em log, passo a passo: S com vol local de Dupire, X lognormal, sob a medida BRL."""
+    rng = np.random.default_rng(seed)
+    dt = maturity / steps
+    carry = m.rate_usd - m.dividend_yield
+    log_s = np.full(paths, log(m.spot))
+    log_x = np.full(paths, log(m.fx_spot))
+    alive = np.ones(paths, dtype=bool)
+    sign_b = 1.0 if barrier_direction == "down" else -1.0
+    log_h = log(barrier) if barrier is not None else None
+    rho_c = sqrt(max(1.0 - m.correlation**2, 0.0))
+    for i in range(steps):
+        t = i * dt
+        row, _ = surface.local_vol_row(t + 0.5 * dt)
+        sig = np.interp(log_s - (log(m.spot) + carry * t), surface.k_grid, row)
+        z1 = rng.standard_normal(paths)
+        z2 = m.correlation * z1 + rho_c * rng.standard_normal(paths)
+        new_s = log_s + (carry - m.correlation * sig * m.vol_fx - 0.5 * sig * sig) * dt + sig * sqrt(dt) * z1
+        log_x += (m.rate_brl - m.rate_usd - 0.5 * m.vol_fx**2) * dt + m.vol_fx * sqrt(dt) * z2
+        if barrier is not None:
+            prev, dist = sign_b * (log_s - log_h), sign_b * (new_s - log_h)
+            alive &= dist > 0
+            if monitoring == "brownian_bridge":
+                cross = np.exp(-2.0 * np.clip(prev, 0, None) * np.clip(dist, 0, None) / (sig * sig * dt))
+                alive &= rng.random(paths) > cross
+        log_s = new_s
+
+    s_t, x_t = np.exp(log_s), np.exp(log_x)
+    sign = 1.0 if option_type == "call" else -1.0
+    if product == "quanto":
+        payoff = fx * np.maximum(sign * (s_t - strike), 0.0)
+    elif product == "compo":
+        payoff = np.maximum(sign * (s_t * x_t - strike), 0.0)
+    else:
+        payoff = x_t * np.maximum(sign * (s_t - strike), 0.0)
+    disc = exp(-m.rate_brl * maturity)
+    control = disc * s_t * x_t
+    control_mean = m.spot * m.fx_spot * exp(-m.dividend_yield * maturity)
+    var = float(control.var(ddof=1))
+
+    def controlled(pv):
+        beta = float(np.cov(pv, control, ddof=1)[0, 1]) / var if var > 0 else 0.0
+        adj = pv - beta * (control - control_mean)
+        return float(adj.mean()), float(adj.std(ddof=1) / sqrt(paths))
+
+    vanilla, _ = controlled(disc * payoff)
+    price, se = controlled(disc * payoff * alive)
     return TwoFactorResult(price, se, price - 1.96 * se, price + 1.96 * se, float(1.0 - alive.mean()), vanilla)
 
 

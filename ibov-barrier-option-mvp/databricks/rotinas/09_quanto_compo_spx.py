@@ -62,6 +62,7 @@ print("Código de:", ibov_barrier.__file__)
 
 import json
 from datetime import date, timedelta
+from dataclasses import replace
 from math import exp, log
 from pathlib import Path
 
@@ -71,6 +72,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from ibov_barrier.analytical import price_down_and_out_call_analytical
+from ibov_barrier.local_vol import LocalVolSurface
 from ibov_barrier.markets.fx_inputs import (brl_rate_from_sprd, continuous_from_effective, ettj_rate,
                                             fetch_ptax, index_closes, value_on_or_before)
 from ibov_barrier.markets.spx import SPXAdapter, ThetaDataSource
@@ -86,12 +88,16 @@ dbutils.widgets.text("strike_pct", "100", "Strike (% do spot)")
 dbutils.widgets.text("barreira_pct", "85", "Barreira down-and-out (% do spot; vazio = sem)")
 dbutils.widgets.text("anos_historico", "2", "Histórico para vol/correlação (anos)")
 dbutils.widgets.text("caminhos", "200000", "Caminhos do Monte Carlo")
+dbutils.widgets.dropdown("janela_rho", "completo", ["completo", "52 semanas", "manual"],
+                         "Correlação e vol do câmbio: janela")
+dbutils.widgets.text("rho_manual", "", "rho manual (com janela = manual)")
 dbutils.widgets.text("r_brl_manual", "", "r BRL manual (% a.a. 252; vazio = curva)")
 dbutils.widgets.text("pasta_spx", f"{user_home}/spx_dados", "Pasta SPX (notebook 08)")
 dbutils.widgets.text("pasta_b3", f"{user_home}/LuizRocha_Databricks_OptionsPrice/ibov-barrier-option-mvp/data",
                      "Pasta B3 (notebook 00)")
 
 W = {k: dbutils.widgets.get(k).strip() for k in ("data_mercado", "prazo_dias", "strike_pct", "barreira_pct",
+                                                 "janela_rho", "rho_manual",
                                                   "anos_historico", "caminhos", "r_brl_manual", "pasta_spx",
                                                   "pasta_b3")}
 TARGET_T = float(W["prazo_dias"]) / 365.0
@@ -304,8 +310,19 @@ est = {
 }
 est_table = pd.DataFrame(est).T
 display(est_table)
-vol_fx, rho = est["semanal"]["vol_fx"], est["semanal"]["correlation"]
-print(f"Usado: semanal no histórico completo | vol USDBRL {vol_fx:.2%} | rho {rho:+.2f} "
+# Política: janela escolhida no widget; vol do câmbio da mesma janela (manual usa a do histórico completo).
+policy = W["janela_rho"]
+if policy == "manual":
+    if not W["rho_manual"]:
+        raise ValueError("janela_rho = manual exige o widget rho_manual.")
+    rho = float(W["rho_manual"].replace(",", "."))
+    vol_fx = est["semanal"]["vol_fx"]
+else:
+    chosen = est["semanal" if policy == "completo" else "semanal, 52 semanas"]
+    vol_fx, rho = chosen["vol_fx"], chosen["correlation"]
+if not -1 < rho < 1:
+    raise ValueError(f"rho fora de (-1, 1): {rho}")
+print(f"Usado ({policy}): vol USDBRL {vol_fx:.2%} | rho {rho:+.2f} "
       f"(diário {est['diário']['correlation']:+.2f}: a diferença é o efeito dos fechamentos 17h ET x 13h BRT)")
 
 # Correlação móvel de 26 semanas.
@@ -320,6 +337,12 @@ fig.add_hline(y=rho, line=dict(color=WARM[0], dash="dash"), annotation_text=f"us
 fig.add_hline(y=0, line=dict(color=MUTED, dash="dot"))
 fig.update_yaxes(title="correlação SPX x USDBRL", range=[-1, 1])
 show(style_fig(fig, "Correlação móvel SPX x USDBRL (retornos semanais)"), "correlacao")
+
+# Faixa de rho para o relatório: estimativas por janela e extremos da móvel de 26 semanas.
+rho_band = {"usado": rho, "completo": est["semanal"]["correlation"],
+            "52 semanas": est["semanal, 52 semanas"]["correlation"], "diário": est["diário"]["correlation"],
+            "26 semanas mín": float(roll.min()), "26 semanas máx": float(roll.max()),
+            "26 semanas última": float(roll.iloc[-1])}
 
 # COMMAND ----------
 
@@ -358,7 +381,8 @@ for product in ("quanto", "compo", "converted"):
         rows.append(row)
 prices = pd.DataFrame(rows)
 for c in [c for c in prices.columns if "(BRL)" in c]:
-    prices[c.replace("(BRL)", "(% nocional)")] = prices[c] / notional
+    prices[c.replace("(BRL)", "(% nocional)")] = (prices[c] / notional * 100).map(
+        lambda v: "" if pd.isna(v) else f"{v:.3f}%")
 display(prices)
 
 quanto_adj_bps = mkt.quanto_adjustment * 1e4
@@ -370,11 +394,79 @@ if H:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 5. Sensibilidade à correlação e à vol do câmbio (calls, fórmula fechada)
+# MAGIC ## 4b. Efeito do smile na barreira
+# MAGIC
+# MAGIC Preço com barreira com vol constante em K, no ponto médio e na barreira (faixa simples) e com vol local
+# MAGIC de Dupire calibrada na superfície do dia (SVI por vencimento). A vol local reprecifica o smile inteiro;
+# MAGIC a coluna "vanilla vol local" deve ficar perto da fechada com vol em K (checagem da calibração).
 
 # COMMAND ----------
 
-from dataclasses import replace
+lv_error = None
+lv = None
+try:
+    lv = LocalVolSurface.from_options(snap.options, max_maturity=max(T * 1.6, T + 0.25))
+    lv_clip = []
+    # Região que o MC visita: da barreira (menos uma folga) até 25% acima do forward.
+    lv_k_range = (log((H or 0.6 * S0) / fwd.forward) - 0.1, log(1.25))
+    for i in range(steps):
+        lv_clip.append(lv.local_vol_row((i + 0.5) * T / steps, k_range=lv_k_range)[1])
+    print(f"SVI: {len(lv.fit_report)} vencimentos | RMSE vol médio {lv.fit_report['RMSE vol'].mean():.4f} | "
+          f"vol local cortada pelos limites entre barreira e 125% (média no prazo) {np.mean(lv_clip):.1%}")
+    display(lv.fit_report)
+except Exception as exc:
+    lv_error = f"{type(exc).__name__}: {exc}"
+    print("Vol local indisponível:", lv_error)
+
+smile_rows = []
+if H:
+    vol_mid = 0.5 * (vol_k + vol_h)
+    flat_vols = {"vol em K": vol_k, "vol média K/H": vol_mid, "vol na barreira": vol_h}
+    for product in ("quanto", "compo", "converted"):
+        strike = K * X0 if product == "compo" else K
+        for option_type in ("call", "put"):
+            row = {"produto": product, "tipo": option_type}
+            for label, v in flat_vols.items():
+                r = price_two_factor_mc(replace(mkt, vol_asset=float(v)), strike, T, product=product,
+                                        option_type=option_type, barrier=H, paths=PATHS, steps=steps, seed=42)
+                row[label] = r.price / notional * 100
+            if lv is not None:
+                r = price_two_factor_mc(mkt, strike, T, product=product, option_type=option_type, barrier=H,
+                                        paths=PATHS, steps=steps, seed=42, local_vol=lv)
+                row["vol local"] = r.price / notional * 100
+                row["erro padrão vol local"] = r.standard_error / notional * 100
+                row["prob. KO vol local"] = r.knock_out_probability
+                row["vanilla vol local"] = r.vanilla_price / notional * 100
+            row["vanilla fechada vol em K"] = prices.set_index(["produto", "tipo"]).loc[
+                (product, option_type), "fechada (BRL)"] / notional * 100
+            smile_rows.append(row)
+    smile = pd.DataFrame(smile_rows).set_index(["produto", "tipo"])
+    if "vol local" in smile:
+        smile["vol local - vol em K (BRL)"] = (smile["vol local"] - smile["vol em K"]) / 100 * notional
+    display(smile)
+
+    if lv is not None:
+        k_plot = np.linspace(log(0.70), log(1.15), 60)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=np.exp(k_plot) * 100, y=lv.implied_vol(k_plot, T) * 100, mode="lines+markers",
+                                 name="implícita (SVI)", line=dict(color=WARM[1], width=2),
+                                 marker=dict(symbol="circle", size=5)))
+        fig.add_trace(go.Scatter(x=np.exp(k_plot) * 100, y=lv.local_vol(k_plot, 0.5 * T) * 100,
+                                 mode="lines+markers", name="local em T/2", line=dict(color=WARM[3], dash="dash",
+                                                                                      width=2),
+                                 marker=dict(symbol="diamond", size=5)))
+        fig.add_vline(x=BARRIER_PCT * 100 * S0 / fwd.forward, line=dict(color=MUTED, dash="dot"),
+                      annotation_text="barreira")
+        fig.update_xaxes(title="strike / forward (%)")
+        fig.update_yaxes(title="vol (%)")
+        show(style_fig(fig, f"Smile no vencimento {expiry}: implícita x local"), "smile_local")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 5. Sensibilidade à correlação e à vol do câmbio (calls, fórmula fechada)
+
+# COMMAND ----------
 
 rhos = np.linspace(-0.9, 0.9, 37)
 vols = np.linspace(0.05, 0.30, 26)
@@ -392,9 +484,9 @@ for i, (name, fn) in enumerate(series):
     fig.add_trace(go.Scatter(x=vols * 100, y=by_vol, mode="lines+markers", name=name, line=style,
                              marker=dict(symbol=SYMBOLS[i], size=5), legendgroup=name, showlegend=False),
                   row=1, col=2)
-    for x in (-0.6, -0.3, 0.0, 0.3):
-        sens_rows.append({"produto": name, "rho": x,
-                          "call (% nocional)": fn(replace(mkt, correlation=x)) / notional})
+    for label, x in rho_band.items():
+        sens_rows.append({"produto": name, "rho": f"{label} ({x:+.2f})",
+                          "call (% nocional)": fn(replace(mkt, correlation=float(x))) / notional})
 fig.add_vline(x=rho, line=dict(color=MUTED, dash="dot"), row=1, col=1)
 fig.add_vline(x=vol_fx * 100, line=dict(color=MUTED, dash="dot"), row=1, col=2)
 fig.update_xaxes(title="rho", row=1, col=1)
@@ -402,7 +494,7 @@ fig.update_xaxes(title="vol USDBRL (%)", row=1, col=2)
 fig.update_yaxes(title="call (% do nocional)", row=1, col=1)
 show(style_fig(fig, "Call em BRL: sensibilidade aos parâmetros do câmbio", height=460), "sensibilidade")
 sens = pd.DataFrame(sens_rows).pivot(index="rho", columns="produto", values="call (% nocional)")
-sens.index = [f"rho {x:+.1f}" for x in sens.index]
+sens = sens.loc[[f"{k} ({v:+.2f})" for k, v in rho_band.items()]]
 display(sens)
 
 # COMMAND ----------
@@ -441,7 +533,7 @@ _block("1. SPX", lambda: (print("cadeia:", chain_source), _df(spx_inputs.to_fram
 _block("2. r_BRL", lambda: ([print("tentativa:", m) for m in rate_attempts], _df(pd.Series(brl).to_frame())))
 _block("3. Câmbio e correlação", lambda: (
     print(f"PTAX X_0 = {X0:.4f} ({ptax_date}, {ptax_source}) | SPX histórico: {close_source}"),
-    _df(est_table), print(f"usado: vol USDBRL {vol_fx:.4f} | rho {rho:+.4f}"),
+    _df(est_table), print(f"usado ({policy}): vol USDBRL {vol_fx:.4f} | rho {rho:+.4f}"),
     print("correlação 26 semanas: min {:+.2f} | med {:+.2f} | max {:+.2f} | última {:+.2f}".format(
         roll.min(), roll.median(), roll.max(), roll.iloc[-1]))))
 _block("4. Preços", lambda: (
@@ -449,5 +541,11 @@ _block("4. Preços", lambda: (
     print(f"ajuste Quanto {quanto_adj_bps:+.1f} bps | vol composta {mkt.compo_volatility:.4f} | "
           f"forward câmbio {mkt.fx_forward(T):.4f}"),
     _df(prices.set_index(["produto", "tipo"]))))
-_block("5. Sensibilidade (call, % do nocional)", lambda: _df(sens, "{:.4%}"))
+_block("4b. Smile na barreira (% do nocional; última coluna em BRL)", lambda: (
+    print("vol local:", "ok" if lv is not None else lv_error),
+    lv is not None and print(f"SVI {len(lv.fit_report)} vencimentos (RMSE <= 3%) | vol local cortada entre barreira e 125%: "
+          f"{np.mean(lv_clip):.1%}"),
+    lv is not None and _df(lv.fit_report[["dias", "pontos", "RMSE vol", "vol ATM SVI"]]),
+    _df(smile, "{:,.4f}")))
+_block("5. Sensibilidade ao rho (call, % do nocional)", lambda: _df(sens, "{:.4%}"))
 print("\nFIM DO RELATÓRIO")

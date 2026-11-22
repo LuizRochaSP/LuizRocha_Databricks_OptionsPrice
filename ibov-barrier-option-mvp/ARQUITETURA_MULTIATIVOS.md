@@ -254,7 +254,8 @@ X tem drift `r_BRL - r_USD`.
 | :--- | ---: | :--- |
 | `test_markets_spx.py` | 19 | normalização ThetaData, prazos AM/PM, núcleo idêntico ao notebook IBOV, paridade (F, DF, spot, r, q), limpeza com problemas injetados, recuperação exata do smile, cotações arredondadas ao tick |
 | `test_quanto.py` | 15 | Quanto, Compo e Convertida: paridade, limites (rho = 0, sigma_X = 0), mapeamento para o motor, MC de dois fatores contra fórmula fechada e contra a DOC analítica (Quanto e Convertida com barreira), vol e correlação históricas |
-| `test_fx_inputs.py` | 10 | PTAX do SGS (parse, blocos de 10 anos, feriados), conversão 252 DU -> contínua ACT/365, ETTJ em formatos variados, busca do SPRD, fechamentos da ThetaData |
+| `test_local_vol.py` | 8 | SVI (ajuste e superfície), Dupire plano = vol constante, skew local mais inclinado que o implícito, MC com vol local reprecifica o smile e bate as fórmulas fechadas no caso plano, DOC mais barata com skew |
+| `test_fx_inputs.py` | 13 | PTAX do SGS (parse, blocos, novas tentativas após 502, alternativa Olinda, feriados), conversão 252 DU -> contínua ACT/365, ETTJ em formatos variados, busca do SPRD, fechamentos da ThetaData |
 | `test_credentials.py` | 6 | ordem das fontes da chave, limpeza do valor, chave nunca exposta em logs |
 | `test_market_date_multi.py` | 11 | fusos SP×NY (verão e inverno americano), padrão B3 inalterado, feriados reais da NYSE e da B3 (estes rodam só com `exchange_calendars` instalado) |
 
@@ -271,7 +272,7 @@ vertical negativa, butterfly), e cada um precisa sair na etapa certa.
 | 3 | API ThetaData verificada e ligada (`ThetaDataSource`); D-1 real de 17/11/2026 validado | concluída; falta acompanhar vários dias seguidos no Databricks |
 | 4 | Adaptador IBOV sobre o notebook 01, com critério de aceite: mesmos números que o `main` para a mesma data (rodar no Databricks, onde estão os XMLs) | a fazer |
 | 5 | Tabelas Delta por mercado e jobs | a fazer |
-| 6 | Quanto/Compo | motor, testes e notebook 09 concluídos; falta rodar com dados reais no Databricks |
+| 6 | Quanto/Compo | motor, testes e notebook 09 rodados com dados reais (20/11/2026); vol local de Dupire, faixa de smile e política de rho adicionadas |
 | 7 | Desk com seletor de mercado (moeda, multiplicador, calendário) | a fazer |
 
 ## 11. Integração final
@@ -303,3 +304,17 @@ Particularidades já conhecidas:
 | Euro Stoxx 50 | Eurex, liquidação ao meio-dia (média 11:50-12:00 CET), juros em €STR |
 | DAX | índice de retorno total: q ≈ 0 na paridade (bom teste de sanidade) |
 | ETFs (SPY, QQQ) | exercício americano: fora do escopo do motor europeu |
+
+### Vol local de Dupire (fase 6, complemento)
+
+`src/ibov_barrier/local_vol.py`: SVI bruto por vencimento na variância total w(k, T) (fatias com RMSE acima de 3
+pontos de vol ficam fora), w linear em T com máximo acumulado (sem arbitragem de calendário) e vol local pela
+fórmula de Dupire em variância total (Gatheral), com piso no denominador e limites de 3% a 150%. O Monte Carlo
+de dois fatores aceita `local_vol=`: S usa a vol local em k = ln(S/F_usd(t)) a cada passo, o ajuste Quanto
+passa a ser -rho sigma_loc sigma_X e a variável de controle vira S_T X_T, cujo valor esperado é conhecido sob
+qualquer vol. O notebook 09 mostra, para cada produto, o preço com barreira com vol plana em K, no ponto
+médio K/H, na barreira e com vol local, além do vanilla com vol local como checagem da calibração.
+
+Política de rho no notebook 09: widget `janela_rho` (histórico completo, 52 semanas ou manual) define rho e
+vol do câmbio; o relatório mostra o preço da call em cada estimativa (janelas, diário e extremos da móvel de
+26 semanas).
