@@ -218,21 +218,37 @@ seções 5 e 6 do notebook `01_main_option_pricer.py`, sem variáveis globais. O
   precificação, parametrizado por `market`.
 - O app de produção continua lendo só o IBOV até a integração final (seção 10).
 
-## 8. Quanto/Compo (a implementar, `pricing_quanto.py`)
+## 8. Quanto/Compo (`pricing_quanto.py`)
 
-Opção sobre o S&P 500 paga em BRL:
+Opção sobre o S&P 500 paga em BRL. S = índice em USD, X = USDBRL (BRL por USD), rho = correlação dos
+log-retornos de S e X. Sob a medida neutra ao risco em BRL, S tem drift `r_USD - q - rho sigma_S sigma_X` e
+X tem drift `r_BRL - r_USD`.
 
-- **Quanto:** payoff em USD convertido a câmbio fixo. Drift ajustado: `r_USD − q − ρ·σ_S·σ_FX`, desconto em
-  r_BRL. Benchmark: fórmula fechada.
-- **Compo:** payoff convertido ao câmbio do vencimento. Vol composta `√(σ_S² + σ_FX² + 2ρσ_Sσ_FX)` sobre
-  o ativo em BRL.
-- Entradas: superfície SPX (deste adaptador), vol do USDBRL (já existe a aba de FX), correlação histórica.
+| Produto | Payoff em BRL | Preço |
+| :--- | :--- | :--- |
+| Quanto | `X_fix * max(S_T - K, 0)`, K em USD | Black com forward `S e^{(r_USD - q - rho sigma_S sigma_X) T}`, vol sigma_S, desconto r_BRL |
+| Compo | `max(S_T X_T - K_BRL, 0)`, K em BRL | Black sobre `S X`, drift `r_BRL - q`, vol `sqrt(sigma_S^2 + sigma_X^2 + 2 rho sigma_S sigma_X)` |
+| Convertida | `X_T * max(S_T - K, 0)` | `X_0 * BS_USD`; não depende de rho nem de sigma_X (referência) |
+
+- **Barreiras no Quanto:** como a barreira é observada no próprio S, `quanto_market_data` devolve um
+  `MarketData` (rate = r_BRL, dividend_yield = r_BRL - drift Quanto) e qualquer pricer do motor vira
+  Quanto; o preço é multiplicado por `X_fix`.
+- **Monte Carlo de dois fatores** (`price_two_factor_mc`): S e X correlacionados, barreira knock-out em S
+  (discreta ou ponte browniana) e o vanilla fechado como variável de controle. Valida as fórmulas e cobre a
+  Compo com barreira, que não tem fórmula fechada.
+- **Entradas:** sigma_S da superfície SPX (strike e prazo do contrato), r_USD e q do adaptador SPX, r_BRL da
+  curva DI, sigma_X e rho históricos (`historical_fx_inputs`). O padrão é retorno semanal: o SPX fecha às
+  17:00 ET e a PTAX às 13:00 BRT, e com retornos diários essa assincronia puxa a correlação para zero.
+- **Ordem de grandeza** (S 7.000, K 7.100, T 0,75, r_USD 4,8%, q 0,9%, sigma_S 18%, X 5,40, r_BRL 13,5%,
+  sigma_X 13%, rho -0,40): Quanto 2.585, Convertida 2.607, Compo (K = 7.100 x 5,40) 3.926 BRL por ponto.
+  Com rho < 0 o ajuste do Quanto é positivo (+94 bps ao ano no exemplo).
 
 ## 9. Testes
 
 | Arquivo | Testes | Cobre |
 | :--- | ---: | :--- |
 | `test_markets_spx.py` | 19 | normalização ThetaData, prazos AM/PM, núcleo idêntico ao notebook IBOV, paridade (F, DF, spot, r, q), limpeza com problemas injetados, recuperação exata do smile, cotações arredondadas ao tick |
+| `test_quanto.py` | 15 | Quanto, Compo e Convertida: paridade, limites (rho = 0, sigma_X = 0), mapeamento para o motor, MC de dois fatores contra fórmula fechada e contra a DOC analítica (Quanto e Convertida com barreira), vol e correlação históricas |
 | `test_credentials.py` | 6 | ordem das fontes da chave, limpeza do valor, chave nunca exposta em logs |
 | `test_market_date_multi.py` | 11 | fusos SP×NY (verão e inverno americano), padrão B3 inalterado, feriados reais da NYSE e da B3 (estes rodam só com `exchange_calendars` instalado) |
 
@@ -249,7 +265,7 @@ vertical negativa, butterfly), e cada um precisa sair na etapa certa.
 | 3 | API ThetaData verificada e ligada (`ThetaDataSource`); D-1 real de 17/11/2026 validado | concluída; falta acompanhar vários dias seguidos no Databricks |
 | 4 | Adaptador IBOV sobre o notebook 01, com critério de aceite: mesmos números que o `main` para a mesma data (rodar no Databricks, onde estão os XMLs) | a fazer |
 | 5 | Tabelas Delta por mercado e jobs | a fazer |
-| 6 | Quanto/Compo | a fazer |
+| 6 | Quanto/Compo | motor e testes concluídos; falta o notebook com dados reais (PTAX, curva DI, superfície SPX) |
 | 7 | Desk com seletor de mercado (moeda, multiplicador, calendário) | a fazer |
 
 ## 11. Integração final
