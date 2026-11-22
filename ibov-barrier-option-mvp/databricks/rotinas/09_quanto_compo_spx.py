@@ -16,8 +16,8 @@
 # MAGIC - **Compo:** `max(S_T X_T - K X_0, 0)` em BRL, strike em reais.
 # MAGIC - **Convertida:** `X_T * max(S_T - K, 0)`, opção em USD convertida no vencimento (referência).
 # MAGIC
-# MAGIC A vol do SPX é constante no strike do contrato (sem smile no caminho). Com barreira, o smile entre o
-# MAGIC strike e a barreira pesa: a seção 4 mostra também a vol na barreira para dimensionar esse efeito.
+# MAGIC A seção 4 usa vol constante no strike (fórmulas fechadas e MC). A seção 4b refaz as barreiras com vol
+# MAGIC local de Dupire calibrada no smile do dia, que é o preço de referência para produtos com barreira.
 
 # COMMAND ----------
 
@@ -396,9 +396,13 @@ if H:
 # MAGIC %md
 # MAGIC ## 4b. Efeito do smile na barreira
 # MAGIC
-# MAGIC Preço com barreira com vol constante em K, no ponto médio e na barreira (faixa simples) e com vol local
-# MAGIC de Dupire calibrada na superfície do dia (SVI por vencimento). A vol local reprecifica o smile inteiro;
-# MAGIC a coluna "vanilla vol local" deve ficar perto da fechada com vol em K (checagem da calibração).
+# MAGIC Preço com barreira com vol constante em K contra vol local de Dupire calibrada na superfície do dia
+# MAGIC (SVI por vencimento). A vol local reprecifica o smile inteiro e é a referência para barreiras.
+# MAGIC Vol constante na barreira ou no ponto médio não é limite de nada: com vol maior a call vale mais, mesmo
+# MAGIC com mais knock-out, então essa "faixa" aponta para o lado errado e foi retirada.
+# MAGIC
+# MAGIC Checagem da calibração: na Convertida (vanilla USD vezes X_0), "vanilla vol local" tem que ficar perto da
+# MAGIC fechada com vol em K. Na Quanto e na Compo a diferença é efeito do smile com o câmbio, não erro.
 
 # COMMAND ----------
 
@@ -413,6 +417,24 @@ try:
         lv_clip.append(lv.local_vol_row((i + 0.5) * T / steps, k_range=lv_k_range)[1])
     print(f"SVI: {len(lv.fit_report)} vencimentos | RMSE vol médio {lv.fit_report['RMSE vol'].mean():.4f} | "
           f"vol local cortada pelos limites entre barreira e 125% (média no prazo) {np.mean(lv_clip):.1%}")
+
+    # Onde e quando a vol local é cortada: faixas de strike/forward x períodos do prazo.
+    f_edges = [(H / S0 if H else 0.6) - 0.10, (H / S0 if H else 0.6), 0.95, 1.05, 1.25]
+    f_labels = [f"{a:.0%}-{b:.0%}" for a, b in zip(f_edges[:-1], f_edges[1:])]
+    k_edges = np.log(np.array(f_edges))
+    step_times = (np.arange(steps) + 0.5) * T / steps
+    clip_long = lv.clip_breakdown(step_times, k_edges)
+    bounds = [0, 14 / 365, T / 4, T / 2, T + 1e-9]
+    period_labels = ["até 2 semanas", "2 semanas a T/4", "T/4 a T/2", "T/2 a T"]
+    clip_long["período"] = pd.cut(clip_long["t"], bounds, labels=period_labels, right=False)
+    clip_long["faixa K/F"] = pd.Categorical(
+        clip_long["k_de"].map(dict(zip(k_edges[:-1], f_labels))), categories=f_labels)
+    clip_table = clip_long.pivot_table(index="período", columns="faixa K/F", values="cortado", aggfunc="mean",
+                                       observed=False)
+    clip_reason = clip_long[["abaixo do piso", "acima do teto", "denominador"]].mean()
+    print("Fração cortada por período e faixa de K/F (média dos passos):")
+    display(clip_table.style.format("{:.1%}"))
+    print("Motivo (média geral):", ", ".join(f"{k} {v:.1%}" for k, v in clip_reason.items()))
     display(lv.fit_report)
 except Exception as exc:
     lv_error = f"{type(exc).__name__}: {exc}"
@@ -420,8 +442,7 @@ except Exception as exc:
 
 smile_rows = []
 if H:
-    vol_mid = 0.5 * (vol_k + vol_h)
-    flat_vols = {"vol em K": vol_k, "vol média K/H": vol_mid, "vol na barreira": vol_h}
+    flat_vols = {"vol em K": vol_k}
     for product in ("quanto", "compo", "converted"):
         strike = K * X0 if product == "compo" else K
         for option_type in ("call", "put"):
@@ -545,7 +566,11 @@ _block("4b. Smile na barreira (% do nocional; última coluna em BRL)", lambda: (
     print("vol local:", "ok" if lv is not None else lv_error),
     lv is not None and print(f"SVI {len(lv.fit_report)} vencimentos (RMSE <= 3%) | vol local cortada entre barreira e 125%: "
           f"{np.mean(lv_clip):.1%}"),
-    lv is not None and _df(lv.fit_report[["dias", "pontos", "RMSE vol", "vol ATM SVI"]]),
+    lv is not None and print("corte por período x faixa K/F:"),
+    lv is not None and _df(clip_table, "{:.1%}"),
+    lv is not None and print("motivo:", ", ".join(f"{k} {v:.1%}" for k, v in clip_reason.items())),
+    lv is not None and print(f"SVI: RMSE máximo {lv.fit_report['RMSE vol'].max():.4f} | vencimentos (1 a cada 4):"),
+    lv is not None and _df(lv.fit_report[["dias", "pontos", "RMSE vol", "vol ATM SVI"]].iloc[::4]),
     _df(smile, "{:,.4f}")))
 _block("5. Sensibilidade ao rho (call, % do nocional)", lambda: _df(sens, "{:.4%}"))
 print("\nFIM DO RELATÓRIO")

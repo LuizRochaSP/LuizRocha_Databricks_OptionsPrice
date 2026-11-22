@@ -128,12 +128,40 @@ class LocalVolSurface:
         w, *_ = self._slice(t)
         return np.sqrt(np.interp(k, self.k_grid, w) / max(float(t), 1e-6))
 
-    def local_vol_row(self, t: float, k_range=None) -> tuple[np.ndarray, float]:
-        """Vol local na grade de k no tempo t e a fração cortada pelos limites (em `k_range`, se dado)."""
+    def _raw(self, t: float) -> tuple[np.ndarray, np.ndarray]:
+        """Vol local sem limites e denominador de Dupire na grade de k."""
         w, dw, d2w, dwdt = self._slice(t)
         k = self.k_grid
         denom = 1 - k / w * dw + 0.25 * (-0.25 - 1 / w + k * k / (w * w)) * dw * dw + 0.5 * d2w
         raw = np.sqrt(np.clip(dwdt, 0.0, None) / np.maximum(denom, DENOMINATOR_FLOOR))
+        return raw, denom
+
+    def clip_breakdown(self, times, k_edges) -> pd.DataFrame:
+        """Fração da grade cortada por motivo, para cada tempo e faixa de k = ln(K/F).
+
+        Motivos: vol local abaixo do piso, acima do teto, ou denominador de Dupire abaixo do piso
+        (arbitragem de borboleta no ajuste). Um ponto pode ter mais de um motivo.
+        """
+        lo, hi = LOCAL_VOL_BOUNDS
+        rows = []
+        for t in times:
+            raw, denom = self._raw(t)
+            for k_lo, k_hi in zip(k_edges[:-1], k_edges[1:]):
+                m = (self.k_grid >= k_lo) & (self.k_grid < k_hi)
+                if not m.any():
+                    continue
+                rows.append({"t": float(t), "k_de": float(k_lo), "k_ate": float(k_hi),
+                             "abaixo do piso": float(np.mean(raw[m] < lo)),
+                             "acima do teto": float(np.mean(raw[m] > hi)),
+                             "denominador": float(np.mean(denom[m] < DENOMINATOR_FLOOR)),
+                             "cortado": float(np.mean((raw[m] < lo) | (raw[m] > hi)
+                                                      | (denom[m] < DENOMINATOR_FLOOR)))})
+        return pd.DataFrame(rows)
+
+    def local_vol_row(self, t: float, k_range=None) -> tuple[np.ndarray, float]:
+        """Vol local na grade de k no tempo t e a fração cortada pelos limites (em `k_range`, se dado)."""
+        raw, denom = self._raw(t)
+        k = self.k_grid
         lo, hi = LOCAL_VOL_BOUNDS
         bad = (raw < lo) | (raw > hi) | (denom < DENOMINATOR_FLOOR)
         if k_range is not None:

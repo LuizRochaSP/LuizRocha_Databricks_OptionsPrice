@@ -67,6 +67,18 @@ class DupireTests(unittest.TestCase):
         self.assertGreater(loc[0] - loc[1], 1.5 * (imp[0] - imp[1]))
 
 
+class ClipBreakdownTests(unittest.TestCase):
+    def test_flat_surface_has_no_clipping(self):
+        table = LocalVolSurface.flat(0.2).clip_breakdown([0.1, 0.4], np.log([0.8, 1.0, 1.2]))
+        self.assertEqual(len(table), 4)
+        self.assertEqual(table["cortado"].max(), 0.0)
+
+    def test_reports_vol_above_cap(self):
+        table = LocalVolSurface.flat(2.5).clip_breakdown([0.3], np.log([0.9, 1.1]))
+        self.assertEqual(float(table["acima do teto"].iloc[0]), 1.0)
+        self.assertEqual(float(table["cortado"].iloc[0]), 1.0)
+
+
 class LocalVolMonteCarloTests(unittest.TestCase):
     def test_flat_local_vol_matches_closed_forms(self):
         lv = LocalVolSurface.flat(M.vol_asset)
