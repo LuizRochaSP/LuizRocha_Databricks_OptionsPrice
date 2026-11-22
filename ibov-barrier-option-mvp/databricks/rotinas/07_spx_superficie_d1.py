@@ -95,6 +95,21 @@ AXIS = dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=MUTED, showline=True,
             tickfont=dict(color="white"), title_font=dict(color="white"))
 print("plotly:", plotly.__version__)
 
+# Template explícito: o Databricks troca o template padrão do Plotly pelo tema do workspace, por isso
+# cada figura leva o tema do projeto e é exibida como HTML próprio (displayHTML), fora do renderizador dele.
+DARK = go.layout.Template(layout=go.Layout(
+    paper_bgcolor=BG, plot_bgcolor=BG, font=dict(color="white"), colorway=WARM,
+    xaxis=dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=MUTED, tickfont=dict(color="white")),
+    yaxis=dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=MUTED, tickfont=dict(color="white"))))
+
+
+def render(fig, filename):
+    config = {"displaylogo": False, "displayModeBar": True, "scrollZoom": True,
+              "toImageButtonOptions": {"format": "png", "scale": 2, "filename": filename}}
+    fig.update_layout(template=DARK, paper_bgcolor=BG, plot_bgcolor=BG)
+    html = fig.to_html(full_html=False, include_plotlyjs="cdn", config=config)
+    displayHTML(f'<div style="background:{BG};padding:4px">{html}</div>')
+
 
 def style_fig(fig, title, height=460):
     fig.update_layout(
@@ -113,10 +128,7 @@ def style_fig(fig, title, height=460):
 
 def show(fig, name):
     """Exibe com a barra de ferramentas (zoom, pan, reset, salvar PNG)."""
-    fig.show(config={
-        "displaylogo": False, "displayModeBar": True, "scrollZoom": True,
-        "toImageButtonOptions": {"format": "png", "scale": 2, "filename": f"spx_{name}_{market_date}"},
-    })
+    render(fig, f"spx_{name}_{market_date}")
 
 
 def sparse_sizes(n, size=7, points=12):

@@ -116,6 +116,21 @@ DASHES = ["solid", "dash", "dashdot", "dot", "longdashdot"]
 AXIS = dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=MUTED, showline=True,
             tickfont=dict(color="white"), title_font=dict(color="white"))
 
+# Template explícito: o Databricks troca o template padrão do Plotly pelo tema do workspace, por isso
+# cada figura leva o tema do projeto e é exibida como HTML próprio (displayHTML), fora do renderizador dele.
+DARK = go.layout.Template(layout=go.Layout(
+    paper_bgcolor=BG, plot_bgcolor=BG, font=dict(color="white"), colorway=WARM,
+    xaxis=dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=MUTED, tickfont=dict(color="white")),
+    yaxis=dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=MUTED, tickfont=dict(color="white"))))
+
+
+def render(fig, filename):
+    config = {"displaylogo": False, "displayModeBar": True, "scrollZoom": True,
+              "toImageButtonOptions": {"format": "png", "scale": 2, "filename": filename}}
+    fig.update_layout(template=DARK, paper_bgcolor=BG, plot_bgcolor=BG)
+    html = fig.to_html(full_html=False, include_plotlyjs="cdn", config=config)
+    displayHTML(f'<div style="background:{BG};padding:4px">{html}</div>')
+
 
 def style_fig(fig, title, height=440):
     fig.update_layout(
@@ -131,9 +146,8 @@ def style_fig(fig, title, height=440):
 
 
 def show(fig, name):
-    fig.show(config={"displaylogo": False, "displayModeBar": True, "scrollZoom": True,
-                     "toImageButtonOptions": {"format": "png", "scale": 2,
-                                              "filename": f"quanto_{name}_{market_date}"}})
+    """Exibe com a barra de ferramentas (zoom, pan, reset, salvar PNG)."""
+    render(fig, f"quanto_{name}_{market_date}")
 
 # COMMAND ----------
 

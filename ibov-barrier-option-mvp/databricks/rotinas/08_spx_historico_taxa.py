@@ -298,6 +298,21 @@ print(f"Dias processados: {len(daily)} de {len(sessions)} | linhas no painel: {l
 
 BG, GRID, MUTED = "#0B0B0B", "#2A2A2A", "#8C8C8C"
 WARM = ["#FFF3B0", "#FFC233", "#FF8A1F", "#F0432F", "#D6246E"]
+
+# Template explícito: o Databricks troca o template padrão do Plotly pelo tema do workspace, por isso
+# cada figura leva o tema do projeto e é exibida como HTML próprio (displayHTML), fora do renderizador dele.
+DARK = go.layout.Template(layout=go.Layout(
+    paper_bgcolor=BG, plot_bgcolor=BG, font=dict(color="white"), colorway=WARM,
+    xaxis=dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=MUTED, tickfont=dict(color="white")),
+    yaxis=dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=MUTED, tickfont=dict(color="white"))))
+
+
+def render(fig, filename):
+    config = {"displaylogo": False, "displayModeBar": True, "scrollZoom": True,
+              "toImageButtonOptions": {"format": "png", "scale": 2, "filename": filename}}
+    fig.update_layout(template=DARK, paper_bgcolor=BG, plot_bgcolor=BG)
+    html = fig.to_html(full_html=False, include_plotlyjs="cdn", config=config)
+    displayHTML(f'<div style="background:{BG};padding:4px">{html}</div>')
 AXIS = dict(gridcolor=GRID, zerolinecolor=MUTED, linecolor=MUTED, showline=True,
             tickfont=dict(color="white"), title_font=dict(color="white"))
 SP = {k: f"{k} - SOFR (bps)" for k in RATES}
@@ -327,8 +342,7 @@ if len(long_):
                       margin=dict(t=70, l=60, r=20, b=50))
     fig.update_xaxes(**AXIS)
     fig.update_yaxes(title_text="bps", range=[-150, 350], **AXIS)
-    fig.show(config={"displaylogo": False, "scrollZoom": True,
-                     "toImageButtonOptions": {"format": "png", "scale": 2, "filename": "spx_r_antigo_x_novo"}})
+    render(fig, "spx_r_antigo_x_novo")
 
 # COMMAND ----------
 
