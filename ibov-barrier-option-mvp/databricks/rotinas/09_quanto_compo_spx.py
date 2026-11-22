@@ -21,7 +21,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install --upgrade "grpcio>=1.80.0" thetadata python-dotenv "exchange-calendars==4.13.2" "lxml>=6.0" pyettj requests
+# MAGIC %pip install --upgrade "grpcio>=1.80.0" thetadata python-dotenv "exchange-calendars==4.13.2" "lxml>=6.0" pyettj requests plotly scipy
 
 # COMMAND ----------
 
