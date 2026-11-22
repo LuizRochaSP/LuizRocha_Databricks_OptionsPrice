@@ -158,7 +158,7 @@ coverage_msg = None
 try:
     _hist = pd.read_parquet("/".join(notebook_path.split("/")[:4]) + "/spx_dados/resumo_diario.parquet")
     _hist = _hist.loc[pd.to_datetime(_hist["data"]).dt.date < market_date].sort_values("data")
-    coverage_msg = coverage_warning(len(snap.options), _hist["pontos"])
+    coverage_msg = coverage_warning(len(snap.options), _hist["pontos"], _hist.get("baixa cobertura"))
     print(coverage_msg or f"Cobertura normal (referência: {min(len(_hist), 20)} pregões do notebook 08).")
 except Exception as exc:
     print("Sem histórico para checar cobertura (rode o notebook 08):", type(exc).__name__)

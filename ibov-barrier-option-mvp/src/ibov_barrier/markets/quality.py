@@ -7,6 +7,7 @@ ficam menos confiáveis, então o dia é marcado, não descartado: quem consome 
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 COVERAGE_WINDOW = 20      # pregões anteriores usados como referência
@@ -19,21 +20,37 @@ def low_coverage_flags(points: pd.Series, *, window: int = COVERAGE_WINDOW,
                        min_history: int = COVERAGE_MIN_HISTORY) -> pd.DataFrame:
     """Para uma série de pontos por dia (em ordem cronológica), devolve referência, razão e alerta.
 
-    A referência é a mediana dos `window` dias ANTERIORES (o próprio dia não entra), então um dia ruim
-    não puxa a própria referência para baixo.
+    A referência é a mediana dos `window` dias ANTERIORES que não foram marcados. Assim uma sequência de
+    dias ruins (ex.: 19/10 a 30/10/2026) não rebaixa a referência dos dias seguintes: com a mediana
+    contaminada, 05/11/2026 (5.385 pontos) passava como 82% em vez de ~62%.
     """
     points = pd.Series(points, dtype=float)
-    ref = points.shift(1).rolling(window, min_periods=min_history).median()
-    ratio = points / ref
-    return pd.DataFrame({"referência": ref, "razão": ratio, "baixa cobertura": ratio < threshold},
+    clean: list[float] = []
+    refs, flags = [], []
+    for value in points:
+        hist = clean[-window:]
+        ref = float(np.median(hist)) if len(hist) >= min_history else np.nan
+        low = bool(np.isfinite(ref) and value < threshold * ref)
+        refs.append(ref)
+        flags.append(low)
+        if not low and np.isfinite(value):
+            clean.append(float(value))
+    ref = pd.Series(refs, index=points.index)
+    return pd.DataFrame({"referência": ref, "razão": points / ref, "baixa cobertura": flags},
                         index=points.index)
 
 
-def coverage_warning(points_today: int, history: pd.Series, *, window: int = COVERAGE_WINDOW,
-                     threshold: float = COVERAGE_THRESHOLD,
+def coverage_warning(points_today: int, history: pd.Series, flagged: pd.Series | None = None, *,
+                     window: int = COVERAGE_WINDOW, threshold: float = COVERAGE_THRESHOLD,
                      min_history: int = COVERAGE_MIN_HISTORY) -> str | None:
-    """Mensagem de alerta para o dia corrente, dado o histórico de pontos dos dias anteriores."""
-    history = pd.Series(history, dtype=float).dropna().tail(window)
+    """Mensagem de alerta para o dia corrente, dado o histórico de pontos dos dias anteriores.
+
+    `flagged` (mesmo índice de `history`) marca dias de baixa cobertura, que saem da referência.
+    """
+    history = pd.Series(history, dtype=float)
+    if flagged is not None:
+        history = history.loc[~pd.Series(flagged, index=history.index).fillna(False).astype(bool)]
+    history = history.dropna().tail(window)
     if len(history) < min_history:
         return None
     ref = float(history.median())

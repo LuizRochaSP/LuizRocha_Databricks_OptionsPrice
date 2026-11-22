@@ -416,6 +416,23 @@ class CoverageTests(unittest.TestCase):
         self.assertFalse(out.loc[7, "baixa cobertura"])
         self.assertTrue(out.loc[8, "baixa cobertura"])
 
+    def test_flagged_days_do_not_lower_reference(self):
+        from ibov_barrier.markets.quality import low_coverage_flags
+        # 6 dias normais, 10 dias ruins seguidos e depois um dia parcial: ele precisa ser marcado.
+        pts = pd.Series([8700] * 6 + [5000] * 10 + [8700, 5400])
+        out = low_coverage_flags(pts)
+        self.assertTrue(out["baixa cobertura"].iloc[6:16].all())
+        self.assertFalse(out["baixa cobertura"].iloc[16])
+        self.assertTrue(out["baixa cobertura"].iloc[17])
+        self.assertAlmostEqual(out["referência"].iloc[17], 8700)
+
+    def test_warning_ignores_flagged_history(self):
+        from ibov_barrier.markets.quality import coverage_warning
+        hist = pd.Series([8700] * 5 + [5000] * 10)
+        flagged = pd.Series([False] * 5 + [True] * 10)
+        self.assertIsNone(coverage_warning(5400, hist))  # sem as marcas, a referência fica contaminada
+        self.assertIn("Baixa cobertura", coverage_warning(5400, hist, flagged))
+
     def test_warning_message(self):
         from ibov_barrier.markets.quality import coverage_warning
         hist = pd.Series([8700, 8600, 8800, 8700, 8650])

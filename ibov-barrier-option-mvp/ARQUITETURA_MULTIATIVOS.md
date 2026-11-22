@@ -111,13 +111,15 @@ média de `K + (C−P)/DF` nos 10 strikes mais próximos do ATM com call e put c
      vencimentos de 1 a 3 semanas), então esses prazos só usam a curva.
 - **Método anterior `rate_method="atm"`:** regressão com os 10 pares do ATM em cada T ≥ 3 meses; prazos
   curtos usam a taxa do vencimento confiável mais curto. Fica disponível para comparação (notebook 08).
-- **Vencimento incoerente:** resíduo acima de max(1,0; 10 × mediana do dia) descarta o vencimento, com aviso.
+- **Vencimento incoerente:** resíduo acima de max(1,5; 10 × mediana do dia) descarta o vencimento, com aviso.
+  O piso de 1,5 evita cortes marginais (2028-06-16 em 18/11/2026 saía com 1,004 contra limite 1,0); os casos
+  ruins do histórico ficaram entre 5 e 29.
 - **Taxa acima da SOFR:** em 78 pregões (03/08 a 19/11/2026), o r implícito ficou de +75 a +115 bps acima
   da SOFR overnight, crescendo com o prazo, igual nos três métodos (10 pares, regressão ampla, box spread).
   Comprar o box no ask ainda rendeu acima da SOFR em ~60% das observações de 6 a 18 meses. É característica
   do mercado de opções, não do método: o pipeline usa o r implícito, coerente com os preços.
 - **Dia de baixa cobertura** (`markets/quality.py`): superfície com menos de 70% da mediana de pontos dos 20
-  pregões anteriores é marcada (não descartada). Ex.: 16/10 a 30/10/2026, 05/11 e 19/11/2026.
+  pregões anteriores não marcados é marcada (não descartada). Ex.: 19/10 a 30/10/2026 e 05/11/2026.
 - `q(T) = r(T) − ln(F/S)/T` por vencimento. Não é preciso coletar dividendos.
 - **Spot:** se o plano de dados não trouxer o fechamento do índice, ele é inferido do vencimento mais curto:
   `S = F·DF·exp(q·T)`, com q assumido de 1,3% a.a. O erro é da ordem de q·T, centésimos de % para uma ou duas

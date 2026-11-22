@@ -67,6 +67,8 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from ibov_barrier.markets.base import CALL, PUT, CleaningReport
+from ibov_barrier.markets.parity import implied_forwards
+from ibov_barrier.markets.vol import implied_volatility
 from ibov_barrier.markets.cleaning import clean_quotes
 from ibov_barrier.markets.quality import low_coverage_flags
 from ibov_barrier.markets.spx import SPX_SPEC, SPXAdapter, ThetaDataSource
@@ -201,13 +203,35 @@ def near(frame, t, col):
     return float(sub.iloc[(sub["T"] - t).abs().argmin()][col]) if len(sub) else np.nan
 
 
+def old_forwards_frame(quotes, new, adp):
+    """Método antigo só no que o relatório usa: forwards (r, q, resíduo) e vol ATM.
+
+    A vol ATM antiga é recalculada no MESMO contrato escolhido pelo método novo, com forward/r/q antigos.
+    Assim o Δ vol mede só o efeito do forward e da taxa, e não se calcula a vol implícita de toda a
+    superfície uma segunda vez (era cerca de metade do tempo do notebook).
+    """
+    warnings = []
+    pts = implied_forwards(quotes, discount_curve=adp.rate_curve, rate_method="atm", report_warnings=warnings)
+    f = pd.DataFrame([{"vencimento": p.expiration, "T": p.T, "forward antigo": p.forward, "r antigo": p.rate,
+                       "resíduo antigo": p.residual_std} for p in pts])
+    f["q antigo"] = f["r antigo"] - np.log(f["forward antigo"] / new.spot) / f["T"]
+    o = new.options
+    atm = o.assign(dist=o["log_moneyness"].abs()).sort_values("dist").groupby(["expiration", "T"]).head(1)
+    atm = atm.merge(f, left_on=["expiration", "T"], right_on=["vencimento", "T"], how="inner")
+    vols = {e: implied_volatility(t, price, new.spot, k, T, r, q) for e, t, price, k, T, r, q in zip(
+        atm["vencimento"], atm["option_type"], atm["market_price"], atm["strike"], atm["T"],
+        atm["r antigo"], atm["q antigo"])}
+    f["vol ATM antigo"] = f["vencimento"].map(vols)
+    return f, warnings
+
+
 def process_day(d):
     meta = load_meta(d)
-    snaps = {m: adapter_for(d, meta, m).load_snapshot(d) for m in ("atm", "smooth")}
-    old, new = snaps["atm"], snaps["smooth"]
-    f = forwards_frame(new, "novo").merge(forwards_frame(old, "antigo"), on=["vencimento", "T"], how="outer")
     adp = adapter_for(d, meta, "smooth")
+    new = adp.load_snapshot(d)
     quotes = clean_quotes(adp.load_chain(d), adp.cleaning, CleaningReport())
+    old_f, old_warnings = old_forwards_frame(quotes, new, adp)
+    f = forwards_frame(new, "novo").merge(old_f, on=["vencimento", "T"], how="outer")
     boxes = []
     for _, row in f.iterrows():
         fwd = row["forward novo"] if pd.notna(row["forward novo"]) else row["forward antigo"]
@@ -218,16 +242,17 @@ def process_day(d):
     panel["sofr"] = meta.get("sofr")
     panel["Δ vol ATM (pts)"] = (panel["vol ATM novo"] - panel["vol ATM antigo"]) * 100
 
-    def count(snap, word):
-        return sum(word in w for w in snap.report.warnings)
+    def count(warnings, word):
+        return sum(word in w for w in warnings)
 
     new_atm = panel.dropna(subset=["vol ATM novo"])
     day = {"data": d, "spot": new.spot, "sofr": meta.get("sofr"),
-           "pontos": len(new.options), "pontos antigo": len(old.options),
-           "vencimentos": len(new.forwards), "vencimentos antigo": len(old.forwards),
-           "avisos": len(new.report.warnings), "avisos antigo": len(old.report.warnings),
-           "fora do ajuste": count(new, "fora da curva"), "descartados": count(new, "descartado"),
-           "descartados antigo": count(old, "descartado"),
+           "pontos": len(new.options),
+           "vencimentos": len(new.forwards), "vencimentos antigo": len(old_f),
+           "avisos": len(new.report.warnings), "avisos antigo": len(old_warnings),
+           "fora do ajuste": count(new.report.warnings, "fora da curva"),
+           "descartados": count(new.report.warnings, "descartado"),
+           "descartados antigo": count(old_warnings, "descartado"),
            "vol ATM 1m": near(new_atm, 1 / 12, "vol ATM novo"), "vol ATM 12m": near(new_atm, 1.0, "vol ATM novo"),
            "r 1a antigo": near(panel, 1.0, "r antigo"), "r 1a novo": near(panel, 1.0, "r novo"),
            "q 1a antigo": near(panel, 1.0, "q antigo"), "q 1a novo": near(panel, 1.0, "q novo"),
@@ -236,7 +261,10 @@ def process_day(d):
 
 
 panels, days, process_status = [], [], {}
-for d in sessions:
+_t0 = _time.time()
+for k, d in enumerate(sessions, 1):
+    if k % 10 == 0 or k == len(sessions):
+        print(f"processando {k}/{len(sessions)} ({d}) | {(_time.time() - _t0) / 60:.1f} min", flush=True)
     if not (RAW_DIR / d.isoformat() / "meta.json").exists():
         process_status[d] = "sem dados em disco"
         continue
@@ -383,7 +411,6 @@ def _r_before_after():
     line("dias com q 1a fora de [0%, 3%]", (~daily["q 1a antigo"].between(0, .03)).sum(),
          (~daily["q 1a novo"].between(0, .03)).sum(), "{:.0f}")
     line("vencimentos por dia, mediana", daily["vencimentos antigo"].median(), daily["vencimentos"].median(), "{:.0f}")
-    line("pontos por dia, mediana", daily["pontos antigo"].median(), daily["pontos"].median(), "{:,.0f}")
     line("vencimentos descartados por resíduo (total)", daily["descartados antigo"].sum(),
          daily["descartados"].sum(), "{:.0f}")
     print(f"{'taxas fora da curva r(T), ignoradas no ajuste (total)':<62} novo {daily['fora do ajuste'].sum():>10.0f}")
@@ -395,7 +422,7 @@ def _r_before_after():
     _df(worst, {"T": "{:.3f}", "vol ATM antigo": "{:.2%}", "vol ATM novo": "{:.2%}", "Δ vol ATM (pts)": "{:+.2f}",
                 SP["antigo"]: BPS, SP["novo"]: BPS})
     low = daily.loc[daily["baixa cobertura"].fillna(False)]
-    print(f"\ndias com baixa cobertura (< 70% da mediana dos 20 pregões anteriores): {len(low)}")
+    print(f"\ndias com baixa cobertura (< 70% da mediana dos 20 pregões anteriores não marcados): {len(low)}")
     if len(low):
         _df(low[["data", "pontos", "referência", "razão"]], {"referência": "{:,.0f}", "razão": "{:.0%}"})
     warn_days = daily.loc[daily["avisos"] > 0, ["data", "avisos novo (texto)"]]

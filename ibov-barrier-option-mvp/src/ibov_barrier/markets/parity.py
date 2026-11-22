@@ -131,7 +131,7 @@ def implied_forwards(quotes: pd.DataFrame, *, max_pairs: int = 10, min_T: float 
                      rate_method: str = "smooth",
                      rate_band: float = 0.10,
                      max_residual_ratio: float = 10.0,
-                     residual_floor: float = 1.0,
+                     residual_floor: float = 1.5,
                      report_warnings: list | None = None) -> list[ForwardPoint]:
     """Um ForwardPoint por (vencimento, liquidação). `quotes` precisa da coluna T (anos).
 
