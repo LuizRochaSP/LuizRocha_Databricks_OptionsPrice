@@ -128,8 +128,12 @@ def render(fig, filename):
     config = {"displaylogo": False, "displayModeBar": True, "scrollZoom": True,
               "toImageButtonOptions": {"format": "png", "scale": 2, "filename": filename}}
     fig.update_layout(template=DARK, paper_bgcolor=BG, plot_bgcolor=BG)
-    html = fig.to_html(full_html=False, include_plotlyjs="cdn", config=config)
-    displayHTML(f'<div style="background:{BG};padding:4px">{html}</div>')
+    # Página completa com o plotly.js da CDN: fora do renderizador e do tema do Databricks.
+    html = fig.to_html(full_html=True, include_plotlyjs="cdn", config=config,
+                       default_width="100%", default_height=f"{fig.layout.height or 460}px")
+    html = html.replace("<head>", f"<head><style>html,body{{background:{BG};margin:0}}</style>", 1)
+    displayHTML(html)
+    print(f"gráfico {filename}: tema escuro aplicado (fundo {fig.layout.paper_bgcolor})")
 
 
 def style_fig(fig, title, height=440):
