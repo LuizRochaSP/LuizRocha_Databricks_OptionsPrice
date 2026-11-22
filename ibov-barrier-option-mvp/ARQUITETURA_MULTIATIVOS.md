@@ -239,6 +239,11 @@ X tem drift `r_BRL - r_USD`.
 - **Entradas:** sigma_S da superfície SPX (strike e prazo do contrato), r_USD e q do adaptador SPX, r_BRL da
   curva DI, sigma_X e rho históricos (`historical_fx_inputs`). O padrão é retorno semanal: o SPX fecha às
   17:00 ET e a PTAX às 13:00 BRT, e com retornos diários essa assincronia puxa a correlação para zero.
+- **Notebook 09** (`09_quanto_compo_spx.py`): spot, r_USD, q e vol do SPX no vencimento listado mais próximo do
+  prazo (cadeia em disco do notebook 08 ou ThetaData); r_BRL da curva DI1 do SPRD (notebook 00), com
+  alternativa ANBIMA PRE (`pyettj`) e valor manual; PTAX do SGS 1; vol e correlação semanais em 2 anos
+  (`markets/fx_inputs.py`). Mostra preços com e sem barreira, a referência analítica da DOC, a vol na
+  barreira contra a vol no strike, e a sensibilidade a rho e à vol do câmbio, com relatório único no fim.
 - **Ordem de grandeza** (S 7.000, K 7.100, T 0,75, r_USD 4,8%, q 0,9%, sigma_S 18%, X 5,40, r_BRL 13,5%,
   sigma_X 13%, rho -0,40): Quanto 2.585, Convertida 2.607, Compo (K = 7.100 x 5,40) 3.926 BRL por ponto.
   Com rho < 0 o ajuste do Quanto é positivo (+94 bps ao ano no exemplo).
@@ -249,6 +254,7 @@ X tem drift `r_BRL - r_USD`.
 | :--- | ---: | :--- |
 | `test_markets_spx.py` | 19 | normalização ThetaData, prazos AM/PM, núcleo idêntico ao notebook IBOV, paridade (F, DF, spot, r, q), limpeza com problemas injetados, recuperação exata do smile, cotações arredondadas ao tick |
 | `test_quanto.py` | 15 | Quanto, Compo e Convertida: paridade, limites (rho = 0, sigma_X = 0), mapeamento para o motor, MC de dois fatores contra fórmula fechada e contra a DOC analítica (Quanto e Convertida com barreira), vol e correlação históricas |
+| `test_fx_inputs.py` | 10 | PTAX do SGS (parse, blocos de 10 anos, feriados), conversão 252 DU -> contínua ACT/365, ETTJ em formatos variados, busca do SPRD, fechamentos da ThetaData |
 | `test_credentials.py` | 6 | ordem das fontes da chave, limpeza do valor, chave nunca exposta em logs |
 | `test_market_date_multi.py` | 11 | fusos SP×NY (verão e inverno americano), padrão B3 inalterado, feriados reais da NYSE e da B3 (estes rodam só com `exchange_calendars` instalado) |
 
@@ -265,7 +271,7 @@ vertical negativa, butterfly), e cada um precisa sair na etapa certa.
 | 3 | API ThetaData verificada e ligada (`ThetaDataSource`); D-1 real de 17/11/2026 validado | concluída; falta acompanhar vários dias seguidos no Databricks |
 | 4 | Adaptador IBOV sobre o notebook 01, com critério de aceite: mesmos números que o `main` para a mesma data (rodar no Databricks, onde estão os XMLs) | a fazer |
 | 5 | Tabelas Delta por mercado e jobs | a fazer |
-| 6 | Quanto/Compo | motor e testes concluídos; falta o notebook com dados reais (PTAX, curva DI, superfície SPX) |
+| 6 | Quanto/Compo | motor, testes e notebook 09 concluídos; falta rodar com dados reais no Databricks |
 | 7 | Desk com seletor de mercado (moeda, multiplicador, calendário) | a fazer |
 
 ## 11. Integração final
