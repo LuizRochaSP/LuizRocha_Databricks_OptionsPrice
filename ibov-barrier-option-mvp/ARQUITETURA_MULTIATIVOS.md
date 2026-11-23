@@ -283,8 +283,10 @@ vertical negativa, butterfly), e cada um precisa sair na etapa certa.
    O 07 não rodou no teste geral por falta de compute; a última execução bem-sucedida foi em 20/11/2026.
 2. **Merge:** `feature/sp500` -> `main` por fast-forward (o `main` não tinha commits novos). A branch foi
    apagada depois do merge. Nada do que o dashboard lê mudou: notebooks 00 a 06 e `dashboard/` idênticos.
-3. **Próximo:** o 07 e o 09 passam a gravar resultados em `ibov-barrier-results` (como o 01) e o dashboard ganha
-   as abas SPX, Quanto/Compo e Vol local. Deploy só por decisão explícita. Rollback do app: redeploy de `baadf7d`.
+3. **Dashboard (branch `feature/dashboard-multiativos`):** o 07 grava `RESULTS_spx_superficie_*.csv` e o 09 grava
+   `RESULTS_quanto_*.csv` em `ibov-barrier-results`, no formato do 01 (`ibov_barrier/results_bundle.py`). O app ganha
+   as abas S&P 500, Quanto / Compo (BRL) e Vol Local (`dashboard/multiativos.py`; contrato testado em
+   `tests/test_dashboard_multiativos.py`). Deploy só por decisão explícita. Rollback do app: redeploy de `baadf7d`.
 
 ## 12. Como adicionar um novo índice
 

@@ -17,6 +17,8 @@ from databricks.sdk import WorkspaceClient
 
 from types import SimpleNamespace
 
+import multiativos
+
 from ibov_barrier.pricing import price_down_and_out_call, MarketData, BarrierContract
 from ibov_barrier.pricing_barriers import (
     price_down_and_out_put,
@@ -201,6 +203,30 @@ def list_available_results(base_path: str):
 
 
 @st.cache_data(ttl=300)
+def list_results_by_prefix(base_path: str, prefix: str):
+    """Arquivos RESULTS de outros mercados (07: SPX, 09: Quanto), mais recente primeiro."""
+    try:
+        w = get_workspace_client()
+        return sorted((e.path for e in w.workspace.list(base_path)
+                       if e.path.split("/")[-1].startswith(prefix) and e.path.endswith(".csv")), reverse=True)
+    except Exception as e:
+        st.error(f"Erro ao listar arquivos {prefix}*: {e}")
+        return []
+
+
+@st.cache_data(ttl=300)
+def load_multiativos(file_path: str):
+    frame = load_result(file_path)
+    if frame is None:
+        return None
+    try:
+        return multiativos.parse_bundle(frame)
+    except Exception as e:
+        st.error(f"Erro ao ler {file_path.split('/')[-1]}: {e}")
+        return None
+
+
+@st.cache_data(ttl=300)
 def load_result(file_path: str):
     try:
         w = get_workspace_client()
@@ -300,9 +326,10 @@ st.markdown("---")
 
 st.success(f"Resultado carregado: **{selected_filename}**")
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+tab1, tab2, tab3, tab4, tab5, tab6, tab_spx, tab_quanto, tab_lv = st.tabs(
     ["Resumo do Gestor", "Superfície e Volatilidade", "Curvas de Mercado",
-     "Motor de Precificação", "Controle e Ingestão", "Structuring Desk"])
+     "Motor de Precificação", "Controle e Ingestão", "Structuring Desk",
+     "S&P 500", "Quanto / Compo (BRL)", "Vol Local"])
 
 with tab1:
     st.header("Resumo do Pricer")
@@ -1401,6 +1428,15 @@ with tab6:
                                        f"IC 95% do MC: [R\\$ {result.ci_low:,.2f}; R\\$ {result.ci_high:,.2f}].")
                     except Exception:
                         st.error("**Ops!** Não conseguimos calcular essa estrutura. Verifique os parâmetros.")
+
+spx_files = list_results_by_prefix(RESULTS_BASE_PATH, multiativos.SPX_PREFIX)
+quanto_files = list_results_by_prefix(RESULTS_BASE_PATH, multiativos.QUANTO_PREFIX)
+with tab_spx:
+    multiativos.render_spx(st, spx_files, load_multiativos)
+with tab_quanto:
+    multiativos.render_quanto(st, quanto_files, load_multiativos)
+with tab_lv:
+    multiativos.render_local_vol(st, quanto_files, load_multiativos)
 
 st.markdown("---")
 st.caption(

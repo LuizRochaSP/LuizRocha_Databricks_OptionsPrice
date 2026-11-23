@@ -62,7 +62,8 @@ print("Código de:", ibov_barrier.__file__)
 # COMMAND ----------
 
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -402,6 +403,39 @@ summary = pd.Series({
     "cobertura": coverage_msg or "normal / sem histórico",
 }, name="resumo")
 display(summary.to_frame())
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 6b. Resultado para o dashboard
+# MAGIC
+# MAGIC Grava `RESULTS_spx_superficie_<data e hora>.csv` na pasta `ibov-barrier-results` (a mesma do notebook 01),
+# MAGIC no formato que o dashboard lê: metadados, resumo do dia, forwards/r/q por vencimento, pontos da superfície,
+# MAGIC funil de limpeza e cortes de arbitragem.
+
+# COMMAND ----------
+
+from zoneinfo import ZoneInfo
+
+from ibov_barrier.results_bundle import SCHEMA_VERSION, results_filename, write_bundle
+
+run_ts = datetime.now(ZoneInfo("America/Sao_Paulo"))
+results_dir = Path("/".join(notebook_path.split("/")[:4])) / "ibov-barrier-results"
+spx_result_path = write_bundle(results_dir / results_filename("spx_superficie", run_ts), {
+    "metadata": {
+        "schema_version": SCHEMA_VERSION, "kind": "spx_superficie", "execution_timestamp": run_ts,
+        "market_date": market_date, "spot": float(snap.spot), "sofr": sofr, "vencimentos": len(snap.forwards),
+        "pontos": len(opts), "avisos": list(snap.report.warnings), "cobertura": coverage_msg,
+        "faixa q": list(Q_RANGE), "T minimo taxa": MIN_T_RATE, "fonte": "ThetaData (SPXW)",
+    },
+    "summary": summary,
+    "forwards": forwards,
+    "options": opts[["expiration", "T", "strike", "option_type", "market_price", "forward", "log_moneyness",
+                     "implied_vol"]],
+    "funnel": snap.report.to_frame(),
+    "arb": arb,
+})
+print(f"Resultado para o dashboard: {spx_result_path}")
 
 # COMMAND ----------
 

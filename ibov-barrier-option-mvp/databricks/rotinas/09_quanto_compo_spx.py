@@ -61,7 +61,7 @@ print("Código de:", ibov_barrier.__file__)
 # COMMAND ----------
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from dataclasses import replace
 from math import exp, log
 from pathlib import Path
@@ -538,6 +538,69 @@ show(style_fig(fig, "Call em BRL: sensibilidade aos parâmetros do câmbio", hei
 sens = pd.DataFrame(sens_rows).pivot(index="rho", columns="produto", values="call (% nocional)")
 sens = sens.loc[[f"{k} ({v:+.2f})" for k, v in rho_band.items()]]
 display(sens)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 5b. Resultado para o dashboard
+# MAGIC
+# MAGIC Grava `RESULTS_quanto_<data e hora>.csv` na pasta `ibov-barrier-results` (a mesma do notebook 01): insumos,
+# MAGIC câmbio e correlação, preços, efeito do smile (vol local), cortes da vol local e curvas de sensibilidade.
+
+# COMMAND ----------
+
+from zoneinfo import ZoneInfo
+
+from ibov_barrier.results_bundle import SCHEMA_VERSION, results_filename, write_bundle
+
+run_ts = datetime.now(ZoneInfo("America/Sao_Paulo"))
+results_dir = Path(user_home) / "ibov-barrier-results"
+has_lv = lv is not None and "clip_table" in globals()
+
+# Curvas de sensibilidade (fórmula fechada, mesmas grades do gráfico da seção 5).
+sens_curves = pd.concat([
+    pd.DataFrame({"parâmetro": "rho", "x": rhos, "produto": name,
+                  "call (% nocional)": [fn(replace(mkt, correlation=float(x))) / notional * 100 for x in rhos]})
+    for name, fn in series] + [
+    pd.DataFrame({"parâmetro": "vol_fx", "x": vols, "produto": name,
+                  "call (% nocional)": [fn(replace(mkt, vol_fx=float(v))) / notional * 100 for v in vols]})
+    for name, fn in series], ignore_index=True)
+
+objects = {
+    "metadata": {
+        "schema_version": SCHEMA_VERSION, "kind": "quanto", "execution_timestamp": run_ts,
+        "market_date": market_date, "expiry": fwd.expiration, "T": T, "dias": round(T * 365),
+        "S0": S0, "X0": X0, "notional": notional, "K": K, "H": H, "strike_pct": STRIKE_PCT,
+        "barrier_pct": BARRIER_PCT, "forward": fwd.forward, "r_usd": r_usd, "q": q, "vol_k": vol_k,
+        "vol_h": vol_h, "r_brl": r_brl, "vol_fx": vol_fx, "rho": rho, "janela_rho": policy,
+        "quanto_adj_bps": quanto_adj_bps, "compo_vol": mkt.compo_volatility, "fx_forward": mkt.fx_forward(T),
+        "paths": PATHS, "steps": steps, "seed": 42, "chain_source": chain_source, "ptax_source": ptax_source,
+        "close_source": close_source, "lv_error": lv_error,
+        "lv_clipped_share": float(np.mean(lv_clip)) if has_lv else None,
+        "widgets": W,
+    },
+    "spx_inputs": spx_inputs,
+    "brl": brl,
+    "fx_estimates": est_table.rename_axis("janela"),
+    "rho_band": rho_band,
+    "rolling_corr": roll.rename("correlação 26 semanas").rename_axis("data").to_frame(),
+    "prices": prices[[c for c in prices.columns if "% nocional" not in c]],
+    "sens_table": sens,
+    "sens_curves": sens_curves,
+}
+if H and "smile" in globals():
+    objects["smile_barrier"] = smile.reset_index()
+if has_lv:
+    k_plot = np.linspace(log(0.70), log(1.15), 60)
+    objects["lv_smile"] = pd.DataFrame({"K/F": np.exp(k_plot), "implícita": lv.implied_vol(k_plot, T),
+                                        "local T/4": lv.local_vol(k_plot, 0.25 * T),
+                                        "local T/2": lv.local_vol(k_plot, 0.5 * T),
+                                        "local T": lv.local_vol(k_plot, T)})
+    objects["lv_clip_table"] = clip_table.rename_axis(index="período", columns=None).reset_index()
+    objects["lv_clip_reason"] = clip_reason
+    objects["lv_fit"] = lv.fit_report
+quanto_result_path = write_bundle(results_dir / results_filename("quanto", run_ts), objects)
+print(f"Resultado para o dashboard: {quanto_result_path}")
 
 # COMMAND ----------
 

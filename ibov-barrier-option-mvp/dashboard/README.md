@@ -7,7 +7,10 @@ Dashboard Streamlit para visualizar os resultados do projeto de precificação d
 - **Framework:** Streamlit
 - **Hospedagem:** Databricks Apps (container dedicado)
 - **Acesso a dados:** Databricks SDK (`WorkspaceClient.workspace.download`)
-- **Fonte:** `/ibov-barrier-results/RESULTS_superficieVol_*.csv`
+- **Fontes (pasta `ibov-barrier-results`):**
+  - `RESULTS_superficieVol_*.csv` (notebook 01, IBOV)
+  - `RESULTS_spx_superficie_*.csv` (notebook 07, S&P 500)
+  - `RESULTS_quanto_*.csv` (notebook 09, Quanto/Compo e vol local)
 - **URL:** HTTPS permanente fornecida pelo Databricks
 
 ## Estrutura
@@ -50,6 +53,11 @@ Databricks Apps vai ler o `app.yaml`, instalar as deps do `requirements.txt`, ro
 4. **Motor de Precificação** — diagnóstico e visualização do Monte Carlo (caminhos, convergência, payoff)
 5. **Controle e Ingestão** — checks de validação e qualidade dos dados
 6. **Structuring Desk** — simulador interativo com 30 estratégias, diagrama de payoff e precificação on-demand
+7. **S&P 500** — superfície D-1 do SPX: smiles nos prazos de referência, vol ATM por prazo, r e q implícitos da paridade, cortes de arbitragem (notebook 07)
+8. **Quanto / Compo (BRL)** — insumos (PTAX, r BRL, vol do câmbio, correlação), preços em BRL e em % do nocional, correlação móvel e sensibilidade a rho e à vol do câmbio (notebook 09)
+9. **Vol Local** — preço com barreira com vol constante x vol local de Dupire, smile implícito x local, onde a vol local é cortada e ajuste SVI (notebook 09)
+
+As abas 7 a 9 ficam em `multiativos.py`. Sem arquivos do 07 ou do 09, elas mostram qual notebook rodar e o resto do app funciona normalmente.
 
 ## Configuração
 
