@@ -318,6 +318,9 @@ DARK_CSS = (f"html,body{{background:{BG}!important;margin:0}}"
             f".js-plotly-plot .plotly .modebar-btn path{{fill:{MUTED}!important}}")
 
 
+from html import escape
+
+
 def render(fig, filename):
     config = {"displaylogo": False, "displayModeBar": True, "scrollZoom": True,
               "toImageButtonOptions": {"format": "png", "scale": 2, "filename": filename}}
@@ -326,7 +329,11 @@ def render(fig, filename):
     html = fig.to_html(full_html=True, include_plotlyjs="cdn", config=config,
                        default_width="100%", default_height=f"{fig.layout.height or 460}px")
     html = html.replace("<head>", f"<head><style>{DARK_CSS}</style>", 1)
-    displayHTML(html)
+    # O Databricks reconhece o Plotly no HTML e redesenha com o tema dele; dentro de um iframe srcdoc
+    # (HTML escapado) ele não reconhece, e o gráfico fica exatamente como foi montado aqui.
+    height = int(fig.layout.height or 460) + 20
+    displayHTML(f'<iframe srcdoc="{escape(html, quote=True)}" style="width:100%;height:{height}px;border:0;'
+                f'background:{BG}"></iframe>')
     print(f"gráfico {filename}: tema escuro aplicado (fundo {fig.layout.paper_bgcolor})")
 AXIS = dict(gridcolor=GRID, zerolinecolor=MUTED, linecolor=MUTED, showline=True,
             tickfont=dict(color="white"), title_font=dict(color="white"))
