@@ -306,79 +306,20 @@ DARK = go.layout.Template(layout=go.Layout(
     xaxis=dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=MUTED, tickfont=dict(color="white")),
     yaxis=dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=MUTED, tickfont=dict(color="white"))))
 
-# O Databricks (serverless) reescreve as cores do layout do Plotly com o tema claro dele; estas regras com
-# !important vencem os estilos inline que o Plotly grava no SVG, então o tema escuro prevalece de qualquer forma.
-DARK_CSS = (f"html,body{{background:{BG}!important;margin:0}}"
-            f".js-plotly-plot .plotly .main-svg{{background:{BG}!important}}"
-            f".js-plotly-plot .plotly .bg{{fill:{BG}!important}}"
-            f".js-plotly-plot .plotly .legend .bg{{fill:#141414!important;stroke:#3A3A3A!important}}"
-            f".js-plotly-plot .plotly text{{fill:#FFFFFF!important}}"
-            f".js-plotly-plot .plotly .gridlayer path,.js-plotly-plot .plotly .zerolinelayer path{{stroke:{GRID}!important}}"
-            f".js-plotly-plot .plotly .modebar{{background:transparent!important}}"
-            f".js-plotly-plot .plotly .modebar-btn path{{fill:{MUTED}!important}}")
 
-
-from html import escape
 
 
 def render(fig, filename):
+    """Gráfico interativo no tema escuro, sem a inversão de cores do Databricks.
+
+    Com o workspace em modo escuro, o Databricks inverte as cores de toda saída displayHTML (o preto #0B0B0B
+    virava cinza claro #F4F4F4). A classe `nodarkmode` é o escape oficial: o HTML fica com as cores originais.
+    """
     config = {"displaylogo": False, "displayModeBar": True, "scrollZoom": True,
               "toImageButtonOptions": {"format": "png", "scale": 2, "filename": filename}}
     fig.update_layout(template=DARK, paper_bgcolor=BG, plot_bgcolor=BG)
-    # Página completa com o plotly.js da CDN: fora do renderizador e do tema do Databricks.
-    html = fig.to_html(full_html=True, include_plotlyjs="cdn", config=config,
-                       default_width="100%", default_height=f"{fig.layout.height or 460}px")
-    html = html.replace("<head>", f"<head><style>{DARK_CSS}</style>", 1)
-    # O Databricks reconhece o Plotly no HTML e redesenha com o tema dele; dentro de um iframe srcdoc
-    # (HTML escapado) ele não reconhece, e o gráfico fica exatamente como foi montado aqui.
-    height = int(fig.layout.height or 460) + 20
-    displayHTML(f'<iframe srcdoc="{escape(html, quote=True)}" style="width:100%;height:{height}px;border:0;'
-                f'background:{BG}"></iframe>')
-    print(f"gráfico {filename}: tema escuro aplicado (fundo {fig.layout.paper_bgcolor})")
-AXIS = dict(gridcolor=GRID, zerolinecolor=MUTED, linecolor=MUTED, showline=True,
-            tickfont=dict(color="white"), title_font=dict(color="white"))
-SP = {k: f"{k} - SOFR (bps)" for k in RATES}
-
-long_ = panel.loc[panel["T"] >= MIN_T_RATE] if len(panel) else panel
-if len(long_):
-    med = long_.groupby("data")[list(SP.values())].median()
-    disp = long_.groupby("data")[[SP["antigo"], SP["novo"]]].std()
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=med.index, y=med[SP["box toma"]], mode="lines", line=dict(width=0),
-                             showlegend=False, hoverinfo="skip"))
-    fig.add_trace(go.Scatter(x=med.index, y=med[SP["box empresta"]], mode="lines", fill="tonexty",
-                             fillcolor="rgba(255,138,31,0.15)", line=dict(width=0), name="box: empresta-toma"))
-    for i, (k, sym, dash) in enumerate([("antigo", "circle", "dot"), ("novo", "square", "solid")]):
-        fig.add_trace(go.Scatter(
-            x=med.index, y=med[SP[k]], mode="lines+markers", name=f"{k}: mediana",
-            line=dict(color=WARM[1 + 2 * i], dash=dash, width=2), marker=dict(symbol=sym, size=6, color=WARM[1 + 2 * i]),
-            customdata=disp[SP[k]], hovertemplate="%{x}<br>%{y:+.0f} bps<br>desvio entre vencimentos %{customdata:.0f} bps"))
-    low = daily.loc[daily["baixa cobertura"].fillna(False), "data"]
-    for x in low:
-        fig.add_vline(x=x, line_color=WARM[3], line_width=1, opacity=0.35)
-    fig.add_hline(y=0, line_color="white", line_width=1)
-    fig.update_layout(paper_bgcolor=BG, plot_bgcolor=BG, font=dict(color="white"), height=480,
-                      title=dict(text="<b>SPX: r − SOFR (bps), antigo x novo · linhas vermelhas = baixa cobertura</b>",
-                                 x=0.5),
-                      legend=dict(bgcolor="#141414", bordercolor="#3A3A3A", borderwidth=1),
-                      margin=dict(t=70, l=60, r=20, b=50))
-    fig.update_xaxes(**AXIS)
-    fig.update_yaxes(title_text="bps", range=[-150, 350], **AXIS)
-    render(fig, "spx_r_antigo_x_novo")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 4. Relatório único para enviar (copie a saída inteira)
-
-# COMMAND ----------
-
-def _df(frame, spec=None):
-    spec = {c: f for c, f in (spec or {}).items() if c in frame.columns}
-    fmt = {c: (lambda f: (lambda v: "-" if pd.isna(v) else f.format(v)))(f) for c, f in spec.items()}
-    with pd.option_context("display.max_rows", 1000, "display.max_columns", None, "display.width", 400,
-                           "display.max_colwidth", 400):
-        print(frame.to_string(index=False, formatters=fmt))
+    html = fig.to_html(full_html=False, include_plotlyjs="cdn", config=config)
+    displayHTML(f'<div class="nodarkmode" style="background:{BG};padding:4px">{html}</div>')
 
 
 def _block(title, fn):

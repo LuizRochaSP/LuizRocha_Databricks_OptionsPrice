@@ -123,35 +123,20 @@ DARK = go.layout.Template(layout=go.Layout(
     xaxis=dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=MUTED, tickfont=dict(color="white")),
     yaxis=dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=MUTED, tickfont=dict(color="white"))))
 
-# O Databricks (serverless) reescreve as cores do layout do Plotly com o tema claro dele; estas regras com
-# !important vencem os estilos inline que o Plotly grava no SVG, então o tema escuro prevalece de qualquer forma.
-DARK_CSS = (f"html,body{{background:{BG}!important;margin:0}}"
-            f".js-plotly-plot .plotly .main-svg{{background:{BG}!important}}"
-            f".js-plotly-plot .plotly .bg{{fill:{BG}!important}}"
-            f".js-plotly-plot .plotly .legend .bg{{fill:#141414!important;stroke:#3A3A3A!important}}"
-            f".js-plotly-plot .plotly text{{fill:#FFFFFF!important}}"
-            f".js-plotly-plot .plotly .gridlayer path,.js-plotly-plot .plotly .zerolinelayer path{{stroke:{GRID}!important}}"
-            f".js-plotly-plot .plotly .modebar{{background:transparent!important}}"
-            f".js-plotly-plot .plotly .modebar-btn path{{fill:{MUTED}!important}}")
 
-
-from html import escape
 
 
 def render(fig, filename):
+    """Gráfico interativo no tema escuro, sem a inversão de cores do Databricks.
+
+    Com o workspace em modo escuro, o Databricks inverte as cores de toda saída displayHTML (o preto #0B0B0B
+    virava cinza claro #F4F4F4). A classe `nodarkmode` é o escape oficial: o HTML fica com as cores originais.
+    """
     config = {"displaylogo": False, "displayModeBar": True, "scrollZoom": True,
               "toImageButtonOptions": {"format": "png", "scale": 2, "filename": filename}}
     fig.update_layout(template=DARK, paper_bgcolor=BG, plot_bgcolor=BG)
-    # Página completa com o plotly.js da CDN: fora do renderizador e do tema do Databricks.
-    html = fig.to_html(full_html=True, include_plotlyjs="cdn", config=config,
-                       default_width="100%", default_height=f"{fig.layout.height or 460}px")
-    html = html.replace("<head>", f"<head><style>{DARK_CSS}</style>", 1)
-    # O Databricks reconhece o Plotly no HTML e redesenha com o tema dele; dentro de um iframe srcdoc
-    # (HTML escapado) ele não reconhece, e o gráfico fica exatamente como foi montado aqui.
-    height = int(fig.layout.height or 460) + 20
-    displayHTML(f'<iframe srcdoc="{escape(html, quote=True)}" style="width:100%;height:{height}px;border:0;'
-                f'background:{BG}"></iframe>')
-    print(f"gráfico {filename}: tema escuro aplicado (fundo {fig.layout.paper_bgcolor})")
+    html = fig.to_html(full_html=False, include_plotlyjs="cdn", config=config)
+    displayHTML(f'<div class="nodarkmode" style="background:{BG};padding:4px">{html}</div>')
 
 
 def style_fig(fig, title, height=440):
