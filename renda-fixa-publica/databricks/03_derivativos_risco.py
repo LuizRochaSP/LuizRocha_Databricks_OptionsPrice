@@ -222,6 +222,12 @@ print("RELATÓRIO DERIVATIVOS E RISCO", REF)
 print(f"Swaps par: " + ", ".join(f"{p['prazo_anos']}a {p['di_x_pre_100cdi']:.3f}%" for p in par))
 print(f"Swap em andamento: MtM {r.mtm:,.2f} | DV01 {r.dv01:,.2f} | CDI acumulado {fator:.8f}")
 print(f"Carteira: valor {carteira.valor(REF, CURVAS):,.2f} | DV01 pré {dv01_pre:,.2f} | DV01 real {dv01_real:,.2f} | carry 21 DU {carry21:,.2f}")
+print("Key-rate DV01 pré:", ", ".join(f"{v / 252:.1f}a {x:,.2f}" for v, x in zip(vert, kr.values)))
+print("Key-rate DV01 real:", ", ".join(f"{v / 252:.1f}a {x:,.2f}" for v, x in zip(vert, krr.values)))
+print(f"Hedge com {contrato}: {q:,.0f} contratos | DV01 pré depois do hedge {hedged.dv01(REF, CURVAS, 'PRE'):,.2f}")
 print("Cenários:", ", ".join(f"{k}: {v:,.0f}" for k, v in cen.items()))
 if var_res:
     print(f"VaR {NIVEL:.0%}: {var_res['var']:,.2f} | ES {var_res['es']:,.2f}")
+    print("PCA da curva pré, variância explicada:",
+          ", ".join(f"{c} {pca.variancia_explicada[i]:.2%}" for i, c in enumerate(pca.cargas.columns)))
+    print("Maiores choques diários (bps):", ", ".join(f"{d}: {v:.0f}" for d, v in maiores.items()))
