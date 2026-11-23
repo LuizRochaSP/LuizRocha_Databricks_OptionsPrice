@@ -1,6 +1,6 @@
 """Risco de carteiras de renda fixa: posições, DV01, key-rate, cenários, carry, hedge, VaR e PCA.
 
-As curvas viajam num dicionário ``{"PRE": curva_pre, "IPCA": curva_real}``. Cada posição
+As curvas viajam num dicionário ``{"PRE": curva_pre, "IPCA": curva_real, "IGPM": curva_igpm}``. Cada posição
 sabe se reprecificar dada uma data e as curvas (reavaliação completa, sem aproximação
 por duration), então qualquer choque é só uma curva deslocada.
 """
@@ -22,7 +22,7 @@ from .derivativos.swaps import SwapDIIPCA, SwapDIPre
 from .titulos.base import TituloPublico
 
 Curvas = Mapping[str, Curva]
-CURVA_DO_INDEXADOR = {"PRE": "PRE", "IPCA": "IPCA", "SELIC": None}
+CURVA_DO_INDEXADOR = {"PRE": "PRE", "IPCA": "IPCA", "IGPM": "IGPM", "SELIC": None}
 
 
 class Posicao(ABC):

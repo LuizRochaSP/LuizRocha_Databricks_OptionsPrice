@@ -28,8 +28,8 @@ Tesouro IPCA+ com Juros Semestrais;15/05/2035;18/11/2026;7,73;7,85;4301,32;4267,
 class TestTesouroDireto(unittest.TestCase):
     def test_leitura(self):
         td = ler_tesouro_direto(TD_AMOSTRA)
-        self.assertEqual(set(td["titulo"]), {"LTN", "NTN-F", "NTN-B", "NTN-B Principal"})
-        self.assertEqual(len(td), 9)
+        self.assertEqual(set(td["titulo"]), {"LTN", "NTN-F", "NTN-B", "NTN-B Principal", "NTN-C"})
+        self.assertEqual(len(td), 10)  # Renda+ fica de fora
         ltn = td[(td.titulo == "LTN") & (td.vencimento == date(2029, 1, 1)) & (td.data_referencia == date(2026, 11, 19))]
         self.assertAlmostEqual(float(ltn.taxa_indicativa.iloc[0]), 15.10)
         # taxa de compra zerada: usa a de venda

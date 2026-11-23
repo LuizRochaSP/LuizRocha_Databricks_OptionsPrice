@@ -28,8 +28,8 @@ from renda_fixa.calendario import dias_uteis, proximo_dia_util
 from renda_fixa.dados import bcb
 from renda_fixa.dados.anbima import DadoIndisponivel, baixar_mercado_secundario, ultimo_disponivel
 from renda_fixa.derivativos import DI1, SwapDIIPCA, SwapDIPre, taxa_fra
-from renda_fixa.mercado import (VERTICES_PADRAO, historico_curvas, montar_mercado, tabela_curvas, tabela_titulos,
-                                variacoes_diarias_bps)
+from renda_fixa.mercado import (VERTICES_PADRAO, comparar_di1, historico_curvas, montar_mercado, tabela_curvas,
+                                tabela_titulos, variacoes_diarias_bps)
 from renda_fixa.risco import Carteira, PosicaoDI1, PosicaoSwap, PosicaoTitulo, cenarios_padrao, contratos_hedge_di1
 from renda_fixa.titulos import criar_titulo
 
@@ -73,6 +73,16 @@ def historico(ref: date, anos: float) -> dict:
     return historico_curvas(td, VERTICES_PADRAO)
 
 
+@st.cache_data(show_spinner="Baixando os ajustes da B3...", ttl=3600)
+def ajustes_b3(ref: date) -> pd.DataFrame | None:
+    from renda_fixa.dados.b3 import baixar_ajustes_b3
+
+    try:
+        return baixar_ajustes_b3(ref, CACHE / "b3")
+    except DadoIndisponivel:
+        return None
+
+
 @st.cache_data(ttl=3600)
 def cdi(inicio: date, fim: date) -> pd.Series:
     return bcb.serie_sgs(bcb.CDI_DIARIO, inicio - timedelta(days=5), fim, cache_dir=CACHE / "bcb")
@@ -80,7 +90,7 @@ def cdi(inicio: date, fim: date) -> pd.Series:
 
 # ------------------------------------------------------------------ cabeçalho
 st.title("Renda Fixa Pública Brasil")
-st.caption("Títulos públicos federais, curvas de juros, derivativos de juros e risco. Fonte: ANBIMA, Banco Central e Tesouro Direto.")
+st.caption("Títulos públicos federais, curvas de juros, derivativos de juros e risco. Fonte: ANBIMA, B3, Banco Central e Tesouro Direto.")
 
 with st.sidebar:
     st.header("Data de referência")
@@ -97,12 +107,13 @@ REF, PRE, REAL = m.ref, m.curva_pre, m.curva_real
 CURVAS = m.curvas
 tt = tabela_titulos(m)
 
-c = st.columns(5)
+c = st.columns(6)
 c[0].metric("Data", REF.strftime("%d/%m/%Y"))
 c[1].metric("Títulos", len(tt))
 c[2].metric("PU idêntico à ANBIMA", f"{int((tt['erro_pu'] == 0).sum())} de {len(tt)}")
 c[3].metric("VNA LFT", f"{m.vna_lft.vna:,.6f}")
 c[4].metric("VNA NTN-B", f"{m.vna_ntnb.vna:,.6f}")
+c[5].metric("VNA NTN-C", f"{m.vna_ntnc.vna:,.6f}" if m.vna_ntnc else "-")
 
 aba = st.tabs(["Títulos do dia", "Curvas", "Calculadora", "DI1 e swaps", "Risco de carteira"])
 
@@ -144,10 +155,35 @@ with aba[1]:
                       "Taxa a termo de 1 ano (pré)", "anos", "% a.a."), "termo")
     st.dataframe(tabela_curvas(m).round(4), width="stretch", hide_index=True)
 
+    st.subheader("Curva de ajustes de DI1 (B3) x curva pré dos títulos")
+    aj = ajustes_b3(REF)
+    if aj is None:
+        st.info(f"A B3 ainda não publicou o arquivo do pregão de {REF:%d/%m/%Y}.")
+    else:
+        cmp_di1 = comparar_di1(m, aj)
+        dentro = cmp_di1[~cmp_di1["extrapolado"]]
+        k = st.columns(4)
+        k[0].metric("Contratos DI1", len(cmp_di1))
+        k[1].metric("PU de ajuste reproduzido", f"{int((cmp_di1['erro_pu'] == 0).sum())} de {len(cmp_di1)}")
+        k[2].metric("Spread médio", f"{dentro['spread_bps'].mean():+.1f} bps")
+        k[3].metric("Faixa do spread", f"{dentro['spread_bps'].min():+.1f} a {dentro['spread_bps'].max():+.1f} bps")
+        col = st.columns(2)
+        with col[0]:
+            plot(G.figura([G.linha(1, "Títulos (bootstrap)", anos, tc["pre"], "lines"),
+                           G.linha(0, "DI1 (ajuste B3)", cmp_di1["du"] / 252.0, cmp_di1["taxa_di1"], "lines+markers"),
+                           G.linha(3, "Títulos (NSS)", anos, tc["pre_nss"], "lines")],
+                          "DI1 x títulos prefixados", "anos", "% a.a."), "di1_vs_titulos")
+        with col[1]:
+            plot(G.figura([G.barras("DI1 - títulos (bps)", dentro["contrato"], dentro["spread_bps"])],
+                          "Spread DI1 - títulos (+ = DI1 acima)", "", "bps"), "spread_di1")
+        st.caption("Depois do último prefixado a curva dos títulos é extrapolada com taxa constante "
+                   "(coluna extrapolado); esses contratos ficam fora do gráfico de spread.")
+        st.dataframe(cmp_di1.round(4), width="stretch", hide_index=True)
+
 # ------------------------------------------------------------------ calculadora
 with aba[2]:
     col = st.columns([1, 1, 1, 1])
-    tipo = col[0].selectbox("Título", ["LTN", "NTN-F", "NTN-B", "NTN-B Principal", "LFT"])
+    tipo = col[0].selectbox("Título", ["LTN", "NTN-F", "NTN-B", "NTN-B Principal", "NTN-C", "LFT"])
     vencs = sorted(m.df[m.df["titulo"] == tipo]["vencimento"].unique()) if tipo in m.df["titulo"].values else []
     venc = col[1].selectbox("Vencimento", vencs, format_func=lambda d: d.strftime("%d/%m/%Y")) if vencs else \
         col[1].date_input("Vencimento", date(REF.year + 5, 5, 15))

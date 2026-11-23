@@ -73,6 +73,7 @@ FIM = date.fromisoformat(dbutils.widgets.get("data_fim").strip())
 PASTA = Path(dbutils.widgets.get("pasta_dados").strip())
 (PASTA / "anbima").mkdir(parents=True, exist_ok=True)
 (PASTA / "bcb").mkdir(parents=True, exist_ok=True)
+(PASTA / "b3").mkdir(parents=True, exist_ok=True)
 print(f"Período {INICIO} a {FIM}; pasta {PASTA}")
 
 # COMMAND ----------
@@ -102,7 +103,42 @@ display(titulos[titulos["data_referencia"] == titulos["data_referencia"].max()])
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 2. VNA diário implícito (LFT e NTN-B)
+# MAGIC ## 1b. B3: ajustes de DI1 e DAP, dia a dia (com cache)
+# MAGIC
+# MAGIC Arquivo público consolidado do pregão (arquivos.b3.com.br), com histórico de anos. O cache guarda só as
+# MAGIC linhas de DI1 e DAP. Conferência: o PU de ajuste da B3 sai da taxa de ajuste pelo motor, ao centavo.
+
+# COMMAND ----------
+
+from renda_fixa.dados.b3 import baixar_ajustes_b3
+from renda_fixa.derivativos import DAP, DI1
+
+ajustes, faltantes_b3 = [], []
+for df_dia in dias:
+    ref = df_dia["data_referencia"].iloc[0]
+    try:
+        ajustes.append(baixar_ajustes_b3(ref, PASTA / "b3"))
+    except DadoIndisponivel as e:
+        faltantes_b3.append((ref, str(e)))
+if ajustes:
+    b3 = pd.concat(ajustes, ignore_index=True)
+    b3.to_parquet(PASTA / "ajustes_b3.parquet", index=False)
+    b3["pu_motor"] = [
+        (DI1(r.vencimento) if r.ativo == "DI1" else DAP(r.vencimento)).pu(r.taxa_ajuste, r.data_referencia)
+        for r in b3.itertuples()
+    ]
+    b3["pu_confere"] = (b3["pu_motor"] - b3["pu_ajuste"]).abs() < 0.005
+    print(f"B3: {len(ajustes)} pregões, {len(b3)} ajustes; PU do motor = PU de ajuste em "
+          f"{int(b3['pu_confere'].sum())} de {len(b3)}; {len(faltantes_b3)} dias sem arquivo")
+    display(b3[b3["data_referencia"] == b3["data_referencia"].max()])
+else:
+    b3 = pd.DataFrame()
+    print("B3: nenhum arquivo de pregão no período", faltantes_b3[:5])
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 2. VNA diário implícito (LFT, NTN-B e NTN-C)
 
 # COMMAND ----------
 
@@ -110,7 +146,7 @@ linhas = []
 for df in dias:
     ref = df["data_referencia"].iloc[0]
     linha = {"data": ref}
-    for t in ("LFT", "NTN-B"):
+    for t in ("LFT", "NTN-B", "NTN-C"):
         try:
             v = vna_implicito(df, t)
             linha[f"vna_{t}"] = v.vna
@@ -125,7 +161,7 @@ display(vna_diario.tail(10))
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 3. Banco Central: Selic, CDI e IPCA
+# MAGIC ## 3. Banco Central: Selic, CDI, IPCA e IGP-M
 
 # COMMAND ----------
 
@@ -134,6 +170,7 @@ for nome, codigo, ini in [
     ("selic_diaria", bcb.SELIC_DIARIA, INICIO - timedelta(days=10)),
     ("cdi_diario", bcb.CDI_DIARIO, INICIO - timedelta(days=10)),
     ("ipca_mensal", bcb.IPCA_MENSAL, date(2000, 7, 1)),
+    ("igpm_mensal", bcb.IGPM_MENSAL, date(2000, 7, 1)),
 ]:
     s = bcb.serie_sgs(codigo, ini, FIM, cache_dir=PASTA / "bcb")
     series[nome] = s
@@ -182,6 +219,37 @@ if not conf.empty:
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## 5b. Conferência: VNA da NTN-C contra o IGP-M acumulado
+# MAGIC
+# MAGIC O VNA do dia 1º sai do IGP-M acumulado desde jul/2000 (SGS 189, 2 casas: diferença esperada de ~0,05%).
+# MAGIC Entre dois dias 1º, a ANBIMA aplica a projeção de IGP-M pro rata em dias corridos; a projeção implícita
+# MAGIC no VNA do arquivo tem de ser uma variação mensal plausível (ela muda quando saem as prévias do IGP-M).
+
+# COMMAND ----------
+
+from renda_fixa.vna import igpm_projetado_implicito, vna_ntnc_por_igpm
+
+conf_ntnc = []
+if "vna_NTN-C" in vna_diario:
+    for _, r in vna_diario.dropna(subset=["vna_NTN-C"]).iterrows():
+        dia, vna = r["data"], float(r["vna_NTN-C"])
+        try:
+            v1 = vna_ntnc_por_igpm(series["igpm_mensal"], date(dia.year, dia.month, 1))
+        except ValueError as e:  # IGP-M do mês anterior ainda não publicado
+            print(dia, e)
+            continue
+        proj = igpm_projetado_implicito(vna, v1, dia) if dia.day > 1 else float("nan")
+        conf_ntnc.append({"data": dia, "vna_anbima": vna, "vna_dia1_igpm": v1, "igpm_projetado_pct": proj})
+conf_ntnc = pd.DataFrame(conf_ntnc)
+if not conf_ntnc.empty:
+    conf_ntnc["plausivel"] = conf_ntnc["igpm_projetado_pct"].abs().fillna(0) < 3.0
+    print(f"NTN-C: projeção de IGP-M implícita plausível (|x| < 3% a.m.) em {int(conf_ntnc['plausivel'].sum())} "
+          f"de {len(conf_ntnc)} dias")
+    display(conf_ntnc)
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## 6. Relatório
 
 # COMMAND ----------
@@ -196,4 +264,11 @@ print(f"VNA inconsistente (LFT/NTN-B): {int((~vna_diario.get('consistente_LFT', 
       f"{int((~vna_diario.get('consistente_NTN-B', pd.Series(dtype=bool)).fillna(True)).sum())}")
 if not conf.empty:
     print(f"VNA LFT vs Selic: {int(conf['ok'].sum())}/{len(conf)} dentro do truncamento")
+if not conf_ntnc.empty:
+    u = conf_ntnc.iloc[-1]
+    print(f"VNA NTN-C {u['data']}: {u['vna_anbima']:.6f} | projeção de IGP-M implícita {u['igpm_projetado_pct']:.3f}% a.m. "
+          f"| plausível em {int(conf_ntnc['plausivel'].sum())}/{len(conf_ntnc)} dias")
+if not b3.empty:
+    print(f"B3: {b3['data_referencia'].nunique()} pregões | PU de ajuste conferido em {int(b3['pu_confere'].sum())}/{len(b3)}"
+          f" | dias sem arquivo: {len(faltantes_b3)}")
 print(f"Tesouro Direto: {td['data_referencia'].nunique()} dias, de {td['data_referencia'].min()} a {td['data_referencia'].max()}")

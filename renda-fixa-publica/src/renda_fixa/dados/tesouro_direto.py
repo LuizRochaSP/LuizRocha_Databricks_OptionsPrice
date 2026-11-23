@@ -23,6 +23,7 @@ NOMES = {
     "Tesouro Prefixado com Juros Semestrais": "NTN-F",
     "Tesouro IPCA+ com Juros Semestrais": "NTN-B",
     "Tesouro IPCA+": "NTN-B Principal",
+    "Tesouro IGPM+ com Juros Semestrais": "NTN-C",
     "Tesouro Selic": "LFT",
 }
 
@@ -30,7 +31,7 @@ NOMES = {
 def ler_tesouro_direto(texto_ou_bytes) -> pd.DataFrame:
     """Converte o CSV do Tesouro Direto no formato de colunas do arquivo ANBIMA.
 
-    Títulos fora do escopo (IGP-M, Renda+, Educa+) são descartados.
+    Títulos fora do escopo (Renda+, Educa+) são descartados.
     """
     if isinstance(texto_ou_bytes, bytes):
         texto_ou_bytes = texto_ou_bytes.decode("latin-1")

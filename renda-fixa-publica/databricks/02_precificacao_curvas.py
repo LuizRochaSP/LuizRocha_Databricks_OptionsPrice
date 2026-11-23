@@ -60,7 +60,7 @@ else:
 m = montar_mercado(df)
 REF = m.ref
 print(f"Data de referência: {REF}")
-print(f"VNA LFT {m.vna_lft}\nVNA NTN-B {m.vna_ntnb}")
+print(f"VNA LFT {m.vna_lft}\nVNA NTN-B {m.vna_ntnb}\nVNA NTN-C {m.vna_ntnc}")
 
 
 def mostrar(fig, nome):
@@ -142,6 +142,46 @@ mostrar(fig, "residuos_nss")
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## 3b. Curva de ajustes de DI1 da B3 x curva pré dos títulos
+# MAGIC
+# MAGIC Mesma data. Spread = taxa de ajuste do DI1 - taxa zero dos títulos (LTN/NTN-F) no mesmo prazo.
+# MAGIC Depois do último prefixado a curva dos títulos é extrapolada (taxa constante): esses pontos ficam marcados.
+
+# COMMAND ----------
+
+from renda_fixa.dados.anbima import DadoIndisponivel
+from renda_fixa.dados.b3 import baixar_ajustes_b3
+from renda_fixa.mercado import comparar_di1
+
+try:
+    cmp_di1 = comparar_di1(m, baixar_ajustes_b3(REF, PASTA / "b3"))
+except DadoIndisponivel as e:
+    cmp_di1 = None
+    print("Sem ajustes da B3 para", REF, "-", e)
+
+if cmp_di1 is not None:
+    print(f"DI1: {len(cmp_di1)} contratos; PU de ajuste da B3 reproduzido em {int((cmp_di1['erro_pu'] == 0).sum())}")
+    a_di = cmp_di1["du"] / 252.0
+    fig = G.figura(
+        [
+            G.linha(1, "Pré dos títulos (bootstrap)", anos, tc["pre"], "lines"),
+            G.linha(0, "DI1 (ajuste B3)", a_di, cmp_di1["taxa_di1"], "lines+markers"),
+            G.linha(3, "Pré dos títulos (NSS)", anos, tc["pre_nss"], "lines"),
+        ],
+        f"DI1 x títulos prefixados {REF}",
+        "anos (DU/252)",
+        "% a.a.",
+    )
+    mostrar(fig, "di1_vs_titulos")
+    dentro = cmp_di1[~cmp_di1["extrapolado"]]
+    fig = G.figura([G.barras("DI1 - títulos (bps)", dentro["contrato"], dentro["spread_bps"])],
+                   "Spread DI1 - curva pré dos títulos (+ = DI1 acima dos títulos)", "", "bps")
+    mostrar(fig, "spread_di1")
+    display(cmp_di1)
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## 4. Gravação dos resultados
 
 # COMMAND ----------
@@ -150,6 +190,8 @@ saida = PASTA / "resultados"
 saida.mkdir(parents=True, exist_ok=True)
 tt.to_csv(saida / f"RESULTS_rf_titulos_{REF}.csv", index=False)
 tabela_curvas(m).to_csv(saida / f"RESULTS_rf_curvas_{REF}.csv", index=False)
+if cmp_di1 is not None:
+    cmp_di1.to_csv(saida / f"RESULTS_rf_di1_vs_titulos_{REF}.csv", index=False)
 print("Gravado em", saida)
 
 # COMMAND ----------
@@ -164,6 +206,17 @@ print("RELATÓRIO RENDA FIXA", REF)
 print(f"Títulos: {len(tt)} | PU idêntico à ANBIMA: {n_ok} | erro máximo R$ {tt['erro_pu'].abs().max():.6f}")
 print(f"VNA LFT {m.vna_lft.vna:.6f} ({'consistente' if m.vna_lft.consistente else 'INCONSISTENTE'}) | "
       f"VNA NTN-B {m.vna_ntnb.vna:.6f} ({'consistente' if m.vna_ntnb.consistente else 'INCONSISTENTE'})")
+if m.vna_ntnc:
+    print(f"VNA NTN-C {m.vna_ntnc.vna:.6f} (implícito no único vencimento em circulação)")
 print(f"NSS: resíduo máximo {res['residuo_nss_bps'].abs().max():.2f} bps; {m.nss_pre}; {m.nss_real}")
 for _, r in tcv[tcv["du"].isin([252, 504, 1260, 2520])].iterrows():
     print(f"  {r['anos']:4.0f}a: pré {r['pre']:.4f}% | real {r['real']:.4f}% | implícita {r['inflacao_implicita']:.4f}%")
+if cmp_di1 is not None:
+    d_ = cmp_di1[~cmp_di1["extrapolado"]]
+    print(f"DI1 x títulos: {len(cmp_di1)} contratos, PU B3 reproduzido em {int((cmp_di1['erro_pu'] == 0).sum())}; "
+          f"spread médio {d_['spread_bps'].mean():.1f} bps (mín {d_['spread_bps'].min():.1f}, máx {d_['spread_bps'].max():.1f})")
+    for c_ in ("DI1F27", "DI1F28", "DI1F29", "DI1F31", "DI1F33", "DI1F35"):
+        x_ = cmp_di1[cmp_di1["contrato"] == c_]
+        if not x_.empty:
+            x_ = x_.iloc[0]
+            print(f"  {c_}: DI1 {x_['taxa_di1']:.3f}% | títulos {x_['taxa_pre_titulos']:.3f}% | spread {x_['spread_bps']:+.1f} bps")

@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date
 
 from .base import Analiticos, Fluxo, TituloPublico
-from .indexados import LFT, NTNB, NTNBPrincipal
+from .indexados import LFT, NTNB, NTNC, NTNBPrincipal
 from .prefixados import LTN, NTNF
 
 _CLASSES = {
@@ -13,12 +13,13 @@ _CLASSES = {
     "NTN-B": NTNB,
     "NTN-B PRINCIPAL": NTNBPrincipal,
     "NTN-B P": NTNBPrincipal,
+    "NTN-C": NTNC,
     "LFT": LFT,
 }
 
 
 def criar_titulo(nome: str, vencimento: date) -> TituloPublico:
-    """Cria o título pelo nome usado pela ANBIMA (LTN, NTN-F, NTN-B, LFT, NTN-B Principal)."""
+    """Cria o título pelo nome usado pela ANBIMA (LTN, NTN-F, NTN-B, NTN-B Principal, NTN-C, LFT)."""
     chave = nome.strip().upper()
     if chave not in _CLASSES:
         raise ValueError(f"Título não suportado: {nome!r}. Suportados: {sorted(set(_CLASSES))}")
@@ -33,6 +34,7 @@ __all__ = [
     "NTNF",
     "NTNB",
     "NTNBPrincipal",
+    "NTNC",
     "LFT",
     "criar_titulo",
 ]

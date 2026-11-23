@@ -1,10 +1,13 @@
 """Monta o "mercado do dia" a partir do arquivo ANBIMA: VNAs, curvas pré e real, NSS e tabelas.
 
+Também compara a curva pré dos títulos com a curva de ajustes de DI1 da B3 (``comparar_di1``).
+
 Uso típico:
     df = anbima.baixar_mercado_secundario(date(2026, 11, 19), cache_dir="rf_dados")
     m = montar_mercado(df)
     tabela_titulos(m)   # validação título a título + analíticos
     tabela_curvas(m)    # pré, real, inflação implícita por prazo
+    comparar_di1(m, b3.baixar_ajustes_b3(m.ref))   # DI1 da B3 x pré dos títulos
 """
 from __future__ import annotations
 
@@ -15,12 +18,14 @@ import numpy as np
 import pandas as pd
 
 from .curvas.bootstrap import bootstrap_titulos, inflacao_implicita
-from .curvas.curva import CurvaZero
+from .calendario import dias_uteis
+from .curvas.curva import CurvaPlana, CurvaZero
 from .curvas.nss import CurvaNSS, ajustar_nss_precos
 from .dados.anbima import VNAImplicito, vna_implicito
+from .derivativos.futuros import DI1, curva_di1
 from .titulos import criar_titulo
 
-SUPORTADOS = ("LTN", "NTN-F", "NTN-B", "LFT")
+SUPORTADOS = ("LTN", "NTN-F", "NTN-B", "NTN-C", "LFT")
 VERTICES_PADRAO = (21, 63, 126, 252, 378, 504, 756, 1008, 1260, 1512, 2016, 2520, 3024, 3780, 5040, 6300, 7560)
 
 
@@ -34,19 +39,33 @@ class MercadoDia:
     curva_real: CurvaZero | None
     nss_pre: CurvaNSS | None
     nss_real: CurvaNSS | None
+    vna_ntnc: VNAImplicito | None = None
 
     def vna(self, titulo: str) -> float | None:
         if titulo == "LFT" and self.vna_lft:
             return self.vna_lft.vna
         if titulo.startswith("NTN-B") and self.vna_ntnb:
             return self.vna_ntnb.vna
+        if titulo == "NTN-C" and self.vna_ntnc:
+            return self.vna_ntnc.vna
         return None
+
+    @property
+    def curva_igpm(self) -> CurvaPlana | None:
+        """Só há uma NTN-C em circulação: a "curva" de IGP-M é plana na taxa dela (usada no risco)."""
+        sub = self.df[(self.df["titulo"] == "NTN-C") & self.df["taxa_indicativa"].notna()]
+        if sub.empty:
+            return None
+        return CurvaPlana(float(sub["taxa_indicativa"].iloc[-1]), nome="IGPM")
 
     @property
     def curvas(self) -> dict:
         out = {"PRE": self.curva_pre}
         if self.curva_real is not None:
             out["IPCA"] = self.curva_real
+        igpm = self.curva_igpm
+        if igpm is not None:
+            out["IGPM"] = igpm
         return out
 
 
@@ -60,6 +79,7 @@ def montar_mercado(df: pd.DataFrame, ajustar_nss: bool = True) -> MercadoDia:
     ref = df["data_referencia"].iloc[0]
     vna_lft = vna_implicito(df, "LFT") if (df["titulo"] == "LFT").any() else None
     vna_ntnb = vna_implicito(df, "NTN-B") if (df["titulo"] == "NTN-B").any() else None
+    vna_ntnc = vna_implicito(df, "NTN-C") if (df["titulo"] == "NTN-C").any() else None
 
     tit_pre, pu_pre = _itens(df, ("LTN", "NTN-F"))
     curva_pre = bootstrap_titulos(tit_pre, pu_pre, ref, nome="PRE")
@@ -72,7 +92,7 @@ def montar_mercado(df: pd.DataFrame, ajustar_nss: bool = True) -> MercadoDia:
         nss_pre = ajustar_nss_precos(tit_pre, pu_pre, ref, nome="PRE NSS")
         if tit_real:
             nss_real = ajustar_nss_precos(tit_real, pu_real, ref, [vna_ntnb.vna] * len(tit_real), nome="IPCA NSS")
-    return MercadoDia(ref, df, vna_lft, vna_ntnb, curva_pre, curva_real, nss_pre, nss_real)
+    return MercadoDia(ref, df, vna_lft, vna_ntnb, curva_pre, curva_real, nss_pre, nss_real, vna_ntnc)
 
 
 def tabela_titulos(m: MercadoDia) -> pd.DataFrame:
@@ -183,3 +203,62 @@ def tabela_curvas(m: MercadoDia, vertices=VERTICES_PADRAO) -> pd.DataFrame:
     # termos de 1 ano
     out["termo_pre_1a"] = [m.curva_pre.taxa_termo(d, d + 252) for d in dus]
     return out
+
+
+def comparar_di1(m: MercadoDia, ajustes: pd.DataFrame) -> pd.DataFrame:
+    """Curva de ajustes de DI1 da B3 contra a curva pré dos títulos, contrato a contrato.
+
+    ``ajustes``: saída de ``dados.b3.baixar_ajustes_b3`` do mesmo dia de ``m``.
+    Colunas: taxa de ajuste do DI1, taxa zero dos títulos (bootstrap e NSS) no mesmo prazo,
+    spread DI1 - títulos (bps), PU de ajuste da B3 x PU do motor e a taxa a termo de cada curva
+    entre o contrato anterior e o atual.
+    """
+    di = ajustes[ajustes["ativo"] == "DI1"].sort_values("vencimento")
+    datas = set(di["data_referencia"])
+    if datas != {m.ref}:
+        raise ValueError(f"Ajustes da B3 de {sorted(datas)} e mercado de {m.ref}: datas diferentes.")
+    linhas, du_ant, di_ant, pre_ant = [], None, None, None
+    for r in di.itertuples():
+        du = dias_uteis(m.ref, r.vencimento)
+        if du <= 0:
+            continue
+        tx = float(r.taxa_ajuste)
+        pre = m.curva_pre.taxa(du)
+        linha = {
+            "contrato": r.contrato,
+            "vencimento": r.vencimento,
+            "du": du,
+            "taxa_di1": tx,
+            "taxa_pre_titulos": pre,
+            "spread_bps": (tx - pre) * 100.0,
+            "pu_ajuste_b3": float(r.pu_ajuste),
+            "pu_motor": DI1(r.vencimento).pu(tx, m.ref),
+            "contratos": r.contratos,
+        }
+        if m.nss_pre is not None:
+            linha["taxa_pre_nss"] = m.nss_pre.taxa(du)
+            linha["spread_nss_bps"] = (tx - linha["taxa_pre_nss"]) * 100.0
+        if du_ant is not None:
+            linha["termo_di1"] = _termo(di_ant, du_ant, tx, du)
+            linha["termo_titulos"] = _termo(pre_ant, du_ant, pre, du)
+        linhas.append(linha)
+        du_ant, di_ant, pre_ant = du, tx, pre
+    out = pd.DataFrame(linhas)
+    out["erro_pu"] = (out["pu_motor"] - out["pu_ajuste_b3"]).round(2)
+    # além do último título prefixado a curva dos títulos é extrapolada (taxa constante)
+    out["extrapolado"] = out["du"] > max(m.curva_pre.dus)
+    return out
+
+
+def _termo(t1: float, du1: int, t2: float, du2: int) -> float:
+    f1 = (1 + t1 / 100.0) ** (du1 / 252.0)
+    f2 = (1 + t2 / 100.0) ** (du2 / 252.0)
+    return ((f2 / f1) ** (252.0 / (du2 - du1)) - 1.0) * 100.0
+
+
+def curva_di1_b3(ajustes: pd.DataFrame, ref: date) -> CurvaZero:
+    """Curva zero flat-forward com as taxas de ajuste de DI1 da B3 do dia."""
+    di = ajustes[(ajustes["ativo"] == "DI1") & (ajustes["data_referencia"] == ref)]
+    if di.empty:
+        raise ValueError(f"Sem ajustes de DI1 em {ref}.")
+    return curva_di1(list(zip(di["vencimento"], di["taxa_ajuste"].astype(float))), ref)

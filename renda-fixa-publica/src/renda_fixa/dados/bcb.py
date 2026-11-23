@@ -2,6 +2,7 @@
 
 Códigos úteis:
 - 433: IPCA, variação mensal (%)
+- 189: IGP-M, variação mensal (%), usado no VNA da NTN-C
 - 11: Selic diária (% a.d.), usada no VNA da LFT
 - 12: CDI diário (% a.d.), usado na ponta DI dos swaps e no ajuste do DI1
 - 1178: Selic anualizada base 252 (% a.a.)
@@ -19,6 +20,7 @@ import pandas as pd
 URL_SGS = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados?formato=json&dataInicial={ini}&dataFinal={fim}"
 
 IPCA_MENSAL = 433
+IGPM_MENSAL = 189
 SELIC_DIARIA = 11
 CDI_DIARIO = 12
 SELIC_ANUAL = 1178
