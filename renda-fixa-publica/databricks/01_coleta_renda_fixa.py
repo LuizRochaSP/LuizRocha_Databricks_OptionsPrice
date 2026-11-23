@@ -214,7 +214,12 @@ if not conf.empty:
     # O Tesouro acumula o fator desde 2000 e trunca só no fim: até R$ 0,000001 é truncamento.
     conf["ok"] = conf["diferenca"].abs() <= 1.0000001e-6
     print(f"VNA LFT: {int(conf['ok'].sum())} de {len(conf)} transições dentro do truncamento (|dif| <= 0,000001)")
-    display(conf[~conf["ok"]])
+    fora = conf[~conf["ok"]]
+    # display() do Databricks quebra com DataFrame vazio (CANNOT_INFER_EMPTY_SCHEMA).
+    if fora.empty:
+        print("Nenhuma transição fora da tolerância.")
+    else:
+        display(fora)
 
 # COMMAND ----------
 
