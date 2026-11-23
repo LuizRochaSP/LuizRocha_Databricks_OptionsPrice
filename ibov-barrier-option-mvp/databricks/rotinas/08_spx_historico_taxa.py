@@ -306,6 +306,17 @@ DARK = go.layout.Template(layout=go.Layout(
     xaxis=dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=MUTED, tickfont=dict(color="white")),
     yaxis=dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=MUTED, tickfont=dict(color="white"))))
 
+# O Databricks (serverless) reescreve as cores do layout do Plotly com o tema claro dele; estas regras com
+# !important vencem os estilos inline que o Plotly grava no SVG, então o tema escuro prevalece de qualquer forma.
+DARK_CSS = (f"html,body{{background:{BG}!important;margin:0}}"
+            f".js-plotly-plot .plotly .main-svg{{background:{BG}!important}}"
+            f".js-plotly-plot .plotly .bg{{fill:{BG}!important}}"
+            f".js-plotly-plot .plotly .legend .bg{{fill:#141414!important;stroke:#3A3A3A!important}}"
+            f".js-plotly-plot .plotly text{{fill:#FFFFFF!important}}"
+            f".js-plotly-plot .plotly .gridlayer path,.js-plotly-plot .plotly .zerolinelayer path{{stroke:{GRID}!important}}"
+            f".js-plotly-plot .plotly .modebar{{background:transparent!important}}"
+            f".js-plotly-plot .plotly .modebar-btn path{{fill:{MUTED}!important}}")
+
 
 def render(fig, filename):
     config = {"displaylogo": False, "displayModeBar": True, "scrollZoom": True,
@@ -314,7 +325,7 @@ def render(fig, filename):
     # Página completa com o plotly.js da CDN: fora do renderizador e do tema do Databricks.
     html = fig.to_html(full_html=True, include_plotlyjs="cdn", config=config,
                        default_width="100%", default_height=f"{fig.layout.height or 460}px")
-    html = html.replace("<head>", f"<head><style>html,body{{background:{BG};margin:0}}</style>", 1)
+    html = html.replace("<head>", f"<head><style>{DARK_CSS}</style>", 1)
     displayHTML(html)
     print(f"gráfico {filename}: tema escuro aplicado (fundo {fig.layout.paper_bgcolor})")
 AXIS = dict(gridcolor=GRID, zerolinecolor=MUTED, linecolor=MUTED, showline=True,
