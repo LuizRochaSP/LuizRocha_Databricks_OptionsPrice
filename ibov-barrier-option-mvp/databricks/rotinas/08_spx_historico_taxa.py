@@ -41,7 +41,7 @@ if not notebook_path.startswith("/Workspace"):
 project_dir = os.path.dirname(os.path.dirname(os.path.dirname(notebook_path)))
 SRC = os.path.join(project_dir, "src")
 if not os.path.isdir(os.path.join(SRC, "ibov_barrier", "markets")):
-    raise RuntimeError(f"{SRC} não tem ibov_barrier/markets: o Git folder precisa estar na branch feature/sp500.")
+    raise RuntimeError(f"{SRC} não tem ibov_barrier/markets: faça Pull do main no Git folder.")
 
 for name in [m for m in sys.modules if m == "ibov_barrier" or m.startswith("ibov_barrier.")]:
     del sys.modules[name]

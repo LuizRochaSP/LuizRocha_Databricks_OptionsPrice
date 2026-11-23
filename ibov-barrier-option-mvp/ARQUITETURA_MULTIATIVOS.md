@@ -1,7 +1,7 @@
 # Arquitetura Multi-Ativos
 
-> Branch: `feature/sp500`. Documento de referência para levar o projeto de "pricer de Ibovespa" a um motor
-> multi-ativos. Enquanto o `main` estiver em Feature Freeze, nada daqui vai para produção.
+> Documento de referência para levar o projeto de "pricer de Ibovespa" a um motor multi-ativos.
+> Desenvolvido na branch `feature/sp500` e incorporado ao `main` em 23/11/2026 (fim do Feature Freeze).
 
 ## 1. Objetivo e princípio
 
@@ -276,16 +276,15 @@ vertical negativa, butterfly), e cada um precisa sair na etapa certa.
 | 6 | Quanto/Compo | motor, testes e notebook 09 rodados com dados reais (20/11/2026); vol local de Dupire, faixa de smile e política de rho adicionadas |
 | 7 | Desk com seletor de mercado (moeda, multiplicador, calendário) | a fazer |
 
-## 11. Integração final
+## 11. Integração final (concluída em 23/11/2026)
 
-1. **Homologação:** segundo Databricks App (`dashboard-renda-fixa-staging`) com o Git folder na
-   `feature/sp500`. O app de produção nunca aponta para a branch.
-2. **Aceite:** suíte completa verde; IBOV idêntico ao `main`; SPX coletando D-1 sem falha por vários dias;
-   Quanto batendo com a fórmula fechada.
-3. **Merge:** Pull Request `feature/sp500` -> `main`, só depois da apresentação (fim do Feature Freeze).
-   Correções feitas no `main` antes disso entram na branch por `git merge main`.
-4. **Deploy:** novo deployment SNAPSHOT via Genie. O SPX pode entrar desligado por configuração até os dados
-   estarem validados. Rollback: redeploy de `baadf7d`.
+1. **Aceite:** suíte completa verde (250 testes); IBOV idêntico ao `main` (notebook 10: 22/22 itens);
+   `market_date` igual ao do `main` em 12.937 comparações; notebooks 00 a 06 e 08 a 10 rodados no Databricks.
+   O 07 não rodou no teste geral por falta de compute; a última execução bem-sucedida foi em 20/11/2026.
+2. **Merge:** `feature/sp500` -> `main` por fast-forward (o `main` não tinha commits novos). A branch foi
+   apagada depois do merge. Nada do que o dashboard lê mudou: notebooks 00 a 06 e `dashboard/` idênticos.
+3. **Próximo:** o 07 e o 09 passam a gravar resultados em `ibov-barrier-results` (como o 01) e o dashboard ganha
+   as abas SPX, Quanto/Compo e Vol local. Deploy só por decisão explícita. Rollback do app: redeploy de `baadf7d`.
 
 ## 12. Como adicionar um novo índice
 

@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # SPX: fotografia D-1 e superfície de volatilidade (Fase 3)
 # MAGIC
-# MAGIC Branch `feature/sp500` apenas. Este notebook **não** deve ficar no Git folder de produção (`main`).
+# MAGIC Notebook do motor multi-ativos (no `main` desde 23/11/2026). Não altera nada que o dashboard de produção lê.
 # MAGIC
 # MAGIC Fluxo (`SPXAdapter.load_snapshot`):
 # MAGIC
@@ -44,7 +44,7 @@ if not notebook_path.startswith("/Workspace"):
 project_dir = os.path.dirname(os.path.dirname(os.path.dirname(notebook_path)))
 SRC = os.path.join(project_dir, "src")
 if not os.path.isdir(os.path.join(SRC, "ibov_barrier", "markets")):
-    raise RuntimeError(f"{SRC} não tem ibov_barrier/markets: o Git folder precisa estar na branch feature/sp500.")
+    raise RuntimeError(f"{SRC} não tem ibov_barrier/markets: faça Pull do main no Git folder.")
 
 # Remove qualquer ibov_barrier carregado de outro Git folder (ex.: o de produção, que está no main).
 for name in [m for m in sys.modules if m == "ibov_barrier" or m.startswith("ibov_barrier.")]:

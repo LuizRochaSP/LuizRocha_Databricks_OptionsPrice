@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # Validação do adaptador IBOV contra o notebook 01 do `main` (Fase 4)
 # MAGIC
-# MAGIC Branch `feature/sp500` apenas. Somente leitura: não grava nada e não toca o Git folder de produção.
+# MAGIC Somente leitura: não grava nada e não toca o Git folder de produção.
 # MAGIC
 # MAGIC Critério de aceite: para a mesma data e os mesmos ZIPs da B3, o `IBOVAdapter` reproduz o resultado que o
 # MAGIC notebook 01 do `main` salvou em `ibov-barrier-results/RESULTS_superficieVol_*.csv`:
@@ -37,7 +37,7 @@ if not notebook_path.startswith("/Workspace"):
 project_dir = os.path.dirname(os.path.dirname(os.path.dirname(notebook_path)))
 SRC = os.path.join(project_dir, "src")
 if not os.path.isfile(os.path.join(SRC, "ibov_barrier", "markets", "ibov.py")):
-    raise RuntimeError(f"{SRC} não tem markets/ibov.py: o Git folder precisa estar na branch feature/sp500.")
+    raise RuntimeError(f"{SRC} não tem markets/ibov.py: faça Pull do main no Git folder.")
 for name in [m for m in sys.modules if m == "ibov_barrier" or m.startswith("ibov_barrier.")]:
     del sys.modules[name]
 while SRC in sys.path:
