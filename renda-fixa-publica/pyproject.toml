@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "renda-fixa-publica"
+version = "0.1.0"
+description = "Motor de renda fixa pública brasileira: títulos, curvas, derivativos de juros e risco"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "pandas>=2.0", "scipy>=1.10", "requests>=2.28"]
+
+[project.optional-dependencies]
+dashboard = ["streamlit>=1.50", "plotly>=5.18", "pyarrow>=12"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
