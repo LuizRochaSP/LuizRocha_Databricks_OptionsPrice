@@ -1,5 +1,7 @@
 """Contrato entre os notebooks 07/09 (gravação) e as abas multiativos do dashboard (leitura e desenho)."""
 import importlib.util
+import io
+import json
 import sys
 import tempfile
 import unittest
@@ -160,6 +162,37 @@ class BundleRoundTripTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             back = read_bundle(write_bundle(Path(tmp) / "x.csv", {"m": {"a": float("nan"), "b": np.float64(1.5)}}))
         self.assertEqual(back["m"], {"a": None, "b": 1.5})
+
+    def test_sorted_frame_with_shuffled_index(self):
+        # tabela "arb" do 07: reset_index + sort_values deixa o índice fora de ordem; antes isso gravava
+        # dois campos "index" e a leitura quebrava com "Index data must be 1-dimensional"
+        arb = pd.DataFrame({"expiration": ["2027-01-15", "2026-12-18"], "antes": [10, 20], "T": [0.15, 0.07]})
+        arb = arb.sort_values("T")
+        dated = pd.DataFrame({"v": [1.0, 2.0]}, index=pd.to_datetime(["2026-11-19", "2026-11-20"]))
+        with tempfile.TemporaryDirectory() as tmp:
+            back = read_bundle(write_bundle(Path(tmp) / "x.csv", {"arb": arb, "dated": dated}))
+        self.assertEqual(list(back["arb"].columns), ["expiration", "antes", "T"])
+        self.assertEqual(back["arb"]["antes"].tolist(), [20, 10])
+        self.assertEqual(list(back["dated"].columns), ["index", "v"])
+
+    def test_reads_files_written_before_the_fix(self):
+        # payload como o do RESULTS_spx_superficie_20261123_201211.csv: "index" duplicado no schema
+        legacy = json.dumps({
+            "schema": {"fields": [{"name": "index", "type": "integer"}, {"name": "index", "type": "integer"},
+                                  {"name": "expiration", "type": "string"}, {"name": "antes", "type": "integer"}],
+                       "primaryKey": ["index"], "pandas_version": "1.4.0"},
+            "data": [{"level_0": 0, "index": 1, "expiration": "2026-12-18", "antes": 20},
+                     {"level_0": 1, "index": 0, "expiration": "2027-01-15", "antes": 10}]})
+        frame = pd.DataFrame([{"object_name": "arb", "object_type": "dataframe", "payload_json": legacy}])
+        with self.assertRaises(ValueError):
+            pd.read_json(io.StringIO(legacy), orient="table")
+        back = read_bundle(frame)
+        self.assertEqual(list(back["arb"].columns), ["expiration", "antes"])
+        self.assertEqual(back["arb"]["antes"].tolist(), [20, 10])
+        if HAS_PLOTLY:  # o leitor do dashboard (cópia própria) segue a mesma regra
+            sys.path.insert(0, str(DASHBOARD))
+            import multiativos
+            pd.testing.assert_frame_equal(multiativos.parse_bundle(frame)["arb"], back["arb"])
 
 
 @unittest.skipUnless(HAS_PLOTLY, "plotly ausente")

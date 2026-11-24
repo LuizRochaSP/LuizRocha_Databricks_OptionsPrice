@@ -34,10 +34,24 @@ def parse_bundle(frame: pd.DataFrame) -> dict:
     out = {}
     for row in frame.itertuples(index=False):
         if row.object_type == "dataframe":
-            out[row.object_name] = pd.read_json(StringIO(row.payload_json), orient="table")
+            out[row.object_name] = read_frame(row.payload_json)
         else:
             out[row.object_name] = json.loads(row.payload_json)
     return out
+
+
+def read_frame(payload: str) -> pd.DataFrame:
+    """DataFrame de um payload orient="table" (mesma regra de ibov_barrier.results_bundle.read_frame).
+
+    Arquivos gravados antes da correção têm dois campos "index" no schema, que o pandas recusa
+    ("Index data must be 1-dimensional"): lê os registros direto e descarta o índice posicional.
+    """
+    try:
+        return pd.read_json(StringIO(payload), orient="table")
+    except ValueError:
+        data = json.loads(payload)
+        cols = [f["name"] for f in data["schema"]["fields"] if f["name"] not in ("index", "level_0")]
+        return pd.DataFrame(data["data"]).reindex(columns=cols)
 
 
 def file_label(path: str, prefix: str) -> str:

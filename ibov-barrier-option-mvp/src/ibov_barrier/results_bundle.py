@@ -51,7 +51,12 @@ def _normalize(value):
 
 def _frame(frame: pd.DataFrame) -> pd.DataFrame:
     out = frame.copy()
-    if not isinstance(out.index, pd.RangeIndex):
+    if out.index.name is None and out.index.nlevels == 1 and pd.api.types.is_integer_dtype(out.index):
+        # índice posicional (inclusive fora de ordem, depois de sort_values): não vira coluna
+        out = out.reset_index(drop=True)
+    else:
+        # índice com significado (nomeado, datas, MultiIndex) vira coluna; o payload é gravado com
+        # index=False, então uma coluna "index" não colide mais com o índice do orient="table"
         out = out.reset_index()
     out.columns = [str(c) for c in out.columns]
     for col in out.columns:
@@ -65,7 +70,7 @@ def bundle_rows(objects: Mapping[str, object]) -> pd.DataFrame:
     for name, obj in objects.items():
         if isinstance(obj, pd.DataFrame):
             rows.append({"object_name": name, "object_type": "dataframe",
-                         "payload_json": _frame(obj).to_json(orient="table", date_format="iso")})
+                         "payload_json": _frame(obj).to_json(orient="table", date_format="iso", index=False)})
         else:
             text = json.dumps(_normalize(obj), ensure_ascii=False, allow_nan=False)
             rows.append({"object_name": name, "object_type": "json", "payload_json": text})
@@ -85,10 +90,25 @@ def read_bundle(source) -> dict:
     out = {}
     for row in frame.itertuples(index=False):
         if row.object_type == "dataframe":
-            out[row.object_name] = pd.read_json(StringIO(row.payload_json), orient="table")
+            out[row.object_name] = read_frame(row.payload_json)
         else:
             out[row.object_name] = json.loads(row.payload_json)
     return out
+
+
+def read_frame(payload: str) -> pd.DataFrame:
+    """DataFrame de um payload orient="table".
+
+    Arquivos gravados antes da correção do _frame podem ter dois campos "index" no schema, que o
+    pandas recusa ("Index data must be 1-dimensional"). Nesse caso lê os registros direto e descarta
+    as colunas de índice posicional.
+    """
+    try:
+        return pd.read_json(StringIO(payload), orient="table")
+    except ValueError:
+        data = json.loads(payload)
+        cols = [f["name"] for f in data["schema"]["fields"] if f["name"] not in ("index", "level_0")]
+        return pd.DataFrame(data["data"]).reindex(columns=cols)
 
 
 def results_filename(kind: str, when: datetime) -> str:
