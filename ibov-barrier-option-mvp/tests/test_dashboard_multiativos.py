@@ -275,6 +275,18 @@ class DashboardTabsTests(unittest.TestCase):
         self.assertTrue(view.loc[view["tipo"] == "put", col].isna().all())
         self.assertAlmostEqual(view.loc[0, col], 2899.0)
 
+    def test_empty_cells_show_dash_not_none(self):
+        # o st.dataframe ignora o na_rep do Styler: vazio tem de chegar como texto "—"
+        view = self.m.prices_view(self._bundle(quanto_objects())["prices"], 40694.6)
+        shown = self.m.sem_vazios(view, {"com barreira analítica (BRL)": "{:,.2f}"}).data
+        col = shown["com barreira analítica (BRL)"]
+        self.assertEqual(col[view["tipo"] == "put"].unique().tolist(), ["—"])
+        self.assertEqual(col.iloc[0], "2,899.00")
+        self.assertFalse(shown.isna().any().any())
+        fwd = self.m.sem_vazios(spx_objects()["forwards"]).data
+        self.assertEqual(fwd["r do vencimento"].iloc[0], "—")
+        self.assertTrue(pd.api.types.is_float_dtype(fwd["forward"]))  # sem vazios: segue numérica
+
     def test_q_axis_ignores_short_tenor_noise(self):
         fwd = spx_objects()["forwards"].copy()
         fwd.loc[0, "T"], fwd.loc[0, "q"] = 0.02, -0.30  # q de -30% no primeiro vencimento (tela 7)

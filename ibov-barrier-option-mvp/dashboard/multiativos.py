@@ -60,6 +60,32 @@ def short_path(text) -> str:
     return re.sub(r"(/Workspace)?/Users/[^/\s)]+/", "~/", str(text))
 
 
+def sem_vazios(df: pd.DataFrame, fmt: dict | None = None):
+    """Tabela para st.dataframe com vazios como "—".
+
+    O st.dataframe ignora o na_rep do Styler e mostra "None" em qualquer valor vazio. As colunas
+    numéricas com vazios viram texto já formatado (fmt da coluna, ou 4 casas); as demais seguem
+    numéricas, com o formato aplicado pelo Styler.
+    """
+    fmt = fmt or {}
+    out, keep = df.copy(), {}
+    for c in out.columns:
+        col = out[c]
+        if col.dtype == object:
+            num = pd.to_numeric(col, errors="coerce")
+            if num.notna().sum() != col.notna().sum():  # texto ou datas: fica como está
+                continue
+            col = out[c] = num
+        if not pd.api.types.is_float_dtype(col):
+            continue
+        f = fmt.get(c, "{:.4f}")
+        if col.isna().any():
+            out[c] = col.map(lambda v, f=f: "—" if pd.isna(v) else f.format(v))
+        elif c in fmt:
+            keep[c] = f
+    return out.style.format(keep)
+
+
 def file_label(path: str, prefix: str) -> str:
     """RESULTS_quanto_20261122_214200.csv -> '22/11/2026 21:42:00'."""
     stamp = path.split("/")[-1].replace(prefix, "").replace(".csv", "")
@@ -329,7 +355,7 @@ def render_spx(st, files, load):
     if "arb" in b:
         _chart(st, fig_spx_arb(b["arb"]))
     with st.expander("Forwards, r e q por vencimento"):
-        st.dataframe(b["forwards"], use_container_width=True, hide_index=True)
+        st.dataframe(sem_vazios(b["forwards"]), use_container_width=True, hide_index=True)
     if "funnel" in b:
         with st.expander("Funil de limpeza"):
             st.dataframe(b["funnel"], use_container_width=True, hide_index=True)
@@ -377,7 +403,7 @@ def render_quanto(st, files, load):
     fmt = {c: "{:,.2f}" for c in view.columns if c.endswith("(BRL)")}
     fmt.update({c: "{:.3%}" for c in view.columns if c.endswith("(% nocional)")})
     fmt.update({"strike": "{:,.2f}", "erro padrão": "{:.4f}", "prob. knock-out": "{:.2%}"})
-    st.dataframe(view.style.format({k: v for k, v in fmt.items() if k in view}, na_rep="—"),
+    st.dataframe(sem_vazios(view, {k: v for k, v in fmt.items() if k in view}),
                  use_container_width=True, hide_index=True)
     st.caption(f"Monte Carlo: {meta.get('paths', 0):,} caminhos, {meta.get('steps', '—')} passos, semente "
                f"{meta.get('seed', '—')}. Preço com barreira com vol constante em K; com smile, veja a aba Vol local.")
@@ -430,7 +456,7 @@ def render_local_vol(st, files, load):
 
     _chart(st, fig_smile_effect(smile))
     with st.expander("Tabela completa (% do nocional; última coluna em BRL)"):
-        st.dataframe(smile_effect(smile), use_container_width=True, hide_index=True)
+        st.dataframe(sem_vazios(smile_effect(smile)), use_container_width=True, hide_index=True)
     if "lv_smile" in b:
         h = meta.get("barrier_pct")
         _chart(st, fig_lv_smile(b["lv_smile"], h * meta["S0"] / meta["forward"] if h else None))
@@ -441,6 +467,6 @@ def render_local_vol(st, files, load):
             st.caption("Motivo do corte (média): " + ", ".join(f"{k} {v:.1%}" for k, v in reason.items()))
     if "lv_fit" in b:
         with st.expander("Ajuste SVI por vencimento"):
-            st.dataframe(b["lv_fit"], use_container_width=True, hide_index=True)
+            st.dataframe(sem_vazios(b["lv_fit"]), use_container_width=True, hide_index=True)
     st.caption("A Convertida (vanilla USD vezes X0) é a checagem da calibração: com vol local ela tem que ficar "
                "perto da fórmula fechada. Na Quanto e na Compo a diferença é efeito do smile com o câmbio.")
