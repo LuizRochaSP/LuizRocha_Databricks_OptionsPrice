@@ -152,7 +152,15 @@ def ettj_rate(frame: pd.DataFrame, business_days: float) -> float:
     taxa ('taxa', 'taxa_pre', 'DI x pré 252', ...), em % ou decimal. Prazo só em dias corridos é rejeitado.
     """
     cols = {c: str(c).strip().lower() for c in frame.columns}
-    du_col = next((c for c, n in cols.items() if "util" in n or "útei" in n or n in {"du", "vertice_du"}), None)
+    # pyettj recente: colunas refdate, curva, descricao, dias_corridos, dias_uteis, taxa, vertice (várias curvas)
+    curva_col = next((c for c, n in cols.items() if n == "curva"), None)
+    if curva_col is not None:
+        nome = frame[curva_col].astype(str).str.upper()
+        pre = nome.str.contains("PRE") & ~nome.str.contains("IPCA|INFL|REAL")
+        if pre.any():
+            frame = frame.loc[pre]
+    du_col = next((c for c, n in cols.items()
+                   if "util" in n or "uteis" in n or "útei" in n or n in {"du", "vertice_du"}), None)
     rate_col = next((c for c, n in cols.items() if "252" in n), None) or \
         next((c for c, n in cols.items() if c != du_col and ("taxa" in n or "pre" in n or "pré" in n)), None)
     if du_col is None or rate_col is None:

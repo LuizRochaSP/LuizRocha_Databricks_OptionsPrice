@@ -119,6 +119,16 @@ class BrlRateTests(unittest.TestCase):
             self.assertAlmostEqual(r, exp(-log_df * 252 / 189) - 1, places=12)
             self.assertAlmostEqual(ettj_rate(frame, 1000), 0.13)
 
+    def test_ettj_formato_novo_do_pyettj(self):
+        # 24/11/2026: o pyettj passou a devolver dias_uteis (sem "util") e várias curvas na mesma tabela;
+        # o 09 caía em "ETTJ sem colunas de DU e taxa reconhecíveis"
+        novo = pd.DataFrame({
+            "refdate": ["2026-11-23"] * 6, "curva": ["PRE"] * 3 + ["IPCA"] * 3,
+            "descricao": ["ETTJ PRE"] * 3 + ["ETTJ IPCA"] * 3, "dias_corridos": [182, 365, 730] * 2,
+            "dias_uteis": [126, 252, 504] * 2, "taxa": [14.0, 13.5, 13.0, 7.9, 7.6, 7.4], "vertice": [126, 252, 504] * 2})
+        self.assertAlmostEqual(ettj_rate(novo, 252), 0.135, places=12)
+        self.assertAlmostEqual(ettj_rate(novo.loc[novo["curva"].eq("PRE")], 252), 0.135, places=12)
+
     def test_ettj_rejects_calendar_days_only(self):
         with self.assertRaises(ValueError):
             ettj_rate(pd.DataFrame({"Dias Corridos": [30, 60], "Taxa": [14.0, 13.9]}), 40)
