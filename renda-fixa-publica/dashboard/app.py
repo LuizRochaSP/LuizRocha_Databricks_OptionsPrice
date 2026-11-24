@@ -52,20 +52,36 @@ def plot(fig, chave: str):
     st.plotly_chart(fig, width="stretch", theme=None, config=G.config_barra(chave), key=chave)
 
 
-def tabela(df: pd.DataFrame, casas: int = 4):
-    """Tabela com colunas numéricas de verdade: null/None aparece como "—" e não como "None"."""
-    out = df.copy()
+def tabela(df: pd.DataFrame, formatos: dict | None = None, casas: int = 4):
+    """Tabela para st.dataframe com vazios como "—".
+
+    O st.dataframe ignora o na_rep do Styler e mostra "None" em qualquer valor vazio. Por isso as
+    colunas numéricas com vazios viram texto já formatado; as demais seguem numéricas (ordenáveis)
+    com o formato aplicado pelo Styler. Colunas só com inteiros saem sem casas decimais.
+    """
+    formatos = formatos or {}
+    out, fmt = df.copy(), {}
     for c in out.columns:
-        if out[c].dtype == object:
-            num = pd.to_numeric(out[c], errors="coerce")
-            if num.notna().sum() == out[c].notna().sum():  # só números e vazios
-                out[c] = num
-    return out.style.format(precision=casas, na_rep="—")
+        col = out[c]
+        if col.dtype == object:
+            num = pd.to_numeric(col, errors="coerce")
+            if num.notna().sum() != col.notna().sum():  # texto ou datas: fica como está
+                continue
+            col = out[c] = num
+        if not pd.api.types.is_float_dtype(col):
+            continue
+        validos = col.dropna()
+        f = formatos.get(c) or ("{:,.0f}" if len(validos) and (validos % 1 == 0).all() else f"{{:.{casas}f}}")
+        if col.isna().any():
+            out[c] = col.map(lambda v, f=f: "—" if pd.isna(v) else f.format(v))
+        else:
+            fmt[c] = f
+    return out.style.format(fmt)
 
 
 def eixo_x(fig, x_max: float):
     """Eixo de prazo a partir de zero (o automático chegava a -20 anos)."""
-    fig.update_xaxes(range=[0, float(x_max) * 1.03])
+    fig.update_xaxes(range=[0, float(x_max) * 1.03], autorange=False)
     return fig
 
 
@@ -143,12 +159,13 @@ with aba[0]:
                "Resíduo NSS: diferença de preço do título pela curva ajustada, em bps de taxa.")
     filtro = st.multiselect("Títulos", sorted(tt["titulo"].unique()), default=sorted(tt["titulo"].unique()))
     st.dataframe(
-        tt[tt["titulo"].isin(filtro)].style.format(
-            {"taxa_anbima": "{:.4f}", "taxa_motor": "{:.4f}", "pu_anbima": "{:,.6f}", "pu_motor": "{:,.6f}",
-             "erro_pu": "{:.6f}", "duration_mac": "{:.4f}", "duration_mod": "{:.4f}", "dv01": "{:.4f}",
-             "convexidade": "{:.2f}", "pu_nss": "{:,.6f}", "residuo_nss_bps": "{:.2f}"}, na_rep="-"),
+        tabela(tt[tt["titulo"].isin(filtro)],
+               {"taxa_anbima": "{:.4f}", "taxa_motor": "{:.4f}", "pu_anbima": "{:,.6f}", "pu_motor": "{:,.6f}",
+                "erro_pu": "{:.6f}", "duration_mac": "{:.4f}", "duration_mod": "{:.4f}", "dv01": "{:.4f}",
+                "convexidade": "{:.2f}", "pu_nss": "{:,.6f}", "residuo_nss_bps": "{:.2f}"}),
         width="stretch", hide_index=True, height=560,
     )
+    st.caption("LFT fica fora do ajuste NSS (é pós-fixada): pu_nss e residuo_nss_bps aparecem como \"—\".")
 
 # ------------------------------------------------------------------ curvas
 with aba[1]:
@@ -198,10 +215,11 @@ with aba[1]:
         k[3].metric("Faixa do spread", f"{dentro['spread_bps'].min():+.1f} a {dentro['spread_bps'].max():+.1f} bps")
         col = st.columns(2)
         with col[0]:
-            plot(G.figura([G.linha(1, "Títulos (bootstrap)", anos, tc["pre"], "lines"),
-                           G.linha(0, "DI1 (ajuste B3)", cmp_di1["du"] / 252.0, cmp_di1["taxa_di1"], "lines+markers"),
-                           G.linha(3, "Títulos (NSS)", anos, tc["pre_nss"], "lines")],
-                          "DI1 x títulos prefixados", "anos", "% a.a."), "di1_vs_titulos")
+            fig = G.figura([G.linha(1, "Títulos (bootstrap)", anos, tc["pre"], "lines"),
+                            G.linha(0, "DI1 (ajuste B3)", cmp_di1["du"] / 252.0, cmp_di1["taxa_di1"], "lines+markers"),
+                            G.linha(3, "Títulos (NSS)", anos, tc["pre_nss"], "lines")],
+                           "DI1 x títulos prefixados", "anos", "% a.a.")
+            plot(eixo_x(fig, max(ate("pre"), cmp_di1["du"].max() / 252.0)), "di1_vs_titulos")
         with col[1]:
             plot(G.figura([G.barras("DI1 - títulos (bps)", dentro["contrato"], dentro["spread_bps"])],
                           "Spread DI1 - títulos (+ = DI1 acima)", "", "bps"), "spread_di1")
