@@ -36,6 +36,7 @@ def estilo(fig, titulo: str, altura: int = 440, eixo_x: str = "", eixo_y: str = 
         height=altura,
         margin=dict(t=80, l=60, r=20, b=50),
         dragmode="zoom",
+        separators=",.",  # vírgula decimal e ponto no milhar (padrão brasileiro)
     )
     fig.update_xaxes(title_text=eixo_x, **EIXO)
     fig.update_yaxes(title_text=eixo_y, **EIXO)

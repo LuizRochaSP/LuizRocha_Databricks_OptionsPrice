@@ -27,6 +27,7 @@ from renda_fixa import graficos as G
 from renda_fixa.calendario import dias_uteis, proximo_dia_util
 from renda_fixa.dados import bcb
 from renda_fixa.dados.anbima import DadoIndisponivel, baixar_mercado_secundario, ultimo_disponivel
+from renda_fixa.exibicao import br, csv_br, tabela, tem_vazios
 from renda_fixa.derivativos import DI1, SwapDIIPCA, SwapDIPre, taxa_fra
 from renda_fixa.mercado import (VERTICES_PADRAO, comparar_di1, curvas_para_grafico, historico_curvas, montar_mercado, tabela_curvas,
                                 tabela_titulos, variacoes_diarias_bps)
@@ -52,31 +53,13 @@ def plot(fig, chave: str):
     st.plotly_chart(fig, width="stretch", theme=None, config=G.config_barra(chave), key=chave)
 
 
-def tabela(df: pd.DataFrame, formatos: dict | None = None, casas: int = 4):
-    """Tabela para st.dataframe com vazios como "—".
-
-    O st.dataframe ignora o na_rep do Styler e mostra "None" em qualquer valor vazio. Por isso as
-    colunas numéricas com vazios viram texto já formatado; as demais seguem numéricas (ordenáveis)
-    com o formato aplicado pelo Styler. Colunas só com inteiros saem sem casas decimais.
-    """
-    formatos = formatos or {}
-    out, fmt = df.copy(), {}
-    for c in out.columns:
-        col = out[c]
-        if col.dtype == object:
-            num = pd.to_numeric(col, errors="coerce")
-            if num.notna().sum() != col.notna().sum():  # texto ou datas: fica como está
-                continue
-            col = out[c] = num
-        if not pd.api.types.is_float_dtype(col):
-            continue
-        validos = col.dropna()
-        f = formatos.get(c) or ("{:,.0f}" if len(validos) and (validos % 1 == 0).all() else f"{{:.{casas}f}}")
-        if col.isna().any():
-            out[c] = col.map(lambda v, f=f: "—" if pd.isna(v) else f.format(v))
-        else:
-            fmt[c] = f
-    return out.style.format(fmt)
+def mostrar(df: pd.DataFrame, chave: str, formatos: dict | None = None, casas: int = 4, **kw):
+    """Tabela no padrão brasileiro. Com vazios ("—") as colunas viram texto na tela, então vai junto um
+    CSV com os números puros, que o Excel em português abre direto."""
+    st.dataframe(tabela(df, formatos, casas), width="stretch", hide_index=True, **kw)
+    if tem_vazios(df):
+        st.download_button("Baixar CSV (números para Excel)", csv_br(df), f"{chave}_{REF:%Y%m%d}.csv",
+                           "text/csv", key=f"csv_{chave}")
 
 
 def eixo_x(fig, x_max: float):
@@ -146,9 +129,9 @@ c[0].metric("Data", REF.strftime("%d/%m/%Y"))
 c[1].metric("Títulos", len(tt))
 c[2].metric("PU idêntico à ANBIMA", f"{int((tt['erro_pu'] == 0).sum())} de {len(tt)}")
 c = st.columns(3)
-c[0].metric("VNA LFT", f"{m.vna_lft.vna:,.6f}")
-c[1].metric("VNA NTN-B", f"{m.vna_ntnb.vna:,.6f}")
-c[2].metric("VNA NTN-C", f"{m.vna_ntnc.vna:,.6f}" if m.vna_ntnc else "-")
+c[0].metric("VNA LFT", br(m.vna_lft.vna, 6))
+c[1].metric("VNA NTN-B", br(m.vna_ntnb.vna, 6))
+c[2].metric("VNA NTN-C", br(m.vna_ntnc.vna, 6) if m.vna_ntnc else "—")
 
 aba = st.tabs(["Títulos do dia", "Curvas", "Calculadora", "DI1 e swaps", "Risco de carteira"])
 
@@ -158,14 +141,12 @@ with aba[0]:
     st.caption("PU do motor (convenções de truncamento do Tesouro e da ANBIMA) contra o PU indicativo da ANBIMA. "
                "Resíduo NSS: diferença de preço do título pela curva ajustada, em bps de taxa.")
     filtro = st.multiselect("Títulos", sorted(tt["titulo"].unique()), default=sorted(tt["titulo"].unique()))
-    st.dataframe(
-        tabela(tt[tt["titulo"].isin(filtro)],
-               {"taxa_anbima": "{:.4f}", "taxa_motor": "{:.4f}", "pu_anbima": "{:,.6f}", "pu_motor": "{:,.6f}",
-                "erro_pu": "{:.6f}", "duration_mac": "{:.4f}", "duration_mod": "{:.4f}", "dv01": "{:.4f}",
-                "convexidade": "{:.2f}", "pu_nss": "{:,.6f}", "residuo_nss_bps": "{:.2f}"}),
-        width="stretch", hide_index=True, height=560,
-    )
-    st.caption("LFT fica fora do ajuste NSS (é pós-fixada): pu_nss e residuo_nss_bps aparecem como \"—\".")
+    st.caption("LFT (pós-fixada) e NTN-C (um único título, IGP-M) ficam fora do ajuste NSS: "
+               "pu_nss e residuo_nss_bps aparecem como \"—\".")
+    mostrar(tt[tt["titulo"].isin(filtro)], "titulos",
+            {"taxa_anbima": "{:.4f}", "taxa_motor": "{:.4f}", "pu_anbima": "{:,.6f}", "pu_motor": "{:,.6f}",
+             "erro_pu": "{:.6f}", "duration_mac": "{:.4f}", "duration_mod": "{:.4f}", "dv01": "{:.4f}",
+             "convexidade": "{:.2f}", "pu_nss": "{:,.6f}", "residuo_nss_bps": "{:.2f}"}, height=560)
 
 # ------------------------------------------------------------------ curvas
 with aba[1]:
@@ -199,7 +180,7 @@ with aba[1]:
                        "Taxa a termo de 1 ano (pré)", "início do período (anos)", "% a.a.")
         fig.data[1].update(opacity=0.45)
         plot(eixo_x(fig, ate("termo_pre_1a")), "termo")
-    st.dataframe(tabela(tabela_curvas(m)), width="stretch", hide_index=True)
+    mostrar(tabela_curvas(m), "curvas")
 
     st.subheader("Curva de ajustes de DI1 (B3) x curva pré dos títulos")
     aj = ajustes_b3(REF)
@@ -211,8 +192,9 @@ with aba[1]:
         k = st.columns(4)
         k[0].metric("Contratos DI1", len(cmp_di1))
         k[1].metric("PU de ajuste reproduzido", f"{int((cmp_di1['erro_pu'] == 0).sum())} de {len(cmp_di1)}")
-        k[2].metric("Spread médio", f"{dentro['spread_bps'].mean():+.1f} bps")
-        k[3].metric("Faixa do spread", f"{dentro['spread_bps'].min():+.1f} a {dentro['spread_bps'].max():+.1f} bps")
+        k[2].metric("Spread médio", f"{br(dentro['spread_bps'].mean(), 1, True)} bps")
+        k[3].metric("Faixa do spread",
+                    f"{br(dentro['spread_bps'].min(), 1, True)} a {br(dentro['spread_bps'].max(), 1, True)} bps")
         col = st.columns(2)
         with col[0]:
             fig = G.figura([G.linha(1, "Títulos (bootstrap)", anos, tc["pre"], "lines"),
@@ -225,7 +207,7 @@ with aba[1]:
                           "Spread DI1 - títulos (+ = DI1 acima)", "", "bps"), "spread_di1")
         st.caption("Depois do último prefixado a curva dos títulos é extrapolada com taxa constante "
                    "(coluna extrapolado); esses contratos ficam fora do gráfico de spread.")
-        st.dataframe(tabela(cmp_di1), width="stretch", hide_index=True)
+        mostrar(cmp_di1, "di1_b3")
 
 # ------------------------------------------------------------------ calculadora
 with aba[2]:
@@ -250,19 +232,19 @@ with aba[2]:
         pu = pu_in
     a = t.analiticos(taxa, REF, vna)
     k = st.columns(6)
-    k[0].metric("PU", f"{pu:,.6f}")
-    k[1].metric("Taxa", f"{taxa:.4f}%")
+    k[0].metric("PU", br(pu, 6))
+    k[1].metric("Taxa", f"{br(taxa, 4)}%")
     k[2].metric("Prazo (DU)", a.du)
-    k[3].metric("Duration mod.", f"{a.duration_modificada:.4f}")
-    k[4].metric("DV01 (R$/título)", f"{a.dv01:.4f}")
-    k[5].metric("Convexidade", f"{a.convexidade:.2f}")
+    k[3].metric("Duration mod.", br(a.duration_modificada, 4))
+    k[4].metric("DV01 (R$/título)", br(a.dv01, 4))
+    k[5].metric("Convexidade", br(a.convexidade, 2))
     fl = pd.DataFrame([{"data": f.data, "du": f.du, "fluxo_pct": f.valor,
                         "vp_pct": f.valor / (1 + taxa / 100) ** (f.du / 252)} for f in t.fluxos(REF)])
     if t.usa_vna:
         fl["fluxo_R$"] = fl["fluxo_pct"] * vna / 100
     else:
         fl["fluxo_R$"] = fl["fluxo_pct"] * 10
-    st.dataframe(fl, width="stretch", hide_index=True)
+    mostrar(fl, "fluxos", {"fluxo_pct": "{:,.4f}", "vp_pct": "{:,.4f}", "fluxo_R$": "{:,.2f}"})
 
 # ------------------------------------------------------------------ DI1 e swaps
 with aba[3]:
@@ -279,7 +261,7 @@ with aba[3]:
     di = pd.DataFrame(linhas)
     di["fra_vs_anterior"] = [np.nan] + [taxa_fra(x.taxa, x.du, y.taxa, y.du) for x, y in
                                         zip(di.iloc[:-1].itertuples(), di.iloc[1:].itertuples())]
-    st.dataframe(tabela(di), width="stretch", hide_index=True)
+    mostrar(di, "di1_teorico", {"pu": "{:,.2f}", "dv01_R$": "{:,.4f}"})
 
     st.subheader("Taxas par")
     par = []
@@ -288,7 +270,7 @@ with aba[3]:
         par.append({"prazo": f"{anos_}a", "vencimento": v, "DI x Pré (100% CDI)": SwapDIPre.taxa_par(PRE, REF, v),
                     "DI x Pré (CDI + 1%)": SwapDIPre.taxa_par(PRE, REF, v, spread_cdi_aa=1.0),
                     "DI x IPCA (cupom)": SwapDIIPCA.cupom_par(PRE, REAL, REF, v)})
-    st.dataframe(tabela(pd.DataFrame(par)), width="stretch", hide_index=True)
+    mostrar(pd.DataFrame(par), "taxas_par")
 
     st.subheader("Marcação a mercado de swap DI x Pré")
     col = st.columns(5)
@@ -306,11 +288,11 @@ with aba[3]:
         sw = SwapDIPre(noc, ini, ven, kpre, ativo=lado, pct_cdi=pct, spread_cdi_aa=spread)
         r = sw.avaliar(REF, PRE, fator)
         k = st.columns(5)
-        k[0].metric("CDI acumulado", f"{fator:.8f}")
-        k[1].metric("VP ativo", f"{r.vp_ativo:,.2f}")
-        k[2].metric("VP passivo", f"{r.vp_passivo:,.2f}")
-        k[3].metric("MtM", f"{r.mtm:,.2f}")
-        k[4].metric("DV01", f"{r.dv01:,.2f}")
+        k[0].metric("CDI acumulado", br(fator, 8))
+        k[1].metric("VP ativo", br(r.vp_ativo))
+        k[2].metric("VP passivo", br(r.vp_passivo))
+        k[3].metric("MtM", br(r.mtm))
+        k[4].metric("DV01", br(r.dv01))
     except Exception as e:  # SGS fora do ar
         st.error(f"Não foi possível avaliar o swap: {e}")
 
@@ -349,14 +331,14 @@ with aba[4]:
         st.stop()
     dv_pre, dv_real = carteira.dv01(REF, CURVAS, "PRE"), carteira.dv01(REF, CURVAS, "IPCA")
     k = st.columns(4)
-    k[0].metric("Valor", f"{carteira.valor(REF, CURVAS):,.2f}")
-    k[1].metric("DV01 pré", f"{dv_pre:,.2f}")
-    k[2].metric("DV01 real", f"{dv_real:,.2f}")
-    k[3].metric("Carry + roll-down 21 DU", f"{carteira.carry_rolldown(REF, CURVAS, 21):,.2f}")
-    st.dataframe(carteira.dv01_por_posicao(REF, CURVAS).round(2), width="stretch", hide_index=True)
+    k[0].metric("Valor", br(carteira.valor(REF, CURVAS)))
+    k[1].metric("DV01 pré", br(dv_pre))
+    k[2].metric("DV01 real", br(dv_real))
+    k[3].metric("Carry + roll-down 21 DU", br(carteira.carry_rolldown(REF, CURVAS, 21)))
+    mostrar(carteira.dv01_por_posicao(REF, CURVAS), "carteira", casas=2)
 
     vert = [21, 126, 252, 504, 756, 1260, 1764, 2520, 3780, 5040]
-    rot = [f"{v / 252:.1f}a" for v in vert]
+    rot = [f"{br(v / 252, 1)}a" for v in vert]
     col = st.columns(2)
     with col[0]:
         plot(G.figura([G.barras("Pré", rot, carteira.key_rate_dv01(REF, CURVAS, "PRE", vert).values)],
@@ -369,20 +351,20 @@ with aba[4]:
 
     contrato = DI1(proximo_dia_util(date(REF.year + 3, 1, 1)))
     q = contratos_hedge_di1(dv_pre, contrato, PRE.taxa(contrato.du(REF)), REF)
-    st.info(f"Hedge do DV01 pré com {contrato}: {abs(q):,.0f} contratos "
+    st.info(f"Hedge do DV01 pré com {contrato}: {br(abs(q), 0)} contratos "
             f"{'comprados em taxa (vendidos em PU)' if q < 0 else 'vendidos em taxa (comprados em PU)'}.")
 
     st.subheader("VaR histórico (curva pré, Tesouro Direto)")
     col = st.columns(3)
     anos_h = col[0].number_input("Anos de histórico", value=2.0, min_value=0.5, max_value=20.0, step=0.5)
-    nivel = col[1].selectbox("Nível", [0.95, 0.975, 0.99], index=2)
+    nivel = col[1].selectbox("Nível", [0.95, 0.975, 0.99], index=2, format_func=lambda x: f"{br(100 * x, 1)}%")
     if col[2].button("Calcular VaR"):
         hc = historico(REF, anos_h)
         choques = variacoes_diarias_bps(hc["PRE"])
         res = carteira.var_historico(REF, CURVAS, choques, "PRE", nivel)
         k = st.columns(3)
-        k[0].metric(f"VaR {nivel:.1%} 1 dia", f"{res['var']:,.2f}")
-        k[1].metric("Expected Shortfall", f"{res['es']:,.2f}")
+        k[0].metric(f"VaR {br(100 * nivel, 1)}% 1 dia", br(res["var"]))
+        k[1].metric("Expected Shortfall", br(res["es"]))
         k[2].metric("Cenários", res["n_cenarios"])
         fig = G.estilo(go.Figure(go.Histogram(x=res["pnls"], nbinsx=60, marker=dict(color=G.QUENTES[2]))),
                        "P&L histórico da carteira", 400, "R$", "dias")
