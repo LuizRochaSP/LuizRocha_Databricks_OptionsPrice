@@ -104,6 +104,19 @@ class PipelineTests(unittest.TestCase):
         self.assertIsNone(prog.resultado)
         self.assertEqual(prog.tarefas[0], ("01_pricer", "TERMINATED", "SUCCESS"))  # em ordem de etapa
 
+    def test_textos_da_rodada(self):
+        # a rodada que falhou no 00: o Databricks lista o 00 duas vezes (nova tentativa) e as
+        # etapas seguintes como UPSTREAM_FAILED
+        tarefas = [("00_coleta", "INTERNAL_ERROR", "FAILED"), ("00_coleta", "TERMINATED", "FAILED"),
+                   ("01_pricer", "TERMINATED", "UPSTREAM_FAILED"), ("02_validacao", "TERMINATED", "UPSTREAM_FAILED"),
+                   ("03_risco", "TERMINATED", "UPSTREAM_FAILED")]
+        self.assertEqual(pipeline.resumo_falha(tarefas),
+                         "falhou em 00_coleta; 01_pricer, 02_validacao, 03_risco não rodaram")
+        rodando = [("01_pricer", "BLOCKED", None), ("00_coleta", "RUNNING", None)]
+        self.assertEqual(pipeline.andamento_texto(rodando), "00_coleta: rodando | 01_pricer: aguardando")
+        self.assertEqual(pipeline.andamento_texto([("03_risco", "TERMINATED", "SUCCESS")]), "03_risco: ok")
+        self.assertEqual(pipeline.resumo_falha([("03_risco", "TERMINATED", "TIMEDOUT")]), "falhou em 03_risco")
+
     def test_job_inexistente(self):
         self.assertIsNone(pipeline.Pipeline(NS(jobs=FakeJobs([])), nome="outro").job_id())
         self.assertEqual(pipeline.Pipeline(NS(jobs=None), job_id="5").job_id(), 5)

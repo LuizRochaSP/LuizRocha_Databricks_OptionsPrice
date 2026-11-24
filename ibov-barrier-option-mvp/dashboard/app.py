@@ -243,16 +243,17 @@ def painel_pipeline(rodada_inicial):
                 st.rerun(scope="app")
             inicio = (datetime.fromtimestamp(atual.inicio_ms / 1000).strftime("%H:%M")
                       if atual.inicio_ms else "—")
-            etapas = " | ".join(f"{k}: {resultado or estado or 'aguardando'}" for k, estado, resultado in atual.tarefas)
+            etapas = pipeline.andamento_texto(atual.tarefas)
             st.info(f"Pipeline rodando desde {inicio} (rodada {atual.run_id}). {etapas}. "
                     "Esta área atualiza a cada 15 s e a página recarrega sozinha ao terminar.")
         andamento()
         return
 
     if prog is not None and prog.resultado and prog.resultado != "SUCCESS":
-        falhou = [k for k, _, r in prog.tarefas if r and r != "SUCCESS"]
-        st.error(f"A última rodada do pipeline ({prog.run_id}) terminou com {prog.resultado}"
-                 + (f" na etapa {', '.join(falhou)}" if falhou else "") + ". Veja o log do job no Databricks.")
+        resumo = pipeline.resumo_falha(prog.tarefas)
+        st.error(f"A última rodada do pipeline ({prog.run_id}) não terminou: "
+                 f"{resumo or pipeline.estado_pt(None, prog.resultado)}. "
+                 f"Veja o log da etapa em Jobs > {pl.nome} no Databricks.")
     if st.button("Rodar pipeline completo (00 → 01 → 02 → 03)", key="rodar_pipeline"):
         try:
             run_id = pl.disparar()

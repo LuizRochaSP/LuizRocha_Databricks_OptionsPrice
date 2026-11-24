@@ -59,6 +59,43 @@ def motivo(ts: str, st_df: pd.DataFrame) -> str | None:
 
 
 # ------------------------------------------------------------------ job
+_ESTADOS = {"SUCCESS": "ok", "FAILED": "falhou", "TIMEDOUT": "estourou o tempo", "INTERNAL_ERROR": "erro interno",
+            "CANCELED": "cancelada", "UPSTREAM_FAILED": "não rodou", "UPSTREAM_CANCELED": "não rodou",
+            "EXCLUDED": "não rodou", "RUNNING": "rodando", "PENDING": "aguardando", "BLOCKED": "aguardando",
+            "QUEUED": "na fila", "WAITING_FOR_RETRY": "aguardando nova tentativa", "TERMINATING": "terminando"}
+_FALHAS = {"FAILED", "TIMEDOUT", "INTERNAL_ERROR"}
+
+
+def estado_pt(estado: str | None, resultado: str | None) -> str:
+    chave = resultado or estado
+    return _ESTADOS.get(chave, chave.lower() if chave else "aguardando")
+
+
+def _unicas(tarefas):
+    """Uma linha por etapa (a lista do Databricks repete a etapa a cada nova tentativa: fica a última)."""
+    vistas = {}
+    for k, e, r in tarefas:
+        vistas[k] = (k, e, r)
+    return [vistas[k] for k in sorted(vistas)]
+
+
+def andamento_texto(tarefas) -> str:
+    return " | ".join(f"{k}: {estado_pt(e, r)}" for k, e, r in _unicas(tarefas))
+
+
+def resumo_falha(tarefas) -> str:
+    """"falhou em 00_coleta; 01_pricer, 02_validacao, 03_risco não rodaram"."""
+    unicas = _unicas(tarefas)
+    falhou = [k for k, _, r in unicas if r in _FALHAS]
+    parou = [k for k, _, r in unicas if r and r not in _FALHAS and r != "SUCCESS"]
+    partes = []
+    if falhou:
+        partes.append("falhou em " + ", ".join(falhou))
+    if parou:
+        partes.append(", ".join(parou) + (" não rodou" if len(parou) == 1 else " não rodaram"))
+    return "; ".join(partes)
+
+
 def _valor(x) -> str | None:
     return None if x is None else str(getattr(x, "value", x))
 
