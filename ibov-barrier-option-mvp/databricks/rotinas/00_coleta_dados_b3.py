@@ -93,20 +93,20 @@ def build_filelist(d: date, prefixes: list[str]) -> str:
     return ",".join(f"{prefix}{yy_mm_dd}.zip" for prefix in prefixes)
 
 
-def is_folder_complete(folder: Path, prefixes: list[str]) -> bool:
-    """Verifica se a pasta já contém todos os arquivos esperados."""
-    for prefix in prefixes:
-        if not list(folder.glob(f"{prefix}*.zip")):
-            return False
-    return True
-
-
 def download_and_extract(d: date, prefixes: list[str], data_root: Path, overwrite: bool) -> dict:
     """Baixa e extrai os arquivos da B3 para uma data específica."""
+    # Comentário: "já baixado" só vale se cada ZIP abre e passa no CRC. Um download interrompido
+    # deixava um ZIP truncado que a pasta aceitava, e toda nova tentativa morria em BadZipFile.
+    from ibov_barrier.b3_arquivos import gravar_atomico, pasta_completa, zip_integro, zips_invalidos
+
     folder = data_root / d.isoformat()
 
-    if folder.exists() and is_folder_complete(folder, prefixes) and not overwrite:
+    if pasta_completa(folder, prefixes, d) and not overwrite:
         return {"data": d.isoformat(), "status": "skip", "motivo": "já baixado"}
+    if folder.exists() and not overwrite:
+        ruins = zips_invalidos(folder, prefixes, d)
+        if len(ruins) < len(prefixes):
+            print(f"baixando de novo (faltando ou corrompido: {', '.join(ruins)})...", end=" ")
 
     folder.mkdir(parents=True, exist_ok=True)
 
@@ -133,8 +133,10 @@ def download_and_extract(d: date, prefixes: list[str], data_root: Path, overwrit
             if not member_name.lower().endswith(".zip"):
                 continue
             member_data = outer_zip.read(member_name)
-            dest_path = folder / member_name
-            dest_path.write_bytes(member_data)
+            if not zip_integro(member_data):
+                return {"data": d.isoformat(), "status": "erro", "motivo": f"ZIP baixado corrompido: {member_name}"}
+            # grava em .tmp e renomeia: uma queda no meio não deixa arquivo pela metade
+            gravar_atomico(folder / member_name, member_data)
             extracted.append(member_name)
 
         if not extracted:
