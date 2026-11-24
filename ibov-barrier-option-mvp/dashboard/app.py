@@ -7,6 +7,7 @@ import os
 from io import BytesIO, StringIO
 from pathlib import Path
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import numpy as np
@@ -91,6 +92,8 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+BRASILIA = ZoneInfo("America/Sao_Paulo")  # o servidor do Databricks Apps roda em UTC
 
 RESULTS_BASE_PATH = os.environ.get(
     "RESULTS_BASE_PATH",
@@ -231,7 +234,8 @@ def painel_pipeline(rodada_inicial, fluxo: str = "ibov"):
             if not atual.ativo:
                 limpar_caches()
                 st.rerun(scope="app")
-            inicio = (datetime.fromtimestamp(atual.inicio_ms / 1000).strftime("%H:%M")
+            # o servidor do Databricks Apps roda em UTC: o horário mostrado é o de Brasília
+            inicio = (datetime.fromtimestamp(atual.inicio_ms / 1000, BRASILIA).strftime("%H:%M")
                       if atual.inicio_ms else "—")
             etapas = pipeline.andamento_texto(atual.tarefas)
             st.info(f"Pipeline rodando desde {inicio} (rodada {atual.run_id}). {etapas}. "
@@ -349,7 +353,7 @@ def cabecalho():
 
 def rodape(nome_arquivo: str):
     st.markdown("---")
-    st.caption(f"{nome_arquivo} | Cache: 5 min | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Databricks Apps")
+    st.caption(f"{nome_arquivo} | Cache: 5 min | {datetime.now(BRASILIA).strftime('%d/%m/%Y %H:%M:%S')} (Brasília) | Databricks Apps")
 
 
 def _ts_spx(path: str) -> str:
