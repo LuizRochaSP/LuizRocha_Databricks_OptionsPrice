@@ -7,6 +7,7 @@ payload_json). As funções `fig_*` só montam figuras (testáveis sem Streamlit
 from __future__ import annotations
 
 import json
+import re
 from io import StringIO
 
 import numpy as np
@@ -52,6 +53,11 @@ def read_frame(payload: str) -> pd.DataFrame:
         data = json.loads(payload)
         cols = [f["name"] for f in data["schema"]["fields"] if f["name"] not in ("index", "level_0")]
         return pd.DataFrame(data["data"]).reindex(columns=cols)
+
+
+def short_path(text) -> str:
+    """Esconde o usuário (e-mail) dos caminhos do workspace: /Workspace/Users/<usuário>/x -> ~/x."""
+    return re.sub(r"(/Workspace)?/Users/[^/\s)]+/", "~/", str(text))
 
 
 def file_label(path: str, prefix: str) -> str:
@@ -134,6 +140,9 @@ def fig_spx_atm(options: pd.DataFrame) -> go.Figure:
     return style(fig, "SPX: estrutura a termo da vol ATM")
 
 
+MIN_T_CONFIAVEL = 0.25  # paridade em prazos curtos é ruidosa (mesmo limite do pipeline, min_T_rate)
+
+
 def fig_spx_rates(forwards: pd.DataFrame, sofr: float | None, q_range=(0.0, 0.03)) -> go.Figure:
     fig = make_subplots(rows=1, cols=2, subplot_titles=("r(T) da paridade", "q(T) implícito"),
                         horizontal_spacing=0.08)
@@ -155,7 +164,22 @@ def fig_spx_rates(forwards: pd.DataFrame, sofr: float | None, q_range=(0.0, 0.03
                   row=1, col=2)
     fig.update_xaxes(title="prazo (anos)")
     fig.update_yaxes(title="% a.a.", row=1, col=1)
-    return style(fig, "SPX: taxa e dividendos implícitos por vencimento", height=460)
+    fig = style(fig, "SPX: taxa e dividendos implícitos por vencimento", height=460)
+    # depois do style(), que pinta todas as anotações de branco
+    # a escala de q segue os prazos >= 3 meses; os curtos (paridade ruidosa) ficam fora e são avisados
+    q_pct = forwards["q"] * 100
+    longos = q_pct[forwards["T"] >= MIN_T_CONFIAVEL].dropna()
+    if not longos.empty:
+        lo = min(longos.min(), q_range[0] * 100)
+        hi = max(longos.max(), q_range[1] * 100)
+        pad = max(0.25, (hi - lo) * 0.15)
+        fig.update_yaxes(range=[lo - pad, hi + pad], row=1, col=2)
+        fora = int(((q_pct < lo - pad) | (q_pct > hi + pad)).sum())
+        if fora:
+            fig.add_annotation(text=f"{fora} prazo(s) < 3 meses fora da escala (paridade ruidosa)",
+                               xref="x2 domain", yref="y2 domain", x=0.98, y=0.04, showarrow=False,
+                               xanchor="right", font=dict(color=MUTED, size=11))
+    return fig
 
 
 def fig_spx_arb(arb: pd.DataFrame) -> go.Figure:
@@ -176,6 +200,8 @@ def prices_view(prices: pd.DataFrame, notional: float) -> pd.DataFrame:
     """Tabela de preços com BRL e % do nocional lado a lado."""
     view = prices.copy()
     view["produto"] = view["produto"].map(PRODUCT_LABEL).fillna(view["produto"])
+    for col in [c for c in view.columns if c not in ("produto", "tipo")]:
+        view[col] = pd.to_numeric(view[col], errors="coerce")  # null do JSON vira NaN e aparece como "—"
     for col in [c for c in prices.columns if c.endswith("(BRL)")]:
         view[col.replace("(BRL)", "(% nocional)")] = view[col] / notional
     return view
@@ -228,11 +254,17 @@ def fig_lv_clip(clip_table: pd.DataFrame) -> go.Figure:
     fig = go.Figure(go.Heatmap(
         z=frame.to_numpy() * 100, x=list(frame.columns), y=list(frame.index),
         colorscale=[[0, BG], [0.5, WARM[2]], [1, WARM[4]]], zmin=0, zmax=100,
-        text=[[f"{v:.1%}" for v in row] for row in frame.to_numpy()], texttemplate="%{text}",
         colorbar=dict(title="% cortado", tickfont=dict(color="white"))))
     fig.update_yaxes(autorange="reversed", title="período do prazo")
     fig.update_xaxes(title="faixa strike / forward")
-    return style(fig, "Vol local cortada pelos limites, por período e faixa de strike", height=380)
+    fig = style(fig, "Vol local cortada pelos limites, por período e faixa de strike", height=380)
+    # depois do style(), que pinta todas as anotações de branco: texto escuro sobre as células claras (laranja), claro sobre as escuras
+    for i, label in enumerate(frame.index):
+        for j, col in enumerate(frame.columns):
+            v = float(frame.iloc[i, j])
+            fig.add_annotation(x=col, y=label, text=f"{v:.1%}", showarrow=False,
+                               font=dict(color="#0B0B0B" if v >= 0.25 else "white", size=12))
+    return fig
 
 
 def smile_effect(smile: pd.DataFrame) -> pd.DataFrame:
@@ -301,7 +333,7 @@ def render_spx(st, files, load):
     if "funnel" in b:
         with st.expander("Funil de limpeza"):
             st.dataframe(b["funnel"], use_container_width=True, hide_index=True)
-    st.caption(f"Fonte: {meta.get('fonte', '—')} | executado em {meta.get('execution_timestamp', '—')}")
+    st.caption(short_path(f"Fonte: {meta.get('fonte', '—')} | executado em {meta.get('execution_timestamp', '—')}"))
 
 
 def _quanto_header(st, meta):
@@ -324,7 +356,7 @@ def render_quanto(st, files, load):
     meta = b["metadata"]
     _quanto_header(st, meta)
     c = st.columns(4)
-    c[0].metric("Prazo", f"{meta.get('dias', '—')} dias ({str(meta.get('expiry', ''))[:10]})")
+    c[0].metric(f"Prazo (vence {str(meta.get('expiry', '—'))[:10]})", f"{meta.get('dias', '—')} dias")
     c[1].metric("Strike / Barreira", f"{meta.get('strike_pct', 0):.0%} / "
                                      + (f"{meta['barrier_pct']:.0%}" if meta.get("barrier_pct") else "—"))
     c[2].metric("Vol em K", f"{meta.get('vol_k', 0):.2%}")
@@ -364,8 +396,8 @@ def render_quanto(st, files, load):
             st.dataframe(b["sens_table"].style.format({c: "{:.4%}" for c in ("Compo", "Convertida", "Quanto")
                                                        if c in b["sens_table"]}),
                          use_container_width=True, hide_index=True)
-    st.caption(f"PTAX: {meta.get('ptax_source', '—')} | SPX histórico: {meta.get('close_source', '—')} | "
-               f"cadeia: {meta.get('chain_source', '—')}")
+    st.caption(short_path(f"PTAX: {meta.get('ptax_source', '—')} | SPX histórico: {meta.get('close_source', '—')} | "
+                          f"cadeia: {meta.get('chain_source', '—')}"))
 
 
 def render_local_vol(st, files, load):

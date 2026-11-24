@@ -253,6 +253,45 @@ class DashboardTabsTests(unittest.TestCase):
             self.assertTrue(any(e[0] == "info" for e in st.log))
             self.assertEqual(st.charts(), [])
 
+    def test_captions_hide_workspace_user(self):
+        objects = quanto_objects()
+        objects["metadata"]["chain_source"] = "disco (/Workspace/Users/alguem@exemplo.com/spx_dados/brutos/2026-11-20)"
+        st = self._render(self.m.render_quanto, objects)
+        captions = " ".join(str(e[1]) for e in st.log if e[0] == "caption")
+        self.assertIn("disco (~/spx_dados/brutos/2026-11-20)", captions)
+        self.assertNotIn("@", captions)
+        self.assertEqual(self.m.short_path("/Users/a.b@c.com/x/y"), "~/x/y")
+        self.assertEqual(self.m.short_path("cache"), "cache")
+
+    def test_prazo_metric_not_truncated(self):
+        st = self._render(self.m.render_quanto, quanto_objects())
+        metrics = {e[1]: e[2] for e in st.log if e[0] == "metric"}
+        self.assertEqual(metrics["Prazo (vence 2027-05-21)"], "182 dias")
+
+    def test_prices_without_closed_form_are_nan(self):
+        view = self.m.prices_view(self._bundle(quanto_objects())["prices"], 40694.6)
+        col = "com barreira analítica (BRL)"
+        self.assertTrue(pd.api.types.is_float_dtype(view[col]))
+        self.assertTrue(view.loc[view["tipo"] == "put", col].isna().all())
+        self.assertAlmostEqual(view.loc[0, col], 2899.0)
+
+    def test_q_axis_ignores_short_tenor_noise(self):
+        fwd = spx_objects()["forwards"].copy()
+        fwd.loc[0, "T"], fwd.loc[0, "q"] = 0.02, -0.30  # q de -30% no primeiro vencimento (tela 7)
+        fig = self.m.fig_spx_rates(fwd, 0.0365)
+        lo, hi = fig.layout.yaxis2.range
+        self.assertGreater(lo, -2.0)
+        self.assertLess(hi, 5.0)
+        self.assertTrue(any("fora da escala" in a.text for a in fig.layout.annotations))
+        clean = self.m.fig_spx_rates(spx_objects()["forwards"], 0.0365)
+        self.assertFalse(any("fora da escala" in (a.text or "") for a in clean.layout.annotations))
+
+    def test_clip_heatmap_text_contrast(self):
+        fig = self.m.fig_lv_clip(quanto_objects()["lv_clip_table"])
+        colors = {a.text: a.font.color for a in fig.layout.annotations if a.text.endswith("%")}
+        self.assertEqual(colors["35.2%"], "#0B0B0B")  # célula clara: texto escuro
+        self.assertEqual(colors["0.0%"], "white")
+
     def test_file_label(self):
         self.assertEqual(self.m.file_label("/a/RESULTS_quanto_20261122_214200.csv", self.m.QUANTO_PREFIX),
                          "22/11/2026 21:42:00")

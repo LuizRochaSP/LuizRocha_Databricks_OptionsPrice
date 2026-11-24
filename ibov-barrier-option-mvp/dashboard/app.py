@@ -459,11 +459,19 @@ with tab1:
                 st.dataframe(comparison_df, use_container_width=True)
 
                 if len(comparison_df) > 1:
+                    # eixo por execução (data e hora do arquivo): várias execuções no mesmo dia de
+                    # mercado ficavam empilhadas num eixo de datas com marcações em milissegundos
+                    stamps = comparison_df["Arquivo"].str.extract(r"(\d{8}_\d{6})")[0]
+                    comparison_df["Execução"] = pd.to_datetime(stamps, format="%Y%m%d_%H%M%S",
+                                                               errors="coerce").dt.strftime("%d/%m %H:%M")
+                    comparison_df = comparison_df.sort_values("Arquivo")
                     fig_comp = px.line(
-                        comparison_df, x="Data", y=["Vanilla", "DAO"],
+                        comparison_df, x="Execução", y=["Vanilla", "DAO"],
                         markers=True, title="Evolução de Preços",
                         labels={"value": "Preço (pontos)", "variable": "Tipo"},
+                        hover_data=["Data"],
                     )
+                    fig_comp.update_xaxes(type="category")
                     st.plotly_chart(fig_comp, use_container_width=True)
     else:
         st.info("Apenas 1 arquivo disponível.")
@@ -562,6 +570,8 @@ with tab2:
 
             if valid_groups:
                 smile_filtered = smile_df[smile_df[group_col].isin(valid_groups)].copy()
+                if group_col == "maturity_date":  # legenda só com a data (sem 00:00:00)
+                    smile_filtered[group_col] = smile_filtered[group_col].astype(str).str[:10]
                 fig_smile = px.line(
                     smile_filtered.sort_values(k_col),
                     x=k_col, y=v_col, color=group_col, markers=True,
@@ -650,7 +660,7 @@ with tab3:
             col3.metric("q Máximo", f"{curve_df[q_col].max():.4%}")
 
             st.info(
-                "**Limitação conhecida:** q(T) ~0.8% a.a. está abaixo do "
+                f"**Limitação conhecida:** q(T) médio de {curve_df[q_col].mean():.2%} a.a. está abaixo do "
                 "histórico NEFIN/USP (5-7%). Ver README."
             )
 
@@ -672,7 +682,7 @@ with tab4:
             col7.metric("IC 95% (sup)", f"{pricing.get('ci_high_95', 0):,.2f}")
 
     st.markdown("---")
-    st.subheader("b Visualização da Simulação Monte Carlo")
+    st.subheader("Visualização da Simulação Monte Carlo")
 
     if pricing and sim_diag:
         try:
@@ -714,12 +724,14 @@ with tab4:
                         line=dict(color="rgba(31,119,180,0.3)", width=1),
                         showlegend=False, hoverinfo="skip",
                     ))
-                fig_paths.add_hline(y=spot, line_dash="solid", line_color="black",
-                                    annotation_text=f"Spot {spot:,.0f}", annotation_position="right")
+                # rótulos dentro da área do gráfico (à direita eles saíam cortados); spot em branco,
+                # já que a linha preta sumia no fundo escuro
+                fig_paths.add_hline(y=spot, line_dash="solid", line_color="white",
+                                    annotation_text=f"Spot {spot:,.0f}", annotation_position="top left")
                 fig_paths.add_hline(y=strike, line_dash="dash", line_color="orange",
-                                    annotation_text=f"Strike {strike:,.0f}", annotation_position="right")
+                                    annotation_text=f"Strike {strike:,.0f}", annotation_position="top left")
                 fig_paths.add_hline(y=barrier, line_dash="dot", line_color="red",
-                                    annotation_text=f"Barreira {barrier:,.0f}", annotation_position="right")
+                                    annotation_text=f"Barreira {barrier:,.0f}", annotation_position="bottom left")
                 fig_paths.update_layout(
                     title="Trajetórias do IBOV sob medida neutra ao risco",
                     xaxis_title="Tempo (anos)", yaxis_title="Spot IBOV (pontos)",
@@ -729,7 +741,7 @@ with tab4:
 
                 st.caption(
                     f"Monitoramento: **{monitoring}** | "
-                    f"GBM com r={r:.2%}, q={q_val:.2%}, ={sigma:.2%}"
+                    f"GBM com r={r:.2%}, q={q_val:.2%}, σ={sigma:.2%}"
                 )
 
                 col_conv, col_hist = st.columns(2)
