@@ -17,7 +17,9 @@ from databricks.sdk import WorkspaceClient
 
 from types import SimpleNamespace
 
+import formato_br
 import multiativos
+import pipeline
 
 from ibov_barrier.pricing import price_down_and_out_call, MarketData, BarrierContract
 from ibov_barrier.pricing_barriers import (
@@ -89,6 +91,7 @@ st.set_page_config(
     page_icon="",
     layout="wide",
 )
+formato_br.instalar(st)  # números no padrão brasileiro em textos, tabelas e gráficos
 
 # ---- CSS institucional (dark theme bank-grade) ----
 st.markdown(
@@ -203,6 +206,63 @@ def list_available_results(base_path: str):
 
 
 @st.cache_data(ttl=300)
+def list_all_names(base_path: str):
+    """Nomes de todos os arquivos da pasta de resultados (para checar RESULTS -> VALIDATION -> RISK)."""
+    try:
+        return [e.path.split("/")[-1] for e in get_workspace_client().workspace.list(base_path)]
+    except Exception as e:
+        st.error(f"Erro ao listar {base_path}: {e}")
+        return []
+
+
+def limpar_caches():
+    for f in (list_available_results, list_all_names, list_available_risk, list_results_by_prefix):
+        f.clear()
+
+
+def painel_pipeline(rodada_inicial):
+    """Botão para rodar a cadeia toda e o andamento da rodada (atualiza sozinho enquanto roda)."""
+    pl = pipeline.Pipeline(get_workspace_client(), os.environ.get("PIPELINE_JOB_NAME", pipeline.JOB_PADRAO),
+                           os.environ.get("PIPELINE_JOB_ID"))
+    try:
+        if pl.job_id() is None:
+            st.warning(f"O job `{pl.nome}` não existe ou o app não tem permissão para vê-lo. "
+                       "Rode os notebooks 00 a 03 no folder de produção, nessa ordem.")
+            return
+        prog = rodada_inicial if rodada_inicial is not None else pl.ultima()
+    except Exception as e:
+        st.warning(f"Não foi possível consultar o job `{pl.nome}`: {e}")
+        return
+
+    if prog is not None and prog.ativo:
+        @st.fragment(run_every=15)
+        def andamento():
+            atual = pl.acompanhar(prog.run_id)
+            if not atual.ativo:
+                limpar_caches()
+                st.rerun(scope="app")
+            inicio = (datetime.fromtimestamp(atual.inicio_ms / 1000).strftime("%H:%M")
+                      if atual.inicio_ms else "—")
+            etapas = " | ".join(f"{k}: {resultado or estado or 'aguardando'}" for k, estado, resultado in atual.tarefas)
+            st.info(f"Pipeline rodando desde {inicio} (rodada {atual.run_id}). {etapas}. "
+                    "Esta área atualiza a cada 15 s e a página recarrega sozinha ao terminar.")
+        andamento()
+        return
+
+    if prog is not None and prog.resultado and prog.resultado != "SUCCESS":
+        falhou = [k for k, _, r in prog.tarefas if r and r != "SUCCESS"]
+        st.error(f"A última rodada do pipeline ({prog.run_id}) terminou com {prog.resultado}"
+                 + (f" na etapa {', '.join(falhou)}" if falhou else "") + ". Veja o log do job no Databricks.")
+    if st.button("Rodar pipeline completo (00 → 01 → 02 → 03)", key="rodar_pipeline"):
+        try:
+            run_id = pl.disparar()
+            st.session_state["rodada_pipeline"] = run_id
+            st.rerun()
+        except Exception as e:
+            st.error(f"Não foi possível iniciar o job `{pl.nome}`: {e}")
+
+
+@st.cache_data(ttl=300)
 def list_results_by_prefix(base_path: str, prefix: str):
     """Arquivos RESULTS de outros mercados (07: SPX, 09: Quanto), mais recente primeiro."""
     try:
@@ -300,10 +360,20 @@ if not available_files:
     )
     st.stop()
 
+def ts_of(path: str) -> str:
+    return path.split("/")[-1].replace("RESULTS_superficieVol_", "").replace(".csv", "")
+
+
+# completude de cada execução: RESULTS (01) -> VALIDATION (02) -> RISK (03)
+exec_status = pipeline.status_execucoes(list_all_names(RESULTS_BASE_PATH))
+available_files = sorted(available_files, key=ts_of, reverse=True)
+default_ts = exec_status["ts"].iloc[pipeline.indice_padrao(exec_status)] if len(exec_status) else None
 selected_file_path = st.sidebar.selectbox(
     "Arquivo RESULTS",
     options=available_files,
-    format_func=lambda x: x.split("/")[-1].replace("RESULTS_superficieVol_", "").replace(".csv", ""),
+    index=next((i for i, f in enumerate(available_files) if ts_of(f) == default_ts), 0),
+    format_func=lambda x: pipeline.rotulo(ts_of(x), exec_status),
+    help="Abre na execução completa mais recente (com validação do 02 e risco do 03).",
 )
 
 st.sidebar.markdown("**Tipo de Instrumento**")
@@ -325,6 +395,31 @@ st.markdown("**Motor de precificação, análise de risco e simulação de estru
 st.markdown("---")
 
 st.success(f"Resultado carregado: **{selected_filename}**")
+
+# informação incompleta: diz o que falta e oferece rodar a cadeia toda
+latest_ts = ts_of(available_files[0])
+falta_sel = pipeline.motivo(ts_of(selected_file_path), exec_status)
+falta_ult = pipeline.motivo(latest_ts, exec_status) if latest_ts != ts_of(selected_file_path) else None
+rodada = st.session_state.get("rodada_pipeline")
+if falta_sel or falta_ult or rodada:
+    if falta_sel:
+        st.error(f"Informação incompleta. {falta_sel}")
+    elif falta_ult:
+        st.warning(f"A execução mais recente está incompleta e não foi aberta. {falta_ult}")
+    try:
+        prog_inicial = (pipeline.Pipeline(get_workspace_client(),
+                                          os.environ.get("PIPELINE_JOB_NAME", pipeline.JOB_PADRAO),
+                                          os.environ.get("PIPELINE_JOB_ID")).acompanhar(rodada)
+                        if rodada else None)
+    except Exception:
+        prog_inicial = None
+    if prog_inicial is not None and not prog_inicial.ativo:
+        st.session_state.pop("rodada_pipeline", None)
+        if prog_inicial.resultado == "SUCCESS":
+            st.success(f"Pipeline concluído (rodada {prog_inicial.run_id}): a execução nova já está na lista.")
+            prog_inicial = None
+    if falta_sel or falta_ult or (prog_inicial is not None and prog_inicial.ativo):
+        painel_pipeline(prog_inicial)
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab_spx, tab_quanto, tab_lv = st.tabs(
     ["Resumo do Gestor", "Superfície e Volatilidade", "Curvas de Mercado",
@@ -378,9 +473,10 @@ with tab1:
     )
 
     if risk_match is None:
-        st.info(
-            "Nenhum arquivo RISK correspondente a este RESULTS.\n\n"
-            "Execute o notebook `03_analise_risco` após a validação."
+        st.error(
+            (pipeline.motivo(selected_ts, exec_status) or "Nenhum arquivo RISK correspondente a este RESULTS.")
+            + "\n\nUse o botão \"Rodar pipeline completo\" no topo da página, ou escolha na barra lateral "
+            "uma execução marcada como completa."
         )
     else:
         risk = load_risk_json(risk_match)
@@ -851,7 +947,7 @@ with tab5:
         checks = {
             "Preço não-negativo": barrier_price >= 0,
             "Barreira Vanilla + 5×SE": barrier_price <= vanilla_price + (5.0 * se),
-            "P(knock-out) [0,1]": 0 <= ko <= 1,
+            "P(knock-out) em [0; 1]": 0 <= ko <= 1,
             "Erro-padrão não-negativo": se >= 0,
             "IC contém preço": ci_low <= barrier_price <= ci_high,
             "Forward reconstruído": forward_ok,

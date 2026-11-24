@@ -15,6 +15,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from formato_br import br_texto
+
 SPX_PREFIX = "RESULTS_spx_superficie_"
 QUANTO_PREFIX = "RESULTS_quanto_"
 
@@ -78,12 +80,12 @@ def sem_vazios(df: pd.DataFrame, fmt: dict | None = None):
             col = out[c] = num
         if not pd.api.types.is_float_dtype(col):
             continue
-        f = fmt.get(c, "{:.4f}")
+        f = fmt.get(c, "{:,.4f}")
         if col.isna().any():
-            out[c] = col.map(lambda v, f=f: "—" if pd.isna(v) else f.format(v))
-        elif c in fmt:
+            out[c] = col.map(lambda v, f=f: "—" if pd.isna(v) else br_texto(f.format(v)))
+        else:
             keep[c] = f
-    return out.style.format(keep)
+    return out.style.format(keep, decimal=",", thousands=".")
 
 
 def file_label(path: str, prefix: str) -> str:
@@ -411,7 +413,7 @@ def render_quanto(st, files, load):
     st.subheader("Câmbio e correlação")
     if "fx_estimates" in b:
         st.dataframe(b["fx_estimates"].style.format({"vol_asset": "{:.2%}", "vol_fx": "{:.2%}",
-                                                     "correlation": "{:+.3f}"}),
+                                                     "correlation": "{:+.3f}"}, decimal=",", thousands="."),
                      use_container_width=True, hide_index=True)
     if "rolling_corr" in b:
         _chart(st, fig_rolling_corr(b["rolling_corr"], meta["rho"]))
@@ -420,7 +422,7 @@ def render_quanto(st, files, load):
     if "sens_table" in b:
         with st.expander("Call (% do nocional) por janela de correlação"):
             st.dataframe(b["sens_table"].style.format({c: "{:.4%}" for c in ("Compo", "Convertida", "Quanto")
-                                                       if c in b["sens_table"]}),
+                                                       if c in b["sens_table"]}, decimal=",", thousands="."),
                          use_container_width=True, hide_index=True)
     st.caption(short_path(f"PTAX: {meta.get('ptax_source', '—')} | SPX histórico: {meta.get('close_source', '—')} | "
                           f"cadeia: {meta.get('chain_source', '—')}"))

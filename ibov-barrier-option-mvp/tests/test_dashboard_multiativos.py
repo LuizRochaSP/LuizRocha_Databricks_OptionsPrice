@@ -281,7 +281,7 @@ class DashboardTabsTests(unittest.TestCase):
         shown = self.m.sem_vazios(view, {"com barreira analítica (BRL)": "{:,.2f}"}).data
         col = shown["com barreira analítica (BRL)"]
         self.assertEqual(col[view["tipo"] == "put"].unique().tolist(), ["—"])
-        self.assertEqual(col.iloc[0], "2,899.00")
+        self.assertEqual(col.iloc[0], "2.899,00")  # padrão brasileiro
         self.assertFalse(shown.isna().any().any())
         fwd = self.m.sem_vazios(spx_objects()["forwards"]).data
         self.assertEqual(fwd["r do vencimento"].iloc[0], "—")

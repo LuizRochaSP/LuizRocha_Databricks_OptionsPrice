@@ -6,3 +6,7 @@ command:
 env:
   - name: RESULTS_BASE_PATH
     value: "/Workspace/Users/luiz.henrique.felipe.rocha@gmail.com/ibov-barrier-results"
+  # Job que roda 00 -> 01 -> 02 -> 03 (botão "Rodar pipeline completo"). O service principal do app
+  # precisa de CAN_MANAGE_RUN nele; sem o job ou sem a permissão o app só avisa o que falta.
+  - name: PIPELINE_JOB_NAME
+    value: "opcoes-pipeline-ibov"

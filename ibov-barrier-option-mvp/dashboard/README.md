@@ -73,3 +73,14 @@ Para apontar para outra pasta, edite o `app.yaml` e faça redeploy.
 | URL | Proxy temporário | HTTPS permanente |
 | Hibernação | Sim | Não |
 | Deploy | Runtime | UI + versionamento Git |
+
+## Execução completa e pipeline
+
+Cada execução só está completa com os três arquivos: `RESULTS_*` (notebook 01), `VALIDATION_*`
+(02, gravado só com FAIL=0) e `RISK_*` (03). A barra lateral marca cada execução como completa,
+sem risco ou não validada, e o app abre na completa mais recente. Quando falta informação, o app
+diz qual notebook não rodou e oferece o botão "Rodar pipeline completo", que dispara o job
+`opcoes-pipeline-ibov` (00 -> 01 -> 02 -> 03) e mostra o andamento até terminar. Não dispara uma
+segunda rodada enquanto houver uma ativa.
+
+Números no padrão brasileiro (ponto no milhar, vírgula no decimal): `formato_br.instalar(st)`.
