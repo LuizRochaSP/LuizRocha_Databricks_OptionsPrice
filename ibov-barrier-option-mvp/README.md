@@ -1,37 +1,108 @@
-# Precificação e Risco de Opções com Barreira no Ibovespa
+# Precificação e Risco de Opções Exóticas: Ibovespa e S&P 500
 
-> **Status: Feature Freeze (congelado para apresentação).** Os 10 modelos do roadmap estão implementados
-> (Famílias A, B, C, D e exóticos dependentes da trajetória), com 30 estratégias no Structuring Desk em
-> produção no Databricks Apps. A partir daqui, só correções de bugs; novas funcionalidades ficam para depois
-> da apresentação.
+> **Situação em 24/11/2026: em produção no Databricks.**
+> - **Ativos:** o Ibovespa, com dados da B3, e o S&P 500, com dados da ThetaData. O S&P 500 liquida em US$ ou em
+>   R$ (Quanto/Compo).
+> - **Rodada diária:** todo dia útil, dois jobs coletam o pregão anterior (D-1), montam a superfície de
+>   volatilidade, precificam o contrato de referência, validam o resultado e calculam o risco.
+> - **Dashboard:** um Databricks App mostra o resultado de cada ativo e traz o Structuring Desk, com 30 estratégias.
+> - **Feature Freeze:** terminou em 23/11/2026, quando o motor multiativos entrou no `main`.
 
-Projeto quantitativo em Python, preparado para execução local e em Databricks, para precificar e medir o risco da família completa de opções com barreira sobre o Ibovespa (Calls e Puts, Down/Up, Knock-In/Knock-Out). Mais precisamente, um pipeline end-to-end que consome dados públicos da B3, constrói superfície de volatilidade implícita, precifica uma opção com barreira por Monte Carlo com variável de controle e monitoramento Brownian Bridge, valida a qualidade dos dados e do modelo com controles auditáveis, e calcula métricas de risco de mercado (gregas, VaR, ES) — tudo reprodutível, testado e versionado. Cada execução estabelece uma cadeia de confiança criptográfica via SHA-256 (função de hash determinística que gera uma impressão digital única de 256 bits para cada arquivo, permitindo verificar sua integridade sem acessar o conteúdo) entre os artefatos de preço, validação e risco, garantindo rastreabilidade total. A data de mercado é selecionada automaticamente como D-1 via calendário de feriados da B3, sem parâmetros manuais. O projeto inclui 159 testes unitários cobrindo domínio, reprodutibilidade, casos extremos e benchmarks analíticos de todos os modelos de barreira, com replay determinístico do motor de precificação para auditoria.
+## Resumo
 
-## Funcionalidades Principais
+O projeto é uma esteira completa de precificação e risco de opções exóticas sobre índices de ações, escrita em
+Python e operada no Databricks. Ela faz seis coisas:
 
-- **Motor de Opções com Barreira** — Monte Carlo com 200 mil caminhos × 252 passos, monitoramento Brownian Bridge (toque contínuo entre observações) e variável de controle vanilla para redução de variância.
-- **Validação Analítica** — Benchmark de Reiner-Rubinstein com erro < 0,02% vs o motor estocástico, replay determinístico do pricer e cadeia de confiança SHA-256 entre RESULTS, VALIDATION e RISK.
-- **Família A Completa com Rebate** — Calls e Puts, Down/Up, In/Out (DOC, UOC, DIC, UIC, DOP, UOP, DIP, UIP), com rebate opcional pago no vencimento (`price_single_barrier`).
-- **Família B Completa** — Double Knock-Out/Knock-In (com rebate) e dupla barreira KI/KO com ordem parametrizável (`convention` = KI_first, KO_after_KI, KO_first, sequential), Call e Put, cada convenção com benchmark analítico próprio (`pricing_double.py`).
-- **Família C Completa** — Straddle, Strangle, Risk Reversal, Collar, Call/Put Spread e Forward; variantes Up para Collar, Spreads e Strangle; versões Knock-In de Straddle e Forward.
-- **Família D** — One-Touch/No-Touch Up e Down, Double One-Touch/No-Touch e Range Accrual (túnel, Down, Up, com taxa de accrual % a.a.), cada um com benchmark analítico (`pricing_extensions.py`).
-- **Exóticos Dependentes da Trajetória** — Parisian (dias úteis consecutivos além da barreira) e ParAsian (cumulativa), Step Barrier (nível muda em datas definidas) e Soft Barrier (barreira monitorada só em janelas), com Call/Put, Down/Up, Knock-Out/Knock-In e rebate, cada um com benchmark semi-analítico (`pricing_path_barriers.py`).
-- **Dashboard em 6 Abas** — Resumo Gestor, Superfície de Volatilidade, Curvas de Mercado, Motor de Monte Carlo, Controle de Qualidade e Structuring Desk.
-- **Structuring Desk** — Simulador interativo com travas de UX bank-grade, diagrama de payoff em tempo real e precificação on-demand de 30 estratégias (mais variantes Up e rebate configurável), incluindo as barreiras dependentes da trajetória Parisian, Step e Soft (janela), cada uma com benchmark semi-analítico.
-- **Motor de Renda Fixa** — Curvas ANBIMA (pyettj), NTN-B, LTN, LFT e Swap DI x Pré.
+1. **Coleta** os dados de mercado do pregão anterior (D-1) de cada bolsa: os arquivos públicos da B3 para o Ibovespa
+   e a cadeia de opções SPX/SPXW da ThetaData para o S&P 500.
+2. **Monta a superfície de volatilidade implícita**, com a curva de juros r(T) e a de dividendos q(T) tiradas do
+   próprio mercado: DI1 e futuro de Ibovespa no Brasil, paridade put-call nos Estados Unidos.
+3. **Precifica** um contrato de referência, uma call down-and-out. O cálculo é por Monte Carlo com ponte browniana
+   e variável de controle, conferido contra a fórmula fechada de Reiner-Rubinstein.
+4. **Valida** dados, superfície e preço com controles PASS, WARN e FAIL. Com qualquer FAIL, a esteira para.
+5. **Mede o risco:** gregas, DV01, convexidade de taxa, VaR e Expected Shortfall (99%, 1 dia). Os cenários de
+   stress rodam sob demanda.
+6. **Mostra o resultado** num dashboard com uma página por ativo. O Structuring Desk precifica na hora 30
+   estratégias (barreiras simples e duplas, estruturas combinadas, digitais, Parisian, Step e Soft); no S&P 500,
+   em US$ ou em R$.
 
-## Arquitetura Técnica
+Cada execução deixa três arquivos encadeados por SHA-256 (RESULTS → VALIDATION → RISK). A data de mercado é
+sempre o D-1 do calendário da bolsa, sem parâmetro manual.
 
-- **Databricks Apps** — o dashboard roda como Databricks App (Streamlit, compute MEDIUM) com deploy SNAPSHOT e URL HTTPS permanente, lendo os artefatos da workspace via Databricks SDK.
-- **Databricks + Unity Catalog** — pipeline orquestrado na plataforma Databricks (serverless), dados B3 e artefatos versionados na workspace com governança centralizada do catálogo.
-- **Streamlit bank-grade** — UX institucional: travas de validação de parâmetros, mensagens de erro amigáveis e KPIs em cards.
+### Em números
 
-## Objetivo
+| Item | Valor |
+| :--- | :--- |
+| Ativos | 2: Ibovespa e S&P 500 (este também liquidado em R$: Quanto, Compo e Convertida) |
+| Estratégias no Structuring Desk | 30, mais as variantes Up e o rebate configurável |
+| Notebooks operacionais | 11 (`00` a `11`; não há `05`) |
+| Jobs diários | 2 agendados, mais 1 disparado pelo botão do dashboard |
+| Monte Carlo de produção | 200.000 caminhos × 252 passos, semente fixa |
+| Benchmark analítico | erro do Monte Carlo contra Reiner-Rubinstein abaixo de 0,02% (S&P 500 em 23/11/2026: 0,0035%) |
+| Histórico do S&P 500 | 80 pregões, de 03/08 a 23/11/2026 |
+| Testes unitários | 309, todos verdes em 24/11/2026 |
 
-Estimar o valor justo e os principais riscos de opções com barreira sobre o Ibovespa — da barreira simples (Família A) às estruturas de dupla barreira, combinações, binárias e exóticos dependentes da trajetória (Famílias B, C, D, Parisian, Step e Soft). O contrato de referência do pipeline diário é uma **call down-and-out**: a opção deixa de existir quando o índice toca uma barreira inferior. O motor usa Monte Carlo sob medida neutra ao risco, uma call Black–Scholes como variável de controle para redução de variância e duas formas de monitoramento:
+## 1. Ativos cobertos
 
-- `discrete`: verifica a barreira somente nas datas simuladas;
-- `brownian_bridge`: estima o toque entre duas datas consecutivas e reduz o viés de discretização.
+| | Ibovespa | S&P 500 |
+| :--- | :--- | :--- |
+| Fonte | B3: arquivos públicos IN, IR, PR e SPRD | ThetaData: cadeia EOD de SPX e SPXW |
+| Calendário e D-1 | B3, America/Sao_Paulo | NYSE, America/New_York |
+| Prazo | T da superfície em dias corridos/365; r e q no prazo em dias úteis/252 | ACT/365 com hora: vencimento AM (09:30 ET) ou PM (16:00 ET) |
+| Juros r(T) | curva DI1 do SPRD, flat forward | paridade put-call, com uma reta r(T) robusta |
+| Dividendos q(T) | futuro de Ibovespa (IND) | paridade put-call: q = r − ln(F/S)/T |
+| Spot | fechamento do índice (IR) | implícito pela paridade (padrão) ou fechamento oficial |
+| Preço de cada opção | mid ou último negócio (book raso) | sempre o mid |
+| Contrato de referência | call down-and-out: K 155.000, H 140.000, 6 meses | call down-and-out: K 95% e H 85% do spot, 6 meses |
+| Etapas | `00` → `01` → `02` → `03` | `07` → `11` → `03` (`ativo=spx`); `07` → `09` |
+| Arquivos | `*_superficieVol_<carimbo>` | `*_spx_superficie_<carimbo>` e `RESULTS_quanto_<carimbo>` |
+
+A camada multiativos (`src/ibov_barrier/markets/`) separa o que é de cada mercado do que é comum. Para acrescentar
+um índice basta escrever o adaptador de dados dele; a superfície, o motor, o risco e o Desk são os mesmos. Detalhes
+em [`ARQUITETURA_MULTIATIVOS.md`](ARQUITETURA_MULTIATIVOS.md).
+
+## 2. Rodada diária
+
+```text
+IBOV     (job "Pipeline Diário B3 — Barrier Option", segunda a sexta, 08:00)
+         00 coleta B3 ──> 01 superfície e preço ──> 02 validação ──> 03 risco
+
+S&P 500  (job "opcoes-pipeline-spx", terça a sábado, 10:00)
+         07 superfície e preço ──> 11 validação ──> 03 risco (ativo=spx)
+                                └─> 09 Quanto/Compo e vol local
+```
+
+| Job | Agenda (Brasília) | Etapas | Papel |
+| :--- | :--- | :--- | :--- |
+| `Pipeline Diário B3 — Barrier Option` | segunda a sexta, 08:00 | `00` → `01` → `02` → `03` | rodada diária do Ibovespa |
+| `opcoes-pipeline-spx` | terça a sábado, 10:00 | `07` → `11` → `03`; `07` → `09` | rodada diária do S&P 500. Roda de terça a sábado porque processa o pregão de Nova York do dia anterior |
+| `opcoes-pipeline-ibov` | sem agenda | `00` → `01` → `02` → `03` | botão "Rodar pipeline" do dashboard |
+
+Os jobs rodam em serverless, a partir do Git folder de produção (`main`). O serverless repete uma vez a tarefa que
+falha. As tarefas do S&P 500 têm timeout de 90 minutos.
+
+## 3. Notebooks (`databricks/rotinas/`)
+
+| Notebook | O que faz | Grava | Onde roda |
+| :--- | :--- | :--- | :--- |
+| `00_coleta_dados_b3` | Baixa IN, IR, PR e SPRD do D-1 (ou de um intervalo). Confere cada ZIP (nome, CRC e data interna) e grava de forma atômica, sem deixar arquivo pela metade | `data/AAAA-MM-DD/` | job do IBOV |
+| `01_main_option_pricer` | Lê o cadastro e os preços, monta r(T) e q(T), filtra, inverte Black-Scholes, monta smiles e superfície e precifica a call down-and-out de referência | `RESULTS_superficieVol_*` | job do IBOV |
+| `02_validacao_pos_pricing` | Controles por bloco: integridade, cadastro e liquidez, curvas, não arbitragem, paridade, cobertura da superfície e replay determinístico do Monte Carlo. Decide APROVADO, APROVADO COM RESSALVAS ou REPROVADO | `VALIDATION_superficieVol_*` (só sem FAIL) | job do IBOV |
+| `03_analise_risco` | Exige validação aprovada do mesmo RESULTS (nome e SHA-256). Calcula gregas, DV01, convexidade de taxa, VaR e ES delta-gamma (100.000 cenários, 99%, 1 dia). Widget `ativo` = `ibov` ou `spx` | `RISK_*` | jobs do IBOV e do S&P 500 |
+| `04_cenarios_stress` | Lê os cenários de `templates/stress_scenarios.xlsx` (choques de spot, vol e taxa; lado e quantidade), reprecifica com os mesmos números aleatórios e calcula o P&L | `STRESS_*.xlsx` e `.json` | manual |
+| `06_coleta_anbima` | Protótipo antigo de renda fixa (ETTJ da ANBIMA, LTN, LFT, NTN-B). A renda fixa nova fica no branch `feature/renda-fixa-publica` | — | manual |
+| `07_spx_superficie_d1` | Cadeia EOD de SPX/SPXW, limpeza, paridade (forward, desconto, spot, r e q), vol implícita e superfície. Precifica a call down-and-out de referência e guarda a cadeia do dia | `RESULTS_spx_superficie_*` e `spx_dados/brutos/` | job do S&P 500 |
+| `08_spx_historico_taxa` | Refaz a fotografia do 07 em todos os pregões desde 03/08/2026. Compara o método antigo de taxa (`atm`) com o novo (`smooth`) e com o box spread | `spx_dados/resumo_diario.parquet` | manual |
+| `09_quanto_compo_spx` | S&P 500 pago em R$: Quanto, Compo e Convertida, com e sem barreira, e vol local de Dupire. Usa r BRL da DI1 (ou da ANBIMA), PTAX e vol do câmbio e correlação semanais | `RESULTS_quanto_*` | job do S&P 500 |
+| `10_validacao_adaptador_ibov` | Confere item a item que o adaptador IBOV do motor multiativos reproduz o 01 (só leitura) | — | manual |
+| `11_spx_validacao` | O 02 do S&P 500: integridade, superfície, forwards e carry, preço (Monte Carlo × Reiner-Rubinstein e replay) | `VALIDATION_spx_superficie_*` (só sem FAIL) | job do S&P 500 |
+
+Os notebooks de `databricks/cadernos/` explicam as equações (barreiras, curvas e risco) e não fazem parte da rodada
+diária. `FX__Charts.ipynb` e `test_fixed_income.py` são auxiliares.
+
+## 4. Motor de precificação (`src/ibov_barrier/`)
+
+### 4.1 Monte Carlo base
 
 O ativo segue
 
@@ -45,9 +116,220 @@ $$
 e^{-rT}(S_T-K)^+\mathbf{1}_{\{\min_{0\leq t\leq T}S_t>H\}}.
 $$
 
-`q` representa o dividend yield/custo de carregamento do índice. Para uso real, juros, dividendos e volatilidade devem ser calibrados às curvas e à superfície de mercado.
+- **Produção:** 200.000 caminhos × 252 passos (um por dia útil), semente 42.
+- **Monitoramento:** `brownian_bridge` estima o toque entre dois passos e tira o viés da discretização. `discrete`
+  olha só nas datas simuladas.
+- **Variável de controle:** a call vanilla de Black-Scholes, que reduz a variância.
+- **Gregas:** diferenças finitas centrais, com os mesmos números aleatórios.
 
-## Contrato-base
+### 4.2 Famílias de produtos
+
+| Família | Produtos | Benchmark independente |
+| :--- | :--- | :--- |
+| A: barreira simples | as 8 combinações Call/Put × Down/Up × In/Out, com rebate | Reiner-Rubinstein |
+| B: dupla barreira | Double Knock-Out e Knock-In (com rebate); KI/KO com 4 convenções de ordem | Ikeda-Kunitomo, paridade e densidades do primeiro toque |
+| C: estruturas | Straddle, Strangle, Risk Reversal, Collar, Call e Put Spread, Forward (Down, Up e Knock-In) | composição das barreiras simples |
+| D: digitais | One-Touch e No-Touch, Double One-Touch e No-Touch, Range Accrual | princípio da reflexão e séries de Fourier |
+| Dependentes da trajetória | Parisian e ParAsian, Step, Soft (janela) | cadeia de Markov e quadratura por segmentos |
+
+O inventário completo, com as convenções e as identidades testadas, está em
+[`INVENTARIO_MODELOS.md`](INVENTARIO_MODELOS.md).
+
+### 4.3 S&P 500 em reais (`pricing_quanto.py`)
+
+| Produto | Payoff em R$ | Como precifica |
+| :--- | :--- | :--- |
+| Quanto | `X_fix · max(S_T − K, 0)` | drift do S&P 500 ajustado por −ρ·σ_S·σ_X e desconto em r BRL |
+| Compo | `max(S_T·X_T − K_BRL, 0)` | Black sobre S·X com a vol combinada |
+| Convertida | `X_T · max(S_T − K, 0)` | `X_0` vezes o preço em US$ (referência) |
+
+Qualquer pricer do motor vira Quanto (a barreira é observada no próprio S&P 500). Um Monte Carlo de dois fatores
+confere as fórmulas e cobre a Compo com barreira, que não tem fórmula fechada. A vol do câmbio e a correlação são
+históricas, com retornos semanais: a PTAX fecha às 13:00 de Brasília e o S&P 500 às 16:00 de Nova York, e com
+retornos diários essa diferença de horário puxa a correlação para zero.
+
+### 4.4 Vol local (`local_vol.py`)
+
+SVI por vencimento na variância total, sem arbitragem de calendário, e vol local de Dupire na forma de Gatheral, com
+limites de 3% a 150%. O Monte Carlo com vol local reprecifica o smile do dia e é o preço de referência para as
+barreiras no notebook 09.
+
+### 4.5 Outros módulos
+
+| Módulo | Função |
+| :--- | :--- |
+| `markets/` | contrato comum (`MarketSpec`, `MarketSnapshot`, `MarketAdapter`), adaptadores IBOV e SPX, limpeza, paridade, núcleo de vol idêntico ao do notebook 01, contrato de referência e validação do S&P 500 |
+| `market_date.py` | D-1 por bolsa (B3, NYSE), no fuso de cada uma |
+| `b3_arquivos.py` | integridade dos ZIPs da B3 e gravação atômica |
+| `di_curve/` | curva DI1 (flat forward, spline, Nelson-Siegel-Svensson), swap DI × Pré, DV01, key-rate, PCA, conferência com a ANBIMA |
+| `risk.py`, `stress.py` | VaR e ES delta-gamma; reprecificação em cenários com cadeia de proveniência |
+| `results_bundle.py` | formato único dos arquivos RESULTS, lido pelo dashboard |
+| `markets/credentials.py` | onde ler a chave da ThetaData (nunca no código nem no repositório) |
+| `fixed_income/` | protótipo antigo de LTN, LFT e NTN-B (a versão nova fica no branch de renda fixa) |
+
+## 5. Dashboard (Databricks App)
+
+O app se chama `dashboard-renda-fixa` por razões históricas, mas é o app de **opções**. Roda Streamlit 1.38 no
+Databricks Apps e lê os arquivos da pasta de resultados pelo SDK do Databricks.
+
+- **Barra lateral:**
+  - o combo de instrumento (Ibovespa ou S&P 500), que também fica na URL (`?ativo=ibov` ou `?ativo=spx`);
+  - a lista de execuções, cada uma marcada como completa, sem risco ou não validada. O app abre na completa mais
+    recente;
+  - o botão do pipeline de cada ativo, com o andamento em horário de Brasília.
+- **Página do Ibovespa (6 abas):** Resumo do Gestor, Superfície e Volatilidade, Curvas de Mercado, Motor de
+  Precificação, Controle e Ingestão, Structuring Desk.
+- **Página do S&P 500 (8 abas):** Resumo do Gestor, Superfície e Smiles, Taxa e Dividendos, Motor de Precificação,
+  Controle e Ingestão, Quanto / Compo (BRL), Vol Local, Structuring Desk.
+- **Structuring Desk:**
+  - as 30 estratégias, com diagrama de payoff e, quando existe, o benchmark analítico;
+  - com "Usar dados de mercado do dia", o Desk lê spot, r(T), q(T) e a vol no strike da última execução, com as
+    mesmas regras do pipeline;
+  - no S&P 500, também em R$ (Quanto).
+- **Números:** no padrão brasileiro (ponto no milhar, vírgula no decimal).
+
+Detalhes em [`dashboard/README.md`](dashboard/README.md).
+
+## 6. Arquivos de resultado
+
+Pasta `/Workspace/Users/<usuário>/ibov-barrier-results/`:
+
+| Arquivo | Notebook | Conteúdo |
+| :--- | :--- | :--- |
+| `RESULTS_superficieVol_<AAAAMMDD_HHMMSS>.csv` | 01 | metadados, catálogo, preços, curvas, filtros, vols, superfície, vanilla e down-and-out, P(knock-out), erro-padrão, IC 95%, diagnóstico da simulação |
+| `VALIDATION_superficieVol_<carimbo>.json` | 02 | decisão, contagem dos controles e SHA-256 do RESULTS aprovado |
+| `RISK_superficieVol_<carimbo>.json` | 03 | gregas, DV01, convexidade, VaR, ES e as ressalvas da validação |
+| `RESULTS_`, `VALIDATION_` e `RISK_spx_superficie_<carimbo>` | 07, 11 e 03 | o mesmo conjunto para o S&P 500 |
+| `RESULTS_quanto_<carimbo>.csv` | 09 | Quanto, Compo, Convertida e vol local |
+| `STRESS_<carimbo>.xlsx` e `.json` | 04 | P&L por cenário e auditoria |
+
+Outras pastas:
+- `data/AAAA-MM-DD/`, dentro do Git folder: os ZIPs da B3, fora do git;
+- `/Workspace/Users/<usuário>/spx_dados/`:
+  - `brutos/`: a cadeia de cada dia, em parquet;
+  - `resumo_diario.parquet`: o histórico do 08;
+  - `ptax.parquet`: o cache do 09.
+
+## 7. Datas e cadeia de confiança
+
+### D-1 por bolsa
+
+Os notebooks usam `ibov_barrier.market_date`. A referência é a última sessão da bolsa estritamente anterior à data
+de execução, no fuso da própria bolsa: B3 em America/Sao_Paulo, NYSE em America/New_York.
+
+- Pastas de D0 ou de datas futuras são ignoradas. Não há fallback para uma fotografia antiga.
+- **Exemplo:** uma execução em 22/09/2026 usa o mercado de 21/09/2026.
+- **Nomes dos arquivos:** RESULTS, VALIDATION e RISK levam o carimbo da execução, não a data de mercado.
+- **Fusos:** entre 00:00 de São Paulo e 00:00 de Nova York, os dois mercados enxergam D diferentes. O código trata
+  isso.
+- **Dependência fixada:** `exchange-calendars==4.13.2`. Sem o calendário, ou fora da cobertura dele, a rotina para.
+  Não substitua por calendário bancário nem por dias da semana.
+- **Feriados da B3:** revise periodicamente contra os comunicados oficiais. Fonte de conferência para 2026:
+  [Ofício B3 054/2025-VNC](https://www.b3.com.br/data/files/21/F3/6B/17/6FAEA9105B12E5A9AC094EA8/CL%20054-2025-VNC%20CALENDARIO%20DE%20FERIADOS%20EM%202026%20E%20FUNCIONAMENTO%20DA%20B3%20EM%2018022026%20QUARTAFEIRA%20DE%20CINZAS_EN.pdf).
+
+O que cada notebook faz com a data:
+
+| Notebook | Regra |
+| :--- | :--- |
+| 00 | `START_DATE` e `END_DATE` iguais a `None` selecionam o D-1. Um intervalo explícito, para coleta histórica, não passa do D-1. Datas sem sessão são puladas; falha numa sessão esperada interrompe |
+| 01 | `MARKET_DATE` explícita só é aceita se for o D-1 |
+| 02 | exige RESULTS gerado hoje, com mercado D-1 |
+| 03 | reconfirma o D-1 e a mesma data de mercado em RESULTS e VALIDATION |
+
+### Integridade dos dados da B3
+
+- Antes de precificar ou validar, cada ZIP precisa ter o nome exato, CRC íntegro e data interna compatível:
+  `RptDtAndTm` no IN, `TradDt` no IR, PR e SPRD.
+- No PR, a data é conferida nos registros do Ibovespa que o pricer usa, porque o arquivo traz outros mercados, que
+  podem ter datas diferentes.
+- Vale a publicação com o maior carimbo interno do ZIP.
+- Dados ausentes, corrompidos ou incompatíveis bloqueiam a rodada sem alterar arquivos.
+- O 00 baixa de novo a data que tiver ZIP faltando ou corrompido, e grava cada arquivo de forma atômica.
+
+### Cadeia de confiança
+
+| Etapa | O que garante |
+| :--- | :--- |
+| VALIDATION | só é gravado sem FAIL e leva o SHA-256 do RESULTS |
+| RISK | recusa um RESULTS diferente do que foi validado |
+| STRESS | confere RESULTS → VALIDATION → RISK antes de reprecificar |
+| Replay | o 02 e o 11 refazem a precificação com a mesma semente e exigem o mesmo preço, erro-padrão, P(knock-out) e IC |
+
+## 8. Validações do modelo
+
+Propriedades verificadas nos testes e na rodada diária:
+
+- a opção com barreira não vale mais que a call vanilla;
+- barreira já violada implica preço zero;
+- barreira muito baixa converge para a call vanilla;
+- o preço sobe com o spot e cai quando a barreira sobe;
+- Knock-In + Knock-Out = vanilla (paridade exata, com os mesmos caminhos);
+- parâmetros não finitos e entradas aleatórias inválidas são rejeitados;
+- metadados, preço e diagnóstico da simulação são consistentes entre si;
+- o Monte Carlo bate com a fórmula fechada de Reiner-Rubinstein (erro abaixo de 0,02%) nos dois regimes, K ≥ H e
+  K < H.
+
+No S&P 500, o 11 também confere:
+- r, q, forward e vol do contrato, reproduzidos a partir da superfície;
+- a cobertura da superfície e os cortes por arbitragem;
+- a distância entre o spot da paridade e o fechamento oficial;
+- a distância entre o r implícito e a SOFR.
+
+A reexecução comprova integração, persistência e reprodutibilidade. Ela não substitui uma validação independente
+do modelo, papel que cabe aos benchmarks analíticos.
+
+## 9. Testes
+
+Verificação local:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m unittest discover -s tests -v
+```
+
+Em 24/11/2026: **309 testes, todos verdes**. Os testes de calendário, de curva DI e do adaptador IBOV precisam de
+`exchange-calendars` e `lxml`, que estão no `pyproject.toml`. Os do dashboard precisam de Streamlit e Plotly
+(`dashboard/requirements.txt`). Quando falta uma dessas bibliotecas, esses testes são pulados ou não carregam.
+
+| Módulo de teste | Testes | O que cobre |
+| :--- | ---: | :--- |
+| `test_pricing.py` | 40 | motor Monte Carlo, validação das entradas, reprodutibilidade, gregas |
+| `test_markets_spx.py` | 30 | adaptador do S&P 500: normalização da ThetaData, prazos AM/PM, núcleo de vol idêntico ao do notebook 01, paridade, limpeza com problemas injetados |
+| `test_extensions.py` | 23 | rebate, binários Down, estruturas Knock-In, Range Accrual, Double Touch |
+| `test_double_barriers.py` | 19 | família B: DKO, DKI e as 4 convenções KI/KO contra benchmarks analíticos |
+| `test_dashboard_multiativos.py` | 18 | contrato entre os notebooks 07 e 09 (gravação) e as abas do S&P 500 (leitura e desenho) |
+| `test_di_curve/` | 17 | curva DI, convenções, curvas de mercado e swap |
+| `test_market_date.py` | 16 | D-1 pelo calendário da B3 e integridade da fotografia de mercado |
+| `test_quanto.py` | 15 | Quanto, Compo e Convertida; Monte Carlo de dois fatores contra as fórmulas fechadas |
+| `test_path_barriers.py` | 14 | Parisian, Step e Soft contra quadraturas semi-analíticas |
+| `test_fx_inputs.py` | 14 | PTAX, conversão de taxas, ETTJ da ANBIMA, SPRD e fechamentos da ThetaData |
+| `test_dashboard_pipeline.py` | 13 | execução completa (RESULTS → VALIDATION → RISK), disparo do job e números no padrão brasileiro |
+| `test_stress.py` | 12 | cenários de stress |
+| `test_market_date_multi.py` | 11 | D-1 por bolsa, fusos de São Paulo e Nova York, feriados da NYSE |
+| `test_local_vol.py` | 10 | SVI, Dupire e Monte Carlo com vol local |
+| `test_dashboard_desk.py` | 10 | Structuring Desk com os dados de mercado do dia, nos dois ativos |
+| `test_spx_referencia.py` | 9 | contrato de referência do S&P 500, cadeia do dia em disco e validação do notebook 11 |
+| `test_rebate_accrual.py` | 8 | rebate nas funções Knock-Out originais e taxa de accrual |
+| `test_risk.py` | 7 | VaR, ES e métricas de risco |
+| `test_markets_ibov.py` | 6 | adaptador IBOV contra as próprias células do notebook 01 |
+| `test_credentials.py` | 6 | chave da ThetaData: ordem das fontes, nunca exposta em log |
+| `test_b3_arquivos.py` | 5 | ZIP da B3 truncado não passa por "já baixado" |
+| `test_dashboard_app.py` | 3 | o app inteiro no AppTest do Streamlit, com uma pasta de resultados sintética |
+| `test_analytical.py` | 2 | Reiner-Rubinstein |
+| `test_barrier_types.py` | 1 | paridade e tipos de barreira |
+
+## 10. Como executar
+
+### Local
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -e .
+python -m unittest discover -s tests -v
+python -m ibov_barrier.cli --paths 100000 --seed 42
+```
+
+O CLI precifica um contrato de exemplo, com 500.000 caminhos × 126 passos por padrão:
 
 | Parâmetro | Valor |
 |---|---:|
@@ -57,227 +339,95 @@ $$
 | Vencimento | 0,5 ano |
 | Volatilidade | 22% a.a. |
 | Taxa livre de risco | 12% a.a. |
-| Dividend yield/carry | 0% a.a. |
-| Passos | 252 |
-| Simulações | 200.000 |
+| Dividend yield | 0% a.a. |
 
-Parâmetros de produção do Monte Carlo: `MC_PATHS = 200.000` (padrão ouro para processamento batch/EOD) e `MC_STEPS = 252` (1 passo por dia útil, eliminando o viés de discretização).
+O S&P 500 local exige Python 3.12 e a biblioteca `thetadata`. A chave é gravada fora do repositório e do OneDrive
+com `python tools/set_thetadata_key.py`, que nunca mostra a chave na tela.
 
-## Como executar
+### Databricks
 
-```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -e .
-python -m ibov_barrier.cli
-python -m unittest discover -s tests -v
-```
+- **Git folder de produção:** `LuizRocha_Databricks_OptionsPrice`, no `main`. Atualiza por Pull (fast-forward).
+- **Jobs:** os da seção 2, em serverless.
+- **Notebooks do S&P 500 (07, 08, 09 e 11):** precisam do cabeçalho de ambiente serverless
+  `environment_version = "6"` (Python 3.12). Sem ele, o serverless usa Python 3.11 e a `thetadata` não instala.
+- **Chave da ThetaData:** fica no Secret `quantita/thetadata_api_key` e nunca aparece em notebook.
+- **App:** deploy a partir de `ibov-barrier-option-mvp/dashboard` no Git folder de produção. O `app.yaml` define a
+  pasta de resultados e o nome dos dois jobs. O service principal do app precisa de CAN_MANAGE_RUN nos jobs do
+  botão.
 
-Para uma execução rápida:
+## 11. Limitações conhecidas
 
-```bash
-python -m ibov_barrier.cli --paths 100000 --seed 42
-```
+### Dividend yield implícito do Ibovespa abaixo do histórico
 
-## Estrutura do Projeto
+O q(T) inferido do futuro de Ibovespa (IND) por F = S·exp((r−q)·T) ficou em ~0,8% a.a. em 23 a 25/09/2026,
+estável, com desvio-padrão de 5,87 bps. O dividend yield histórico (série NEFIN/USP) está em 5% a 7% a.a.
 
-Os notebooks estão organizados em duas subpastas dentro de `databricks/`:
+Três fontes confirmam que o subjacente do IND é o Ibovespa de preço, não o de retorno total:
+- a especificação da B3;
+- o campo `AsstDesc` do arquivo IN;
+- o campo `Desc` do arquivo IN.
 
-```text
-databricks/
-├── rotinas/                        # fluxo operacional diário
-│   ├── 00_coleta_dados_b3.py
-│   ├── 01_main_option_pricer.py
-│   ├── 02_validacao_pos_pricing.py
-│   ├── 03_analise_risco.py
-│   └── 04_cenarios_stress.py
-├── cadernos/                       # material explicativo (não operacional)
-│   ├── caderno_equacoes_completo.py
-│   ├── caderno_equacoes_barrier_pricing.py
-│   ├── caderno_equacoes_curvas_mercado.py
-│   └── caderno_equacoes_risco.py
-└── templates/                      # templates de entrada
-    └── stress_scenarios.xlsx       # cenários de stress test (1 aba por cenário)
-```
+A fórmula F = S·(1+r_DI)^(DU/252)·e^(−q·DU/252) é a convenção de mesa, e `di_curve/market_curves.py` segue essa
+convenção. O q baixo reflete o que o mercado precifica, não um erro de cálculo.
 
-### Fluxo operacional diário (`databricks/rotinas/`)
+Hipóteses:
+1. dividendos concentrados em abril e maio e em agosto a novembro;
+2. expectativa de corte de proventos;
+3. prêmio de liquidez ou carry no IND;
+4. uma base de desconto diferente do DI1.
 
-Notebooks para execução operacional (ordem de execução):
+Impacto: o q baixo eleva o forward, o preço da call e a probabilidade de knock-out. Trocar só a contagem de dias
+mudou o preço da barreira em +1,32%.
 
-1. **`rotinas/00_coleta_dados_b3.py`** — Download automático dos arquivos diários da B3 (IN, IR, PR, SPRD)
-2. **`rotinas/01_main_option_pricer.py`** — Pipeline principal: leitura de dados B3, construção de curvas de mercado, superfície de volatilidade implícita e geração do resultado diário (`RESULTS_superficieVol_YYYYMMDD_HHMMSS.csv`)
-3. **`rotinas/02_validacao_pos_pricing.py`** — Validação de qualidade dos dados e resultados do pricer. Exige execução do `rotinas/01_main_option_pricer` no mesmo dia.
-4. **`rotinas/03_analise_risco.py`** — Calcula gregas, DV01, convexidade de taxa, VaR e Expected Shortfall somente para um resultado aprovado pelo notebook 02.
+### Demais limitações
 
-### Material explicativo e de desenvolvimento (`databricks/cadernos/`)
+- **Juros do S&P 500 acima da SOFR:**
+  - em 78 pregões (03/08 a 19/11/2026), o r implícito na paridade ficou de +75 a +115 bps acima da SOFR overnight,
+    crescendo com o prazo;
+  - o resultado é igual nos três métodos (10 pares do ATM, regressão ampla e box spread). É característica do
+    mercado de opções, e o pipeline usa o r implícito, coerente com os preços.
+- **Spot do S&P 500:** o EOD das opções sai por volta das 17:15 ET, depois do fechamento do índice (16:00). Por isso
+  o padrão é o spot da paridade, que deixa o q estável. O fechamento oficial fica registrado no RESULTS.
+- **Cortes por arbitragem no S&P 500:** em 23/11/2026, 19,3% dos pontos caíram nos filtros de vertical e butterfly,
+  acima do limite de 15% do 11. O resultado foi um WARN, e o critério está em avaliação.
+- **Dias de baixa cobertura:** são marcados, não descartados. Exemplos: 19 a 30/10 e 05/11/2026 no S&P 500.
+- **VaR e ES:** são delta-gamma, com choques lognormais de spot. Não são históricos e não incluem choques conjuntos
+  de vol e de curva.
+- **Exercício:** o motor só aceita opções europeias. ETFs como SPY e QQQ ficam de fora.
+- **Armazenamento:** os resultados são arquivos no workspace. As tabelas Delta por mercado ainda não foram feitas.
 
-Notebooks de referência (não precisam ser executados no fluxo operacional):
+## 12. Histórico e próximos passos
 
-- **`cadernos/caderno_equacoes_completo.py`** — Referência completa de equações e fundamentos teóricos
-- **`cadernos/caderno_equacoes_barrier_pricing.py`** — Monte Carlo para opções com barreira, variáveis de controle, Brownian Bridge
-- **`cadernos/caderno_equacoes_curvas_mercado.py`** — Construção de curvas DI e dividend yield implícito
-- **`cadernos/caderno_equacoes_risco.py`** — Convenções e equações de gregas, DV01, convexidade de taxa, VaR e Expected Shortfall
+| Data | Marco |
+| :--- | :--- |
+| set/2026 | rodada diária do Ibovespa em produção (coleta da B3, superfície, Monte Carlo com ponte browniana, validação e risco), com histórico da B3 desde 03/08/2026 |
+| até 18/11/2026 | roadmap de 10 modelos concluído (famílias A a D, Parisian, Step e Soft) e Feature Freeze |
+| 23/11/2026 | motor multiativos no `main`: S&P 500, Quanto/Compo e vol local |
+| 24/11/2026 | dashboard com a página do S&P 500 e o Desk multiativo em produção; job diário do S&P 500 ativo |
 
-### Saída do pipeline
+Próximos passos:
+1. versão nova do [`WORKING_PAPER.md`](WORKING_PAPER.md), hoje com o texto de 18/11/2026;
+2. estudo de um framework de estruturados (COE): bond do emissor, pacote de opções e hedge;
+3. tabelas Delta por mercado;
+4. um único job agendado para o Ibovespa (hoje são dois: o agendado e o do botão);
+5. revisão do limite de cortes por arbitragem do 11.
 
-O notebook `01_main_option_pricer` gera e salva automaticamente o arquivo:
+## 13. Projeto irmão: renda fixa pública
 
-```
-/Workspace/Users/<username>/ibov-barrier-results/RESULTS_superficieVol_YYYYMMDD_HHMMSS.csv
-```
+A renda fixa pública brasileira é um projeto separado:
+- **Branch e pasta:** `feature/renda-fixa-publica`, pasta `renda-fixa-publica/`;
+- **App:** `renda-fixa-publica`;
+- **Conteúdo:** títulos públicos (LTN, NTN-F, NTN-B, LFT e NTN-C), DI1/DAP e swaps, com o PU conferido contra a
+  ANBIMA.
 
-Este arquivo contém:
-- Metadata da execução (spot, target strike/maturity, taxas r/q, volatilidade interpolada)
-- Catálogo de opções, preços, curvas, filtros aplicados, volatilidades implícitas e pontos da superfície
-- Resultado da call vanilla e da down-and-out, desconto da barreira, probabilidade de knock-out, erro-padrão e IC 95%
-- Diagnósticos da simulação (caminhos, passos, seed, monitoramento, timestamp e data de mercado)
+Ele não importa nada deste pacote. O app de opções e o de renda fixa continuam separados de propósito.
 
-O notebook `02_validacao_pos_pricing`:
-- Lê automaticamente o resultado mais recente
-- Valida que foi gerado **hoje**
-- Verifica integridade dos dados, curvas, preços e superfície
-- Reconcilia `metadata`, `pricing_result` e `simulation_diagnostics`
-- Repete deterministicamente a precificação com o mesmo motor e a mesma seed
-- Consolida controles em `PASS`, `WARN` e `FAIL` e interrompe a execução quando houver qualquer `FAIL`
-- Interrompe a execução se o `01_main_option_pricer` não foi executado no dia corrente
-- Persiste `VALIDATION_superficieVol_YYYYMMDD_HHMMSS.json`, com decisão, contagens de controles e SHA-256 do `RESULTS` aprovado
+## Documentos
 
-O notebook `03_analise_risco`:
-- exige `FAIL=0` e decisão `APROVADO` ou `APROVADO COM RESSALVAS`;
-- verifica se a validação corresponde ao mesmo `RESULTS` por nome e SHA-256;
-- calcula Delta, Gamma, Vega, Theta, Rho, DV01 e convexidade de taxa;
-- calcula VaR e Expected Shortfall model-based por aproximação delta-gamma do risco de spot;
-- carrega e exibe as ressalvas de qualidade produzidas pelo notebook 02;
-- persiste `RISK_superficieVol_YYYYMMDD_HHMMSS.json` fora da Git Folder.
-
-5. **`rotinas/04_cenarios_stress.py`** — Cenários e Stress Test:
-   - Consome um conjunto coerente de RESULTS, VALIDATION e RISK aprovados
-   - Verifica proveniência: schema, `FAIL=0`, `approved_for_risk`, SHA-256 e referências entre arquivos
-   - Lê cenários de uma planilha Excel (`templates/stress_scenarios.xlsx`), uma aba por cenário
-   - Cada aba define choques de spot (%), volatilidade (abs.) e taxa (bp), lado da posição (`COMPRADO`/`VENDIDO`) e `QtdPontos`
-   - Reutiliza o motor de Monte Carlo existente com números aleatórios comuns entre base e cenário
-   - Se o spot estressado atinge ou cruza a barreira, a opção é zerada (knock-out sem rebate)
-   - Calcula P&L em pontos do índice: `P&L = (preço_estressado - preço_base) * QtdPontos` (comprado) ou sinal oposto (vendido)
-   - Aba com entradas inválidas registra mensagem na própria aba sem interromper os demais cenários
-   - Gera `STRESS_YYYYMMDD_HHMMSS.xlsx` (abas dos cenários + aba `RESUMO`) e `STRESS_YYYYMMDD_HHMMSS.json` (auditoria completa)
-   - O Excel de entrada é preservado; não há sobrescrita de arquivos anteriores
-
-### Módulo de stress test (`src/ibov_barrier/stress.py`)
-
-Motor reutilizável para reprecificação sob choques:
-
-- `ScenarioInput` — define nome, choques (spot %, vol abs., rate bp), lado e `QtdPontos`
-- `SimulationParams` — replay dos parâmetros de Monte Carlo da execução base
-- `verify_provenance` — verifica a cadeia de confiança RESULTS -> VALIDATION -> RISK (schema, SHA-256, `FAIL=0`, `approved_for_risk`)
-- `run_scenario` — aplica choques, reprecifica com CRN e calcula P&L em pontos do índice
-- `run_all_scenarios` — executa todos os cenários com números aleatórios comuns
-
-> O VaR/ES inicial usa choques lognormais de spot e aproximação delta-gamma. Não é VaR
-> histórico e não inclui choques conjuntos de volatilidade e curva.
->
-> Cenários e stress testing são implementados no notebook 04 (ver acima).
-
-## Validações implementadas
-
-### Referência operacional D−1 B3
-
-Os notebooks 00–03 usam `ibov_barrier.market_date`: a referência é a última
-sessão B3/BVMF estritamente anterior à data de execução em America/Sao_Paulo.
-Pastas de D0 ou futuras são ignoradas. Não há fallback para uma fotografia antiga.
-Exemplo: execução em 22/09/2026 usa mercado de 21/09/2026; os nomes RESULTS,
-VALIDATION e RISK mantêm o timestamp da execução, não a data de mercado.
-
-Dependência fixada: `exchange-calendars==4.13.2` (calendário BVMF). Os notebooks
-declaram essa dependência no ambiente Databricks; se necessário, configure-a nas
-dependências do Serverless antes de executar. Sem o calendário ou fora de sua
-cobertura, a rotina deve parar. Não substitua por calendário bancário ou weekdays.
-Revisar periodicamente contra os comunicados oficiais da B3, especialmente
-feriados extraordinários e mudanças anuais. Fonte de conferência para 2026:
-[Ofício B3 054/2025-VNC](https://www.b3.com.br/data/files/21/F3/6B/17/6FAEA9105B12E5A9AC094EA8/CL%20054-2025-VNC%20CALENDARIO%20DE%20FERIADOS%20EM%202026%20E%20FUNCIONAMENTO%20DA%20B3%20EM%2018022026%20QUARTAFEIRA%20DE%20CINZAS_EN.pdf).
-
-No 00, START_DATE e END_DATE iguais a None selecionam D−1 automaticamente.
-Intervalos explícitos continuam disponíveis para coleta histórica, mas não podem
-ultrapassar D−1. Datas sem sessão são puladas; falha em sessão esperada interrompe.
-No 01, MARKET_DATE explícita somente é aceita se coincidir com D−1; None é o padrão.
-O 02 exige RESULT produzido hoje e mercado D−1, em vez da maior pasta disponível.
-O 03 reconfirma D−1 e a igualdade da data de mercado entre RESULTS e VALIDATION.
-
-Antes de precificar/validar, exige-se cada ZIP com nome exato, integridade CRC e
-publicação XML selecionada com data de referência compatível (`RptDtAndTm` para
-IN, `TradDt` para IR/PR/SPRD). No PR verificam-se os registros IBOV consumidos
-pelo pricer: o arquivo também contém outros mercados, que podem ter datas distintas.
-A publicação selecionada é a de maior timestamp interno do ZIP, como no 01.
-Datas de vencimento/criação não são usadas como data de mercado.
-Dados ausentes, corrompidos ou incompatíveis bloqueiam sem alterar arquivos.
-
-Verificação local: `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m unittest discover -s tests -v`.
-
-Cobertura de testes unitários (159 no total):
-
-| Módulo de teste | Testes | O que cobre |
-| :--- | ---: | :--- |
-| `test_pricing.py` | 40 | Motor Monte Carlo, validações de entrada, reprodutibilidade, gregas |
-| `test_extensions.py` | 23 | Rebate, binários Down, estruturas Knock-In, Range Accrual, Double Touch |
-| `test_double_barriers.py` | 19 | Família B: DKO/DKI e as 4 convenções KI/KO contra benchmarks analíticos |
-| `test_market_date.py` | 16 | Seleção automática de D-1 pelo calendário B3 |
-| `test_di_curve/` | 17 | Curva DI, convenções, curvas de mercado e swap |
-| `test_path_barriers.py` | 14 | Parisian, Step e Soft contra quadraturas semi-analíticas |
-| `test_stress.py` | 12 | Cenários de stress |
-| `test_rebate_accrual.py` | 8 | Rebate nas funções Knock-Out originais e taxa de accrual |
-| `test_risk.py` | 7 | VaR, ES e métricas de risco |
-| `test_analytical.py` | 2 | Reiner-Rubinstein |
-| `test_barrier_types.py` | 1 | Paridade e tipos de barreira |
-
-- a opção com barreira não pode valer mais que a call vanilla;
-- barreira já violada implica preço zero;
-- barreira muito baixa converge para a call vanilla;
-- o preço aumenta com o spot e diminui quando a barreira sobe;
-- resultados são reproduzíveis com semente fixa.
-- parâmetros não finitos e arrays aleatórios inválidos são rejeitados pelo motor;
-- metadata, resultado de pricing e diagnóstico da simulação devem ser internamente consistentes;
-- a reexecução determinística deve reproduzir preço, erro-padrão, probabilidade de knock-out e IC.
-
-> A reexecução no notebook de validação comprova integração, persistência e
-> reprodutibilidade. Ela não substitui uma validação independente do modelo; o
-> benchmark analítico de Reiner–Rubinstein está implementado e validado (ver abaixo).
-
-### Benchmark Analítico (Reiner-Rubinstein)
-
-O motor de Monte Carlo é validado contra a fórmula fechada de Reiner-Rubinstein para opções com barreira (regimes K>=H e K<H com termo digital). O erro entre o modelo estocástico e o analítico é inferior a 0,02%, garantindo precisão de nível institucional.
-
-## Limitações conhecidas
-
-### Dividend yield implícito (q) abaixo do histórico
-
-O q(T) inferido do futuro de Ibovespa (IND) via F = S·exp((r−q)·T) está em ~0.8% a.a. nos dias 23-25/09/2026 (estável, desvio-padrão de 5.87 bps). O dividend yield histórico do mercado brasileiro, segundo a série NEFIN/USP, está em 5-7% a.a. no mesmo período.
-
-**Confirmação do ativo subjacente (três fontes independentes):**
-
-1. **Especificação oficial da B3** (Ibovespa Futures Contract): "Underlying: Standardized futures contract based on the Bovespa Index (Ibovespa)".
-2. **Campo AsstDesc do arquivo IN** (cadastro de instrumentos): `AsstDesc: Ibovespa` para todos os contratos IND.
-3. **Campo Desc do arquivo IN**: `Desc: INDICE BOVESPA`.
-
-Não há menção a IBOVTR ou Total Return em nenhuma das fontes. O contrato IND tem como subjacente o **Ibovespa puro**, que é um price index (desconta dividendos em ex-proventos).
-
-A fórmula F = S·(1+r_DI)^(DU/252)·e^(−q·DU/252) é a metodologia padrão de mesa, e a implementação em `di_curve/market_curves.py` está alinhada com a convenção de mercado. O q(T) baixo reflete o que o mercado está precificando, não um erro de cálculo.
-
-Hipóteses para o q(T) abaixo do histórico:
-
-1. **Concentração temporal de dividendos** — a DY anual do NEFIN é trailing de 12 meses, mas os proventos brasileiros concentram-se em abr-mai e ago-nov. A janela do vencimento analisado pode ter poucos pagamentos.
-2. **Expectativa de corte de dividendos** — normalização dos proventos de Vale/Petrobras após dividendos recordes em 2024-2025.
-3. **Prêmio de liquidez/carry no contrato IND** — fluxo de hedge de estrangeiros pode comprimir o q implícito.
-4. **Base de desconto diferente do DI1** — possibilidade de a mesa usar curva com spread (cupom cambial) em vez do DI1 puro.
-
-Impacto na precificação: o q baixo eleva o forward e, consequentemente, o preço da call e a probabilidade de knock-out. Para produtos com barreira, isso é material. A comparação controlada (mesma data de mercado, apenas day count alterado) mostrou delta de +1.32% no preço do barrier.
-
-**Próximos passos:** investigar hipótese 1 (calendário de proventos das top 10 empresas do IBOV entre set/2026 e abr/2027) em PR separado.
-
-
-## Próximas etapas
-
-1. ✅ Calibrar a curva DI e o carry implícito com futuro de Ibovespa
-2. ✅ Calibrar volatilidade pela superfície de opções
-3. ✅ Acrescentar fórmula fechada de Reiner–Rubinstein como benchmark
-4. ✅ Implementar knock-in, up-and-out, paridade in/out e rebate
-5. ✅ Cenários de estresse (`rotinas/04_cenarios_stress.py`); P&L explain e tabelas Delta para Databricks ficam para depois do Feature Freeze
-6. ✅ Roadmap de 10 modelos de barreira concluído (Famílias A-D, Parisian, Step e Soft); projeto em Feature Freeze
+| Documento | Conteúdo |
+| :--- | :--- |
+| [`INVENTARIO_MODELOS.md`](INVENTARIO_MODELOS.md) | todos os produtos, convenções e benchmarks |
+| [`ARQUITETURA_MULTIATIVOS.md`](ARQUITETURA_MULTIATIVOS.md) | contrato entre mercados, regras do S&P 500, limpeza, Quanto e vol local |
+| [`dashboard/README.md`](dashboard/README.md) | abas, Structuring Desk, pipeline pelo app e deploy |
+| [`WORKING_PAPER.md`](WORKING_PAPER.md) | texto acadêmico do projeto (versão de 18/11/2026) |
+| `databricks/cadernos/` | equações de barreiras, curvas e risco |

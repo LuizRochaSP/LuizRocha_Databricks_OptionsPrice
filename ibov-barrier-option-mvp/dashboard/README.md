@@ -1,6 +1,9 @@
-# Dashboard Renda Fixa — Databricks Apps
+# Dashboard de Opções (Ibovespa e S&P 500) — Databricks Apps
 
-Dashboard Streamlit para visualizar os resultados do projeto de precificação de opção com barreira sobre Ibovespa. Roda como **Databricks App** — a solução oficial de hospedagem de aplicações web do Databricks.
+Dashboard Streamlit com os resultados de precificação e risco das opções sobre o Ibovespa e o S&P 500, e o
+Structuring Desk. Roda como **Databricks App**, a hospedagem de aplicações web do próprio Databricks. O app se chama
+`dashboard-renda-fixa` por razões históricas: é o app de **opções**. A renda fixa pública tem app próprio
+(`renda-fixa-publica`, branch `feature/renda-fixa-publica`).
 
 ## Arquitetura
 
@@ -31,25 +34,25 @@ dashboard/
 
 ## Como Fazer Deploy
 
-### Pré-requisitos
+### Atualizar o app (o caso normal)
 
-- Workspace Databricks com Apps habilitado
-- Permissão para criar Apps
-- Código commitado na branch `feature/streamlit-dashboard`
+1. Commit e push no `main`.
+2. No Git folder de produção `LuizRocha_Databricks_OptionsPrice` (branch `main`), **Pull**.
+3. Deploy do `dashboard-renda-fixa` a partir de
+   `/Workspace/Users/<usuário>/LuizRocha_Databricks_OptionsPrice/ibov-barrier-option-mvp/dashboard`.
 
-### Passo a Passo
+Mudanças só em documentação (`*.md`) não exigem deploy.
 
-1. No Databricks: menu lateral → **Compute** → **Apps**
-2. Clique em **"Create app"**
-3. Preencha:
-   - **Name:** `dashboard-renda-fixa`
-   - **Source:** Git repository
-   - **Repo:** `LuizRochaSP/LuizRocha_Databricks_OptionsPrice`
-   - **Branch:** `feature/streamlit-dashboard`
-   - **Path:** `ibov-barrier-option-mvp/dashboard`
-4. Clique em **"Create"**
+### Criar o app do zero
 
-Databricks Apps vai ler o `app.yaml`, instalar as deps do `requirements.txt`, rodar o `app.py` e gerar uma URL HTTPS.
+1. No Databricks: menu lateral → **Compute** → **Apps** → **Create app**.
+2. **Name:** o nome do app; o atual é `dashboard-renda-fixa`. O Databricks não permite renomear um app, e um nome
+   novo gera outra URL.
+3. **Source:** a pasta `ibov-barrier-option-mvp/dashboard` do Git folder de produção, no `main`.
+4. Dê CAN_MANAGE_RUN ao service principal do app nos jobs `opcoes-pipeline-ibov` e `opcoes-pipeline-spx`.
+
+O Databricks Apps lê o `app.yaml`, instala as dependências do `requirements.txt`, roda o `app.py` e gera uma URL
+HTTPS. O app pode parar depois de um tempo sem uso, e basta dar Start para ele voltar.
 
 ## Abas do Dashboard
 
@@ -99,7 +102,7 @@ Para apontar para outra pasta, edite o `app.yaml` e faça redeploy.
 |---|---|---|
 | Hospedagem | Container efêmero | Container dedicado |
 | URL | Proxy temporário | HTTPS permanente |
-| Hibernação | Sim | Não |
+| Hibernação | Sim | Pode parar sem uso; volta com Start |
 | Deploy | Runtime | UI + versionamento Git |
 
 ## Execução completa e pipeline
