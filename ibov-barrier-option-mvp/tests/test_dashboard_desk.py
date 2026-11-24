@@ -2,6 +2,7 @@
 import importlib.util
 import math
 import sys
+import tempfile
 import textwrap
 import unittest
 from pathlib import Path
@@ -104,8 +105,14 @@ class MercadoTests(unittest.TestCase):
 
 
 def _num(texto: str) -> float:
-    """'US$ 1,234.56' -> 1234.56 (sem formato_br no script de teste)."""
-    return float(texto.split()[-1].replace(",", ""))
+    """'US$ 1.234,56' -> 1234.56 (o script instala o formato_br, como o app)."""
+    return float(texto.split()[-1].replace(".", "").replace(",", "."))
+
+
+def _br(texto: str) -> str:
+    """O mesmo texto no padrão brasileiro que o app mostra (ponto no milhar, vírgula no decimal)."""
+    import formato_br
+    return formato_br.br_texto(texto)
 
 
 @unittest.skipUnless(HAS_ST, "streamlit/plotly/scipy ausentes")
@@ -117,6 +124,9 @@ class DeskAppTests(unittest.TestCase):
         script = DADOS + textwrap.dedent(f"""
             import sys
             sys.path.insert(0, r"{DASHBOARD}")
+            import streamlit as st
+            import formato_br
+            formato_br.instalar(st)  # como o app: números no padrão brasileiro
             import desk
             import mercado as mk
             if "{ativo}" == "ibov":
@@ -125,7 +135,13 @@ class DeskAppTests(unittest.TestCase):
             else:
                 desk.render(desk.SPX, mk.mercado_spx(SPX) if {com_mercado} else None, QUANTO_REF)
         """)
-        return AppTest.from_string(script, default_timeout=300).run()
+        # arquivo em UTF-8 + from_file: no Streamlit 1.38 (o do Databricks Apps), o from_string grava o script na
+        # codificação do sistema e não lê os acentos de volta no Windows
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        arq = Path(tmp.name) / "desk_app.py"
+        arq.write_text(script, encoding="utf-8")
+        return AppTest.from_file(str(arq), default_timeout=300).run()
 
     @staticmethod
     def calcular(at):
@@ -148,8 +164,8 @@ class DeskAppTests(unittest.TestCase):
         esperado = price_single_barrier(MarketData(172000.0, 0.12, 0.02, 0.20),
                                         BarrierContract(172000.0 * 0.9, 172000.0 * 0.8, 0.5), option_type="call",
                                         direction="down", knock="out", rebate=0.0, paths=50_000, steps=126, seed=42)
-        self.assertEqual(metrics["Preço da Estrutura"], f"R$ {esperado.price:,.2f}")
-        self.assertEqual(metrics["Preço Vanilla"], f"R$ {esperado.vanilla_price:,.2f}")
+        self.assertEqual(metrics["Preço da Estrutura"], _br(f"R$ {esperado.price:,.2f}"))
+        self.assertEqual(metrics["Preço Vanilla"], _br(f"R$ {esperado.vanilla_price:,.2f}"))
 
     def test_spx_aceita_o_spot_do_indice(self):
         at = self.app("spx", com_mercado=False)
@@ -170,8 +186,8 @@ class DeskAppTests(unittest.TestCase):
         m = mk.mercado_spx(NS["SPX"])
         vol, _ = m.vol(6910.39 * 0.9, 0.5)  # strike padrão 90%, prazo padrão 6 meses (126/252)
         texto = " ".join(x.value for x in at.markdown)
-        self.assertIn(f"**{vol:.2%}**", texto)
-        self.assertIn(f"**{m.r(0.5):.3%}**", texto)
+        self.assertIn(_br(f"**{vol:.2%}**"), texto)
+        self.assertIn(_br(f"**{m.r(0.5):.3%}**"), texto)
 
     def test_spx_quanto_bate_com_a_formula_fechada(self):
         from ibov_barrier.pricing_quanto import QuantoMarket, price_quanto_vanilla, quanto_market_data
@@ -191,7 +207,7 @@ class DeskAppTests(unittest.TestCase):
         self.assertAlmostEqual(_num(metrics["Preço Vanilla"]), price_quanto_vanilla(qm, K, T), places=2)
         res = price_single_barrier(quanto_market_data(qm), BarrierContract(K, H, T), option_type="call",
                                    direction="down", knock="out", rebate=0.0, paths=50_000, steps=126, seed=42)
-        self.assertEqual(metrics["Preço da Estrutura"], f"R$ {res.price * ref['X0']:,.2f}")
+        self.assertEqual(metrics["Preço da Estrutura"], _br(f"R$ {res.price * ref['X0']:,.2f}"))
         self.assertTrue(any("Ajuste Quanto" in c.value for c in at.caption))
 
     def test_quanto_payout_em_reais(self):

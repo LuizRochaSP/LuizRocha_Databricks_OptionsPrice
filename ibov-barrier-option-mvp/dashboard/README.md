@@ -21,6 +21,7 @@ dashboard/
 ├── desk.py             # Structuring Desk (IBOV e S&P 500, US$ ou Quanto em R$)
 ├── mercado.py          # spot, r(T), q(T) e vol no strike de cada ativo para o Desk
 ├── multiativos.py      # abas do S&P 500 (notebooks 07 e 09)
+├── paineis.py          # painéis comuns aos dois ativos (pricer, risco, histórico, motor, checagens)
 ├── pipeline.py         # completude RESULTS -> VALIDATION -> RISK e job do pipeline
 ├── formato_br.py       # números no padrão brasileiro
 ├── app.yaml            # configuração do Databricks App
@@ -65,16 +66,19 @@ escolha: `?ativo=ibov` ou `?ativo=spx`.
 5. **Controle e Ingestão** — checks de validação e qualidade dos dados
 6. **Structuring Desk** — simulador com 30 estratégias (ver abaixo)
 
-**Opção com Barreira (S&P 500)** — arquivos dos notebooks 07 e 09:
+**Opção com Barreira (S&P 500)** — arquivos dos notebooks 07, 11, 03 (`ativo=spx`) e 09:
 
-1. **Resumo do Gestor** — spot, vencimentos, pontos, vol ATM 1m/12m, r e q de 1 ano, SOFR, avisos do pipeline e histórico de execuções do 07
+1. **Resumo do Gestor** — Resumo do Pricer da call down-and-out de referência (strike 95%, barreira 85%, 6 meses: vanilla, down-and-out, Reiner-Rubinstein, P(knock-out)), mercado do dia (spot e de onde veio, vencimentos, pontos, vol ATM 1m/12m, r e q de 1 ano, SOFR, avisos), Risco & Gregas e histórico de execuções
 2. **Superfície e Smiles** — superfície 3D, smiles nos prazos de referência, vol ATM por prazo, cortes de arbitragem e funil de limpeza
 3. **Taxa e Dividendos** — r(T) e q(T) implícitos da paridade put-call e a tabela por vencimento
-4. **Quanto / Compo (BRL)** — insumos (PTAX, r BRL, vol do câmbio, correlação), preços em BRL e em % do nocional, correlação móvel e sensibilidade a rho e à vol do câmbio (notebook 09)
-5. **Vol Local** — preço com barreira com vol constante x vol local de Dupire, smile implícito x local, onde a vol local é cortada e ajuste SVI (notebook 09)
-6. **Structuring Desk** — o mesmo simulador, em pontos do S&P 500 e US$, ou em R$ (Quanto)
+4. **Motor de Precificação** — o mesmo painel do IBOV (simulação, convergência, payoffs)
+5. **Controle e Ingestão** — checagens do preço, os controles do notebook 11 e exportação
+6. **Quanto / Compo (BRL)** — insumos (PTAX, r BRL, vol do câmbio, correlação), preços em BRL e em % do nocional, correlação móvel e sensibilidade a rho e à vol do câmbio (notebook 09)
+7. **Vol Local** — preço com barreira com vol constante x vol local de Dupire, smile implícito x local, onde a vol local é cortada e ajuste SVI (notebook 09)
+8. **Structuring Desk** — o mesmo simulador, em pontos do S&P 500 e US$, ou em R$ (Quanto)
 
-As abas do S&P 500 ficam em `multiativos.py`. Sem arquivos do 07 ou do 09, elas mostram qual notebook rodar e o Desk funciona com valores de reserva.
+Os painéis comuns aos dois ativos (Resumo do Pricer, Risco & Gregas, histórico, Motor e checagens) ficam em
+`paineis.py`; as abas próprias do S&P 500, em `multiativos.py`. Sem arquivos do 07 ou do 09, elas mostram qual notebook rodar e o Desk funciona com valores de reserva.
 
 ### Structuring Desk (`desk.py` e `mercado.py`)
 
@@ -100,11 +104,20 @@ Para apontar para outra pasta, edite o `app.yaml` e faça redeploy.
 
 ## Execução completa e pipeline
 
-Cada execução só está completa com os três arquivos: `RESULTS_*` (notebook 01), `VALIDATION_*`
-(02, gravado só com FAIL=0) e `RISK_*` (03). A barra lateral marca cada execução como completa,
-sem risco ou não validada, e o app abre na completa mais recente. Quando falta informação, o app
-diz qual notebook não rodou e oferece o botão "Rodar pipeline completo", que dispara o job
-`opcoes-pipeline-ibov` (00 -> 01 -> 02 -> 03) e mostra o andamento até terminar. Não dispara uma
-segunda rodada enquanto houver uma ativa.
+Cada execução só está completa com os três arquivos: `RESULTS_*`, `VALIDATION_*` (gravado só com
+FAIL=0) e `RISK_*`. A barra lateral marca cada execução como completa, sem risco ou não validada, e o
+app abre na completa mais recente. Quando falta informação, o app diz qual notebook não rodou e
+oferece o botão do pipeline do ativo, que dispara o job e mostra o andamento até terminar. Não
+dispara uma segunda rodada enquanto houver uma ativa.
+
+| Ativo | Arquivos | Job (`app.yaml`) | Etapas |
+|---|---|---|---|
+| IBOV | `*_superficieVol_<ts>` | `opcoes-pipeline-ibov` (`PIPELINE_JOB_NAME`) | 00 -> 01 -> 02 -> 03 |
+| S&P 500 | `*_spx_superficie_<ts>` | `opcoes-pipeline-spx` (`PIPELINE_JOB_NAME_SPX`) | 07 -> 11 -> 03 (`ativo=spx`); 07 -> 09 |
+
+O service principal do app precisa de CAN_MANAGE_RUN nos dois jobs.
+
+O combo de instrumento lê `?ativo=` da URL só na primeira carga da sessão: no Streamlit 1.38 (o do
+Databricks Apps) um `index` recalculado a cada execução muda a identidade do widget e o clique se perdia.
 
 Números no padrão brasileiro (ponto no milhar, vírgula no decimal): `formato_br.instalar(st)`.

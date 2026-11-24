@@ -234,6 +234,18 @@ def fig_spx_surface(ks, ts, z) -> go.Figure:
     return style(fig, "SPX: superfície de volatilidade implícita", height=600)
 
 
+def fig_historico_precos(hist: pd.DataFrame, unidade: str = "pontos") -> go.Figure:
+    """Vanilla x Down-and-Out por execução (IBOV e S&P 500), no padrão gráfico do projeto."""
+    fig = go.Figure()
+    for i, col in enumerate(c for c in ("Vanilla", "Down-and-Out") if c in hist.columns):
+        fig.add_trace(go.Scatter(x=hist["Execução"], y=hist[col], mode="lines+markers", name=col, line=_line(i + 1),
+                                 marker=_marker(i + 1), customdata=hist["Data"],
+                                 hovertemplate="mercado %{customdata}<br>%{y:,.2f}<extra>%{fullData.name}</extra>"))
+    fig.update_xaxes(title="execução", type="category")
+    fig.update_yaxes(title=f"preço ({unidade})")
+    return style(fig, "Evolução de Preços")
+
+
 def fig_spx_history(hist: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     for i, col in enumerate(("Vol ATM 1m", "Vol ATM 12m")):
@@ -363,30 +375,53 @@ SEM_SPX = ("Nenhum resultado do SPX ainda. Rode o notebook `07_spx_superficie_d1
            "(ele grava `RESULTS_spx_superficie_*.csv`).")
 
 
+def quando(valor) -> str:
+    """Data e hora de execução legíveis: "2026-11-23T20:12:11.483383-03:00" -> "23/11/2026 20:12:11"."""
+    try:
+        return pd.Timestamp(valor).strftime("%d/%m/%Y %H:%M:%S")
+    except (ValueError, TypeError):
+        return str(valor) if valor is not None else "—"
+
+
 def _fonte_spx(st, meta):
-    st.caption(short_path(f"Fonte: {meta.get('fonte', '—')} | executado em {meta.get('execution_timestamp', '—')}"))
+    st.caption(short_path(f"Fonte: {meta.get('fonte', '—')} | executado em {quando(meta.get('execution_timestamp'))}"))
+
+
+HIST_COLS = ["Execução", "Data", "Spot", "Vanilla", "Down-and-Out", "Desconto", "P(knock-out)", "Vol ATM 1m",
+             "Vol ATM 12m", "r 1a", "q 1a"]
 
 
 def spx_history(paths, load) -> pd.DataFrame:
-    """Uma linha por execução do 07: data, spot, vol ATM 1m/12m, r e q de 1 ano."""
+    """Uma linha por execução do 07 (a mais antiga primeiro): mercado do dia e, quando houver, a precificação."""
     rows = []
     for p in paths:
         b = load(p)
         if b is None or "options" not in b or "forwards" not in b:
             continue
         r = mk.resumo_spx(b)
+        pr = b.get("pricing_result") or {}
         rows.append({"Execução": file_label(p, SPX_PREFIX), "Data": r["data"], "Spot": r["spot"],
+                     "Vanilla": pr.get("vanilla_price", np.nan), "Down-and-Out": pr.get("barrier_price", np.nan),
+                     "Desconto": pr.get("barrier_discount_pct", np.nan),
+                     "P(knock-out)": pr.get("knock_out_probability", np.nan),
                      "Vol ATM 1m": r["vol ATM 1m"], "Vol ATM 12m": r["vol ATM 12m"], "r 1a": r["r 1a"],
                      "q 1a": r["q 1a"], "_ordem": p.split("/")[-1]})
-    cols = ["Execução", "Data", "Spot", "Vol ATM 1m", "Vol ATM 12m", "r 1a", "q 1a"]
     if not rows:
-        return pd.DataFrame(columns=cols)
-    return pd.DataFrame(rows).sort_values("_ordem")[cols].reset_index(drop=True)
+        return pd.DataFrame(columns=HIST_COLS)
+    hist = pd.DataFrame(rows).sort_values("_ordem")[HIST_COLS].reset_index(drop=True)
+    # arquivos anteriores à precificação de referência não têm preço: as colunas vazias saem da tabela
+    return hist.drop(columns=[c for c in ("Vanilla", "Down-and-Out", "Desconto", "P(knock-out)")
+                              if hist[c].isna().all()])
 
 
-def render_spx_resumo(st, b, files, load):
-    """Aba Resumo do Gestor do S&P 500: números do dia, avisos do pipeline e histórico de execuções."""
-    st.header("Resumo do S&P 500 (SPX)")
+HIST_FMT = {"Spot": "{:,.2f}", "Vanilla": "{:,.2f}", "Down-and-Out": "{:,.2f}", "Desconto": "{:.2%}",
+            "P(knock-out)": "{:.2%}", "Vol ATM 1m": "{:.2%}", "Vol ATM 12m": "{:.2%}", "r 1a": "{:.3%}",
+            "q 1a": "{:.3%}"}
+
+
+def render_spx_mercado(st, b):
+    """Números do dia do S&P 500: spot (e de onde veio), superfície, vol ATM, r e q, avisos do pipeline."""
+    st.header("Mercado do Dia (S&P 500)")
     if b is None:
         st.info(SEM_SPX)
         return
@@ -404,13 +439,18 @@ def render_spx_resumo(st, b, files, load):
     c[3].metric("q 1 ano", f"{r['q 1a']:.3%}")
     if r["SOFR"] is not None:
         st.caption(f"SOFR {r['SOFR']:.3%} | r 1 ano − SOFR: {(r['r 1a'] - r['SOFR']) * 1e4:+.0f} bps")
+    if meta.get("spot_gap_bps") is not None:
+        st.caption(f"Spot: {meta.get('spot_fonte', '—')} | fechamento oficial {meta['spot_fechamento']:,.2f} | "
+                   f"paridade {meta['spot_paridade']:,.2f} ({meta['spot_gap_bps']:+.1f} bps sobre o fechamento)")
     if meta.get("cobertura"):
         st.warning(f"Cobertura: {meta['cobertura']}")
     for w in meta.get("avisos") or []:
         st.caption(f"Aviso do pipeline: {w}")
     _fonte_spx(st, meta)
 
-    st.markdown("---")
+
+def render_spx_historico(st, files, load):
+    """Histórico de execuções do 07: preços de referência (quando houver) e mercado do dia."""
     st.header("Histórico de Execuções")
     if len(files) < 2:
         st.info("Apenas 1 execução do notebook 07 disponível.")
@@ -420,10 +460,21 @@ def render_spx_resumo(st, b, files, load):
     hist = spx_history(chosen, load)
     if hist.empty:
         return
-    fmt = {"Spot": "{:,.2f}", "Vol ATM 1m": "{:.2%}", "Vol ATM 12m": "{:.2%}", "r 1a": "{:.3%}", "q 1a": "{:.3%}"}
-    st.dataframe(sem_vazios(hist, fmt), use_container_width=True, hide_index=True)
+    st.dataframe(sem_vazios(hist, {k: v for k, v in HIST_FMT.items() if k in hist}), use_container_width=True,
+                 hide_index=True)
     if len(hist) > 1:
+        if "Down-and-Out" in hist and hist["Down-and-Out"].notna().sum() > 1:
+            _chart(st, fig_historico_precos(hist[hist["Down-and-Out"].notna()], "pontos"))
         _chart(st, fig_spx_history(hist))
+
+
+def render_spx_resumo(st, b, files, load):
+    """Mercado do dia e histórico (o app põe o resumo do pricer e o risco entre os dois)."""
+    render_spx_mercado(st, b)
+    if b is None:
+        return
+    st.markdown("---")
+    render_spx_historico(st, files, load)
 
 
 def render_spx_superficie(st, b, grade=None):

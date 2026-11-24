@@ -10,8 +10,11 @@
 # MAGIC %md
 # MAGIC # 03 — Análise de risco da opção com barreira
 # MAGIC
-# MAGIC Consome exclusivamente um resultado aprovado pelo notebook 02 e calcula gregas,
+# MAGIC Consome exclusivamente um resultado aprovado pela validação e calcula gregas,
 # MAGIC DV01, convexidade de taxa, VaR e Expected Shortfall.
+# MAGIC
+# MAGIC Parâmetro `ativo`: `ibov` (padrão; RESULTS do 01 aprovado pelo 02) ou `spx` (RESULTS do 07 aprovado
+# MAGIC pelo 11, data de mercado no calendário da NYSE). O cálculo é o mesmo para os dois.
 
 # COMMAND ----------
 
@@ -21,6 +24,13 @@ RISK_CONFIDENCE_LEVEL = 0.99
 RISK_SCENARIOS = 100_000
 RISK_SEED = 42
 RISK_ANNUAL_DRIFT = 0.0
+
+# Ativo: ibov (job opcoes-pipeline-ibov, sem parâmetro) ou spx (job opcoes-pipeline-spx)
+dbutils.widgets.dropdown("ativo", "ibov", ["ibov", "spx"], "Ativo")
+ATIVO = dbutils.widgets.get("ativo")
+PREFIXO = {"ibov": "superficieVol", "spx": "spx_superficie"}[ATIVO]
+BOLSA = {"ibov": "B3", "spx": "NYSE"}[ATIVO]
+VALIDADOR = {"ibov": "02", "spx": "11"}[ATIVO]
 
 # COMMAND ----------
 
@@ -43,7 +53,8 @@ import pandas as pd
 
 def find_project_root() -> Path:
     for candidate in [Path.cwd(), *Path.cwd().parents]:
-        if (candidate / "data").exists() and (candidate / "src").exists():
+        # o SPX não usa a pasta data/ (fotografia da B3): basta o src
+        if (candidate / "src").exists() and ((candidate / "data").exists() or ATIVO != "ibov"):
             return candidate
     raise FileNotFoundError("Não encontrei a raiz do projeto contendo data e src.")
 
@@ -55,16 +66,16 @@ if str(project_root / "src") not in sys.path:
 from ibov_barrier.market_date import expected_market_date, require_market_date, validate_snapshot
 
 results_root = project_root.parents[1] / "ibov-barrier-results"
-validation_pattern = re.compile(r"^VALIDATION_superficieVol_(\d{8})_(\d{6})\.json$")
+validation_pattern = re.compile(rf"^VALIDATION_{PREFIXO}_(\d{{8}})_(\d{{6}})\.json$")
 validation_candidates = []
-for path in results_root.glob("VALIDATION_superficieVol_*.json"):
+for path in results_root.glob(f"VALIDATION_{PREFIXO}_*.json"):
     match = validation_pattern.match(path.name)
     if match:
         stamp = datetime.strptime("".join(match.groups()), "%Y%m%d%H%M%S")
         validation_candidates.append((stamp, path))
 
 if not validation_candidates:
-    raise RuntimeError("Nenhuma evidência de validação encontrada. Execute primeiro o notebook 02.")
+    raise RuntimeError(f"Nenhuma evidência de validação encontrada. Execute primeiro o notebook {VALIDADOR}.")
 
 today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
 if BACKFILL_VALIDATION_FILE is not None:
@@ -76,7 +87,8 @@ if BACKFILL_VALIDATION_FILE is not None:
 else:
     validation_stamp, validation_path = max(validation_candidates, key=lambda item: item[0])
     if validation_stamp.date() != today:
-        raise RuntimeError("A validação mais recente não foi gerada hoje. Execute os notebooks 01 e 02.")
+        raise RuntimeError("A validação mais recente não foi gerada hoje. Execute os notebooks "
+                           + ("01 e 02." if ATIVO == "ibov" else "07 e 11."))
 
 validation = json.loads(validation_path.read_text(encoding="utf-8"))
 if validation.get("schema_version") != 1:
@@ -113,8 +125,11 @@ def json_object(name: str) -> dict:
 metadata = json_object("metadata")
 pricing_result = json_object("pricing_result")
 simulation = json_object("simulation_diagnostics")
-if metadata.get("schema_version") != 2:
-    raise RuntimeError("O notebook 03 exige RESULTS schema_version=2.")
+from ibov_barrier.results_bundle import SCHEMA_VERSION as SCHEMA_MULTIATIVOS
+
+SCHEMA_ESPERADO = 2 if ATIVO == "ibov" else SCHEMA_MULTIATIVOS
+if metadata.get("schema_version") != SCHEMA_ESPERADO:
+    raise RuntimeError(f"O notebook 03 exige RESULTS schema_version={SCHEMA_ESPERADO} para {ATIVO}.")
 
 src_path = project_root / "src"
 if str(src_path) not in sys.path:
@@ -123,7 +138,7 @@ if str(src_path) not in sys.path:
 from ibov_barrier import BarrierContract, MarketData, RiskConfig, calculate_risk_metrics
 
 if BACKFILL_VALIDATION_FILE is None:
-    require_market_date(metadata["market_date"], today)
+    require_market_date(metadata["market_date"], today, market=BOLSA)
 if validation.get("market_date") != metadata["market_date"]:
     raise RuntimeError("Data de mercado divergente entre RESULTS e VALIDATION.")
 

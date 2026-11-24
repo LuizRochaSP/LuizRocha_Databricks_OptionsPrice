@@ -1,8 +1,9 @@
 """Completude das execuções (RESULTS -> VALIDATION -> RISK) e disparo do job que roda a cadeia toda.
 
-Cada execução do notebook 01 grava ``RESULTS_superficieVol_<ts>.csv``. O 02 grava
-``VALIDATION_superficieVol_<ts>.json`` só quando aprova (FAIL=0) e o 03 grava
-``RISK_superficieVol_<ts>.json`` a partir dessa validação. Uma execução só está completa com os três.
+IBOV: o notebook 01 grava ``RESULTS_superficieVol_<ts>.csv``, o 02 grava ``VALIDATION_superficieVol_<ts>.json``
+só quando aprova (FAIL=0) e o 03 grava ``RISK_superficieVol_<ts>.json`` a partir dessa validação.
+S&P 500: o mesmo com o prefixo ``spx_superficie`` (07 -> 11 -> 03 com ``ativo=spx``).
+Uma execução só está completa com os três arquivos.
 """
 from __future__ import annotations
 
@@ -11,15 +12,24 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-_NOME = re.compile(r"^(RESULTS|VALIDATION|RISK)_superficieVol_(\d{8}_\d{6})\.(csv|json)$")
+
+def _padrao(base: str) -> re.Pattern:
+    return re.compile(rf"^(RESULTS|VALIDATION|RISK)_{base}_(\d{{8}}_\d{{6}})\.(csv|json)$")
+
+
+_NOME = _padrao("superficieVol")
 JOB_PADRAO = "opcoes-pipeline-ibov"
+JOB_SPX = "opcoes-pipeline-spx"
+# notebook que valida cada RESULTS (o 03 é o mesmo para os dois ativos)
+VALIDADOR = {"superficieVol": "02", "spx_superficie": "11"}
 
 
-def status_execucoes(nomes) -> pd.DataFrame:
+def status_execucoes(nomes, base: str = "superficieVol") -> pd.DataFrame:
     """Uma linha por RESULTS (mais recente primeiro): tem validação? tem risco? o que falta?"""
+    nome, validador = _padrao(base), VALIDADOR.get(base, "02")
     achados: dict[str, set] = {}
     for n in nomes:
-        m = _NOME.match(str(n).split("/")[-1])
+        m = nome.match(str(n).split("/")[-1])
         if m:
             achados.setdefault(m.group(2), set()).add(m.group(1))
     linhas = []
@@ -28,16 +38,25 @@ def status_execucoes(nomes) -> pd.DataFrame:
             continue
         val, risk = "VALIDATION" in tipos, "RISK" in tipos
         linhas.append({"ts": ts, "validacao": val, "risco": risk, "completo": val and risk,
-                       "falta": None if val and risk else ("02" if not val else "03")})
+                       "falta": None if val and risk else (validador if not val else "03")})
     cols = ["ts", "validacao", "risco", "completo", "falta"]
     return pd.DataFrame(linhas, columns=cols).sort_values("ts", ascending=False, ignore_index=True)
 
 
+def data_hora(ts: str) -> str:
+    """"20261124_132739" -> "24/11/2026 13:27:39" (o carimbo dos arquivos, no horário de Brasília)."""
+    try:
+        return pd.to_datetime(ts, format="%Y%m%d_%H%M%S").strftime("%d/%m/%Y %H:%M:%S")
+    except (ValueError, TypeError):
+        return str(ts)
+
+
 def rotulo(ts: str, st_df: pd.DataFrame) -> str:
     linha = st_df[st_df["ts"] == ts]
+    quando = data_hora(ts)
     if linha.empty or linha["completo"].iloc[0]:
-        return f"{ts} · completo"
-    return f"{ts} · sem risco" if linha["falta"].iloc[0] == "03" else f"{ts} · não validado"
+        return f"{quando} · completo"
+    return f"{quando} · sem risco" if linha["falta"].iloc[0] == "03" else f"{quando} · não validado"
 
 
 def indice_padrao(st_df: pd.DataFrame) -> int:
@@ -51,10 +70,11 @@ def motivo(ts: str, st_df: pd.DataFrame) -> str | None:
     linha = st_df[st_df["ts"] == ts]
     if linha.empty or linha["completo"].iloc[0]:
         return None
-    if linha["falta"].iloc[0] == "02":
-        return (f"A execução {ts} não tem validação: o notebook 02 não rodou para ela ou reprovou "
-                "(com FAIL o 02 não grava a evidência). Sem validação o 03 não calcula gregas nem VaR.")
-    return (f"A execução {ts} foi validada pelo 02, mas o notebook 03 não rodou para ela: "
+    falta, quando = linha["falta"].iloc[0], data_hora(ts)
+    if falta != "03":
+        return (f"A execução de {quando} não tem validação: o notebook {falta} não rodou para ela ou reprovou "
+                f"(com FAIL o {falta} não grava a evidência). Sem validação o 03 não calcula gregas nem VaR.")
+    return (f"A execução de {quando} foi validada, mas o notebook 03 não rodou para ela: "
             "faltam gregas, DV01 e VaR.")
 
 

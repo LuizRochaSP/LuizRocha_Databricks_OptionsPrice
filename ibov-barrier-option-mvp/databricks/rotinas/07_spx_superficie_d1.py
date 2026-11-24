@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # MAGIC %md
 # MAGIC # SPX: fotografia D-1 e superfície de volatilidade (Fase 3)
 # MAGIC
@@ -9,9 +13,19 @@
 # MAGIC 1. cadeia EOD de SPX e SPXW na ThetaData (plano FREE, D-1);
 # MAGIC 2. limpeza de cotações;
 # MAGIC 3. paridade put-call: forward e fator de desconto por vencimento, `C − P = DF·(F − K)`;
-# MAGIC 4. spot oficial do índice; `r(T) = −ln(DF)/T` e `q(T) = r(T) − ln(F/S)/T`;
+# MAGIC 4. spot implícito pela paridade (padrão) ou fechamento oficial do índice; `r(T) = −ln(DF)/T` e
+# MAGIC    `q(T) = r(T) − ln(F/S)/T`;
 # MAGIC 5. limpeza contra o forward (limites de arbitragem, só OTM, moneyness, vertical/butterfly);
 # MAGIC 6. volatilidade implícita e limpeza do smile.
+# MAGIC
+# MAGIC Depois: precificação da call down-and-out de referência (seção 6a, mesmas regras do notebook 01), o
+# MAGIC RESULTS para o dashboard (6b) e a cadeia do dia em `spx_dados/brutos/` (6c, lida pelo notebook 09).
+# MAGIC No job `opcoes-pipeline-spx`, o 11 valida o RESULTS e o 03 (`ativo=spx`) calcula gregas e VaR.
+# MAGIC
+# MAGIC **Spot.** O EOD das opções sai por volta de 17:15 ET, depois do fechamento do índice (16:00). Em 79 pregões
+# MAGIC (ago-nov/2026) o spot implícito pela paridade ficou a +1,6 bps do fechamento na mediana (desvio 14 bps),
+# MAGIC mas chegou a +61 bps em 20/11/2026. Com o spot da paridade o q de 1 ano fica estável (desvio 0,06% contra
+# MAGIC 0,16% com o fechamento). Por isso o padrão é `fonte_spot = paridade`; o fechamento fica no RESULTS.
 # MAGIC
 # MAGIC Pré-requisitos: Python 3.12+ e o Secret `quantita/thetadata_api_key` (a chave nunca aparece aqui).
 # MAGIC
@@ -73,6 +87,8 @@ from plotly.subplots import make_subplots
 
 from ibov_barrier.markets.base import CleaningReport
 from ibov_barrier.markets.cleaning import clean_against_forwards, clean_quotes
+from ibov_barrier.markets.parity import implied_spot
+from ibov_barrier.markets.referencia import CONTRATO_PADRAO, MC_PADRAO, precificar_referencia, salvar_cadeia_do_dia
 from ibov_barrier.markets.spx import SPXAdapter, ThetaDataSource
 
 # Prazo a partir do qual cada vencimento mede a própria taxa e entra no ajuste da curva r(T).
@@ -81,6 +97,10 @@ MIN_T_RATE = 0.25
 Q_RANGE = (0.0, 0.03)
 
 dbutils.widgets.text("data_mercado", "", "Data (AAAA-MM-DD; vazio = D-1)")
+dbutils.widgets.dropdown("fonte_spot", "paridade", ["paridade", "fornecedor"], "Spot: paridade ou fechamento")
+dbutils.widgets.text("ref_strike_pct", f"{CONTRATO_PADRAO['strike_pct'] * 100:g}", "Referência: strike (% do spot)")
+dbutils.widgets.text("ref_barreira_pct", f"{CONTRATO_PADRAO['barrier_pct'] * 100:g}", "Referência: barreira (% do spot)")
+dbutils.widgets.text("ref_prazo_anos", f"{CONTRATO_PADRAO['maturity']:g}", "Referência: prazo (anos)")
 
 # Tema dos gráficos (padrão do projeto): fundo preto, textos brancos, curvas em tons quentes.
 # Os vencimentos são ordenados (1m -> 24m), então a paleta é uma rampa quente do claro ao escuro,
@@ -161,7 +181,9 @@ def fetch_chain_cached(root, market_date):
         _raw_cache[key] = source.option_chain(root, market_date)
     return _raw_cache[key]
 
-adapter = SPXAdapter(fetch_chain_cached, spot_source=source.index_close)
+FONTE_SPOT = dbutils.widgets.get("fonte_spot")
+# paridade: spot_source=None faz o adaptador usar o spot implícito do vencimento mais curto
+adapter = SPXAdapter(fetch_chain_cached, spot_source=source.index_close if FONTE_SPOT == "fornecedor" else None)
 
 typed = dbutils.widgets.get("data_mercado").strip()
 market_date = date.fromisoformat(typed) if typed else adapter.market_date()
@@ -169,6 +191,13 @@ print("Data de mercado:", market_date, "| chave:", source.key_source)
 
 snap = adapter.load_snapshot(market_date)
 print(f"Spot SPX: {snap.spot:,.2f} ({snap.spot_source})")
+
+# Diagnóstico do spot: fechamento oficial (16:00 ET) x implícito pela paridade (cotações de ~17:15 ET)
+spot_fechamento = float(source.index_close(market_date))
+spot_paridade = float(implied_spot(snap.forwards, adapter.assumed_dividend_yield))
+spot_gap_bps = (spot_paridade / spot_fechamento - 1) * 1e4
+print(f"Fechamento oficial: {spot_fechamento:,.2f} | paridade: {spot_paridade:,.2f} | diferença: {spot_gap_bps:+.1f} bps"
+      + ("  <- acima de 25 bps: fechamento e opções em horários diferentes" if abs(spot_gap_bps) > 25 else ""))
 print(f"Vencimentos com forward: {len(snap.forwards)}")
 print(f"Pontos na superfície: {len(snap.options):,}")
 
@@ -390,6 +419,9 @@ def nearest(frame, t, col):
 summary = pd.Series({
     "data": str(market_date),
     "spot": round(snap.spot, 2),
+    "spot usado": snap.spot_source,
+    "fechamento oficial": round(spot_fechamento, 2),
+    "paridade - fechamento (bps)": round(spot_gap_bps, 1),
     "vencimentos": len(snap.forwards),
     "pontos": len(opts),
     "removidos vertical/butterfly": int(arb["removidos"].sum()),
@@ -407,11 +439,42 @@ display(summary.to_frame())
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## 6a. Precificação de referência: call down-and-out sobre o SPX
+# MAGIC
+# MAGIC O equivalente do contrato do notebook 01 (IBOV), com strike e barreira em % do spot (padrão 95% e 85%,
+# MAGIC 6 meses). Mesmas regras do 01: vol no strike por interpolação linear em ln(K/F) x prazo (vizinho mais
+# MAGIC próximo fora dos dados), r(T) e q(T) da paridade no prazo, Monte Carlo com ponte browniana
+# MAGIC (200 mil caminhos, 252 passos, semente 42) e Reiner-Rubinstein como referência.
+
+# COMMAND ----------
+
+ref = precificar_referencia(
+    float(snap.spot), opts, forwards,
+    strike_pct=float(dbutils.widgets.get("ref_strike_pct")) / 100,
+    barrier_pct=float(dbutils.widgets.get("ref_barreira_pct")) / 100,
+    maturity=float(dbutils.widgets.get("ref_prazo_anos")),
+    **MC_PADRAO,
+)
+pricing_result, alvo = ref["pricing_result"], ref["alvo"]
+display(pd.Series({
+    "spot": pricing_result["market"]["spot"], "strike": alvo["target_strike"], "barreira": alvo["target_barrier"],
+    "prazo (anos)": alvo["target_maturity"], "r(T)": alvo["target_r"], "q(T)": alvo["target_q"],
+    "vol no strike": alvo["target_iv"], "interpolação": alvo["interpolation_method"],
+    "vanilla (BS)": pricing_result["vanilla_price"], "down-and-out (MC)": pricing_result["barrier_price"],
+    "Reiner-Rubinstein": pricing_result["analytical_price"],
+    "erro MC x analítico": pricing_result["analytical_error_pct"],
+    "P(knock-out)": pricing_result["knock_out_probability"], "erro-padrão": pricing_result["standard_error"],
+}, name="referência").to_frame())
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## 6b. Resultado para o dashboard
 # MAGIC
 # MAGIC Grava `RESULTS_spx_superficie_<data e hora>.csv` na pasta `ibov-barrier-results` (a mesma do notebook 01),
 # MAGIC no formato que o dashboard lê: metadados, resumo do dia, forwards/r/q por vencimento, pontos da superfície,
-# MAGIC funil de limpeza e cortes de arbitragem.
+# MAGIC funil de limpeza, cortes de arbitragem e a precificação de referência (`pricing_result` e
+# MAGIC `simulation_diagnostics`, com as chaves do notebook 01).
 
 # COMMAND ----------
 
@@ -427,6 +490,8 @@ spx_result_path = write_bundle(results_dir / results_filename("spx_superficie", 
         "market_date": market_date, "spot": float(snap.spot), "sofr": sofr, "vencimentos": len(snap.forwards),
         "pontos": len(opts), "avisos": list(snap.report.warnings), "cobertura": coverage_msg,
         "faixa q": list(Q_RANGE), "T minimo taxa": MIN_T_RATE, "fonte": "ThetaData (SPXW)",
+        "spot_fonte": snap.spot_source, "spot_fechamento": spot_fechamento, "spot_paridade": spot_paridade,
+        "spot_gap_bps": spot_gap_bps, **alvo,
     },
     "summary": summary,
     "forwards": forwards,
@@ -434,8 +499,26 @@ spx_result_path = write_bundle(results_dir / results_filename("spx_superficie", 
                      "implied_vol"]],
     "funnel": snap.report.to_frame(),
     "arb": arb,
+    "pricing_result": pricing_result,
+    "simulation_diagnostics": {**ref["simulation_diagnostics"], "execution_timestamp": run_ts,
+                               "market_date": market_date},
 })
 print(f"Resultado para o dashboard: {spx_result_path}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 6c. Cadeia do dia em disco (para o notebook 09)
+# MAGIC
+# MAGIC O 09 (Quanto/Compo) lê a cadeia de `spx_dados/brutos/<data>/` (formato do notebook 08). Gravar aqui o dia
+# MAGIC que acabou de ser baixado evita uma nova chamada à API e deixa o 09 sempre no mesmo D-1 deste notebook.
+
+# COMMAND ----------
+
+brutos = Path("/".join(notebook_path.split("/")[:4])) / "spx_dados" / "brutos"
+cadeia = {root: raw for (root, d), raw in _raw_cache.items() if d == market_date}
+print(f"Cadeia de {market_date} ({', '.join(f'{k}: {len(v):,}' for k, v in cadeia.items())}):",
+      salvar_cadeia_do_dia(brutos, market_date, cadeia, spot_fechamento, sofr), "em", brutos / str(market_date))
 
 # COMMAND ----------
 
@@ -457,7 +540,7 @@ print(f"Resultado para o dashboard: {spx_result_path}")
 # COMMAND ----------
 
 cfg_am = replace(adapter.cleaning, preferred_roots=("SPX", "SPXW"))
-adapter_am = SPXAdapter(fetch_chain_cached, spot_source=source.index_close, cleaning=cfg_am)
+adapter_am = SPXAdapter(fetch_chain_cached, spot_source=adapter.spot_source, cleaning=cfg_am)
 snap_am = adapter_am.load_snapshot(market_date)
 
 chain_all = adapter.load_chain(market_date)
@@ -732,6 +815,21 @@ def _r7_amostra():
         {"T": "{:.4f}", "forward": "{:,.2f}", "log_moneyness": "{:+.4f}", "implied_vol": "{:.2%}"})
 
 
+def _r8_referencia():
+    _need("pricing_result", "alvo", "spot_fechamento", "spot_paridade", "spot_gap_bps", "spx_result_path")
+    print(f"spot usado: {snap.spot:,.2f} ({snap.spot_source}) | fechamento oficial {spot_fechamento:,.2f} | "
+          f"paridade {spot_paridade:,.2f} | diferença {spot_gap_bps:+.1f} bps")
+    print(f"contrato: K {alvo['target_strike']:,.2f} ({alvo['strike_pct']:.0%}) | H {alvo['target_barrier']:,.2f} "
+          f"({alvo['barrier_pct']:.0%}) | T {alvo['target_maturity']:.4f}")
+    print(f"mercado: r {alvo['target_r']:.4%} | q {alvo['target_q']:.4%} | vol {alvo['target_iv']:.4%} "
+          f"({alvo['interpolation_method']}) | forward {alvo['target_forward']:,.2f}")
+    p = pricing_result
+    print(f"vanilla {p['vanilla_price']:,.4f} | down-and-out MC {p['barrier_price']:,.4f} (EP {p['standard_error']:.4f}) | "
+          f"Reiner-Rubinstein {p['analytical_price']:,.4f} | erro {p['analytical_error_pct']:.4%} | "
+          f"P(KO) {p['knock_out_probability']:.4%}")
+    print("RESULTS:", spx_result_path.name)
+
+
 print(f"RELATÓRIO SPX D-1 | gerado em {pd.Timestamp.now(tz='America/Sao_Paulo'):%Y-%m-%d %H:%M} (Brasília)")
 for _title, _fn in [
     ("0. Ambiente", _r0_ambiente),
@@ -742,6 +840,7 @@ for _title, _fn in [
     ("5. Resumo do dia", _r5_resumo),
     ("6. Teste AM x PM nos mensais", _r6_am_pm),
     ("7. Amostra (10 linhas)", _r7_amostra),
+    ("8. Spot e precificação de referência", _r8_referencia),
 ]:
     _block(_title, _fn)
 print("\nFIM DO RELATÓRIO")

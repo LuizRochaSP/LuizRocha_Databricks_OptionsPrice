@@ -10,3 +10,6 @@ env:
   # precisa de CAN_MANAGE_RUN nele; sem o job ou sem a permissão o app só avisa o que falta.
   - name: PIPELINE_JOB_NAME
     value: "opcoes-pipeline-ibov"
+  # Job do S&P 500: 07 -> 11 -> 03 (ativo=spx), e o 09 depois do 07. Mesma exigência de CAN_MANAGE_RUN.
+  - name: PIPELINE_JOB_NAME_SPX
+    value: "opcoes-pipeline-spx"

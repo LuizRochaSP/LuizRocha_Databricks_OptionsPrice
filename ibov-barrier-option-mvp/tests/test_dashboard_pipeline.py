@@ -43,12 +43,23 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(pipeline.indice_padrao(nenhuma), 0)
 
     def test_rotulos_e_motivos(self):
-        self.assertEqual(pipeline.rotulo("20261122_190000", self.st), "20261122_190000 · completo")
-        self.assertEqual(pipeline.rotulo("20261123_081830", self.st), "20261123_081830 · não validado")
-        self.assertEqual(pipeline.rotulo("20261121_190000", self.st), "20261121_190000 · sem risco")
+        self.assertEqual(pipeline.rotulo("20261122_190000", self.st), "22/11/2026 19:00:00 · completo")
+        self.assertEqual(pipeline.rotulo("20261123_081830", self.st), "23/11/2026 08:18:30 · não validado")
+        self.assertEqual(pipeline.rotulo("20261121_190000", self.st), "21/11/2026 19:00:00 · sem risco")
         self.assertIsNone(pipeline.motivo("20261122_190000", self.st))
         self.assertIn("notebook 02", pipeline.motivo("20261123_081830", self.st))
         self.assertIn("notebook 03 não rodou", pipeline.motivo("20261121_190000", self.st))
+
+    def test_spx_tem_o_mesmo_fluxo_com_o_11(self):
+        nomes = ["RESULTS_spx_superficie_20261124_101500.csv", "VALIDATION_spx_superficie_20261124_101500.json",
+                 "RISK_spx_superficie_20261124_101500.json", "RESULTS_spx_superficie_20261123_201211.csv",
+                 *NOMES]  # os arquivos do IBOV na mesma pasta são ignorados
+        st = pipeline.status_execucoes(nomes, "spx_superficie")
+        self.assertEqual(st["ts"].tolist(), ["20261124_101500", "20261123_201211"])
+        self.assertEqual(st["falta"].tolist(), [None, "11"])
+        self.assertEqual(pipeline.rotulo("20261124_101500", st), "24/11/2026 10:15:00 · completo")
+        self.assertIn("notebook 11", pipeline.motivo("20261123_201211", st))
+        self.assertEqual(len(pipeline.status_execucoes(nomes)), 4)  # IBOV continua igual
 
     def test_pasta_vazia(self):
         vazio = pipeline.status_execucoes([])

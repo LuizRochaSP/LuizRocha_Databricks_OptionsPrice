@@ -19,6 +19,7 @@ import desk
 import formato_br
 import mercado as mk
 import multiativos
+import paineis
 import pipeline
 
 st.set_page_config(
@@ -169,14 +170,54 @@ def limpar_caches():
     list_paths.clear()
 
 
-def painel_pipeline(rodada_inicial):
+# Pipeline de cada ativo: job (nome por variável de ambiente), botão e chave da rodada na sessão.
+FLUXOS = {
+    "ibov": {"job_env": "PIPELINE_JOB_NAME", "job_id_env": "PIPELINE_JOB_ID", "job_padrao": pipeline.JOB_PADRAO,
+             "botao": "Rodar pipeline completo (00 → 01 → 02 → 03)", "botao_key": "rodar_pipeline",
+             "chave": "rodada_pipeline", "manual": "Rode os notebooks 00 a 03 no folder de produção, nessa ordem."},
+    "spx": {"job_env": "PIPELINE_JOB_NAME_SPX", "job_id_env": "PIPELINE_JOB_ID_SPX", "job_padrao": pipeline.JOB_SPX,
+            "botao": "Rodar pipeline do S&P 500 (07 → 11 → 03, e o 09)", "botao_key": "rodar_pipeline_spx",
+            "chave": "rodada_pipeline_spx",
+            "manual": "Rode os notebooks 07, 11, 03 (ativo=spx) e 09 no folder de produção, nessa ordem."},
+}
+
+
+def _pipeline(fluxo: str) -> pipeline.Pipeline:
+    f = FLUXOS[fluxo]
+    return pipeline.Pipeline(get_workspace_client(), os.environ.get(f["job_env"], f["job_padrao"]),
+                             os.environ.get(f["job_id_env"]))
+
+
+def aviso_execucao(fluxo: str, falta_sel: str | None, falta_ult: str | None):
+    """Informação incompleta: diz o que falta e oferece rodar a cadeia toda do ativo."""
+    chave = FLUXOS[fluxo]["chave"]
+    rodada = st.session_state.get(chave)
+    if not (falta_sel or falta_ult or rodada):
+        return
+    if falta_sel:
+        st.error(f"Informação incompleta. {falta_sel}")
+    elif falta_ult:
+        st.warning(f"A execução mais recente está incompleta e não foi aberta. {falta_ult}")
+    try:
+        prog_inicial = _pipeline(fluxo).acompanhar(rodada) if rodada else None
+    except Exception:
+        prog_inicial = None
+    if prog_inicial is not None and not prog_inicial.ativo:
+        st.session_state.pop(chave, None)
+        if prog_inicial.resultado == "SUCCESS":
+            st.success(f"Pipeline concluído (rodada {prog_inicial.run_id}): a execução nova já está na lista.")
+            prog_inicial = None
+    if falta_sel or falta_ult or (prog_inicial is not None and prog_inicial.ativo):
+        painel_pipeline(prog_inicial, fluxo)
+
+
+def painel_pipeline(rodada_inicial, fluxo: str = "ibov"):
     """Botão para rodar a cadeia toda e o andamento da rodada (atualiza sozinho enquanto roda)."""
-    pl = pipeline.Pipeline(get_workspace_client(), os.environ.get("PIPELINE_JOB_NAME", pipeline.JOB_PADRAO),
-                           os.environ.get("PIPELINE_JOB_ID"))
+    f = FLUXOS[fluxo]
+    pl = _pipeline(fluxo)
     try:
         if pl.job_id() is None:
-            st.warning(f"O job `{pl.nome}` não existe ou o app não tem permissão para vê-lo. "
-                       "Rode os notebooks 00 a 03 no folder de produção, nessa ordem.")
+            st.warning(f"O job `{pl.nome}` não existe ou o app não tem permissão para vê-lo. {f['manual']}")
             return
         prog = rodada_inicial if rodada_inicial is not None else pl.ultima()
     except Exception as e:
@@ -203,10 +244,10 @@ def painel_pipeline(rodada_inicial):
         st.error(f"A última rodada do pipeline ({prog.run_id}) não terminou: "
                  f"{resumo or pipeline.estado_pt(None, prog.resultado)}. "
                  f"Veja o log da etapa em Jobs > {pl.nome} no Databricks.")
-    if st.button("Rodar pipeline completo (00 → 01 → 02 → 03)", key="rodar_pipeline"):
+    if st.button(f["botao"], key=f["botao_key"]):
         try:
             run_id = pl.disparar()
-            st.session_state["rodada_pipeline"] = run_id
+            st.session_state[f["chave"]] = run_id
             st.rerun()
         except Exception as e:
             st.error(f"Não foi possível iniciar o job `{pl.nome}`: {e}")
@@ -311,43 +352,134 @@ def rodape(nome_arquivo: str):
     st.caption(f"{nome_arquivo} | Cache: 5 min | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Databricks Apps")
 
 
+def _ts_spx(path: str) -> str:
+    return path.split("/")[-1].replace(multiativos.SPX_PREFIX, "").replace(".csv", "")
+
+
+def _irmao(path: str, tipo: str) -> str | None:
+    """VALIDATION_/RISK_ do mesmo carimbo de um RESULTS (None se o arquivo não existe na pasta)."""
+    nome = path.split("/")[-1].replace("RESULTS_", f"{tipo}_").replace(".csv", ".json")
+    return next((p for p in list_paths(RESULTS_BASE_PATH) if p.split("/")[-1] == nome), None)
+
+
 def pagina_spx():
     """S&P 500: só as abas do SPX rodam (o IBOV não é carregado nem desenhado)."""
-    spx_files = list_results_by_prefix(RESULTS_BASE_PATH, multiativos.SPX_PREFIX)
+    spx_files = sorted(list_results_by_prefix(RESULTS_BASE_PATH, multiativos.SPX_PREFIX), key=_ts_spx, reverse=True)
     quanto_files = list_results_by_prefix(RESULTS_BASE_PATH, multiativos.QUANTO_PREFIX)
+    # completude: RESULTS (07) -> VALIDATION (11) -> RISK (03 com ativo=spx)
+    status = pipeline.status_execucoes(list_all_names(RESULTS_BASE_PATH), "spx_superficie")
     spx_path = None
     if spx_files:
+        padrao = status["ts"].iloc[pipeline.indice_padrao(status)] if len(status) else None
         spx_path = st.sidebar.selectbox(
             "Arquivo RESULTS", options=spx_files, key="spx_file",
-            format_func=lambda p: multiativos.file_label(p, multiativos.SPX_PREFIX),
-            help="Execuções do notebook 07 (superfície do SPX), mais recente primeiro.",
+            index=next((i for i, f in enumerate(spx_files) if _ts_spx(f) == padrao), 0),
+            format_func=lambda p: pipeline.rotulo(_ts_spx(p), status),
+            help="Abre na execução completa mais recente (com validação do 11 e risco do 03).",
         )
     else:
         st.sidebar.warning("Nenhum resultado do notebook 07")
     b = load_multiativos(spx_path) if spx_path else None
+    meta = (b or {}).get("metadata", {})
+    pricing = (b or {}).get("pricing_result")
 
     cabecalho()
     if b is not None:
         st.success(f"Resultado carregado: **{spx_path.split('/')[-1]}**")
+        ts_sel, ts_ult = _ts_spx(spx_path), _ts_spx(spx_files[0])
+        falta_sel = pipeline.motivo(ts_sel, status)
+        falta_ult = pipeline.motivo(ts_ult, status) if ts_ult != ts_sel else None
     else:
         st.info(multiativos.SEM_SPX + " O Structuring Desk funciona com valores de reserva.")
+        falta_sel = falta_ult = None
+    aviso_execucao("spx", falta_sel, falta_ult)
 
-    tabs = st.tabs(["Resumo do Gestor", "Superfície e Smiles", "Taxa e Dividendos",
-                    "Quanto / Compo (BRL)", "Vol Local", "Structuring Desk"])
+    tabs = st.tabs(["Resumo do Gestor", "Superfície e Smiles", "Taxa e Dividendos", "Motor de Precificação",
+                    "Controle e Ingestão", "Quanto / Compo (BRL)", "Vol Local", "Structuring Desk"])
     with tabs[0]:
-        multiativos.render_spx_resumo(st, b, spx_files, load_multiativos)
+        if b is not None:
+            st.header("Resumo do Pricer")
+            if pricing:
+                paineis.resumo_pricer(meta, pricing, "Spot SPX")
+                st.caption(f"Call down-and-out de referência: strike {meta.get('strike_pct', 0):.0%} e barreira "
+                           f"{meta.get('barrier_pct', 0):.0%} do spot, {meta.get('target_maturity', 0):.2f} ano "
+                           "(as regras do notebook 01 aplicadas à superfície do S&P 500).")
+            else:
+                st.info("Este arquivo do 07 é anterior à precificação de referência: rode o pipeline do S&P 500 "
+                        "para ter preço, gregas e VaR.")
+            st.markdown("---")
+        multiativos.render_spx_mercado(st, b)
+        if b is not None:
+            st.markdown("---")
+            risk_path = _irmao(spx_path, "RISK")
+            paineis.risco(load_risk_json(risk_path) if risk_path else None,
+                          risk_path.split("/")[-1] if risk_path else None,
+                          (pipeline.motivo(_ts_spx(spx_path), status) or "Sem arquivo de risco para esta execução.")
+                          + "\n\nUse o botão do pipeline no topo da página, ou escolha na barra lateral uma "
+                            "execução marcada como completa.")
+            st.markdown("---")
+            multiativos.render_spx_historico(st, spx_files, load_multiativos)
     with tabs[1]:
         multiativos.render_spx_superficie(st, b, grade_spx(spx_path) if b is not None else None)
     with tabs[2]:
         multiativos.render_spx_taxas(st, b)
     with tabs[3]:
-        multiativos.render_quanto(st, quanto_files, load_multiativos)
+        if pricing:
+            paineis.motor(pricing, b.get("simulation_diagnostics"), "S&P 500")
+        else:
+            st.info("Sem precificação de referência neste arquivo do 07.")
     with tabs[4]:
-        multiativos.render_local_vol(st, quanto_files, load_multiativos)
+        controle_spx(b, spx_path, pricing)
     with tabs[5]:
+        multiativos.render_quanto(st, quanto_files, load_multiativos)
+    with tabs[6]:
+        multiativos.render_local_vol(st, quanto_files, load_multiativos)
+    with tabs[7]:
         ref = mk.referencia_quanto(load_multiativos(quanto_files[0])) if quanto_files else None
         desk.render(desk.SPX, mercado_spx(spx_path) if b is not None else None, ref)
     rodape(spx_path.split("/")[-1] if spx_path else "sem arquivo do SPX")
+
+
+def controle_spx(b, spx_path, pricing):
+    """Controle e Ingestão do S&P 500: checagens do preço, controles do notebook 11 e exportação."""
+    st.header("Validação e Qualidade")
+    if b is None:
+        st.info(multiativos.SEM_SPX)
+        return
+    if pricing:
+        paineis.controles_precificacao(pricing)
+    st.markdown("---")
+    st.header("Validação do Notebook 11")
+    val_path = _irmao(spx_path, "VALIDATION")
+    val = load_risk_json(val_path) if val_path else None
+    if val is None:
+        st.info("Esta execução ainda não foi validada pelo notebook 11 (ou reprovou: com FAIL ele não grava a "
+                "evidência).")
+    else:
+        c = st.columns(4)
+        c[0].metric("Decisão", val.get("decision", "—"))
+        c[1].metric("PASS", val.get("pass_count", 0))
+        c[2].metric("WARN", val.get("warn_count", 0))
+        c[3].metric("FAIL", val.get("fail_count", 0))
+        checks = pd.DataFrame(val.get("checks") or val.get("warnings") or [])
+        if not checks.empty:
+            st.dataframe(checks, use_container_width=True, hide_index=True)
+        st.caption(f"Validado em {multiativos.quando(val.get('validation_timestamp'))} | "
+                   f"Fonte: `{val_path.split('/')[-1]}`")
+    st.markdown("---")
+    st.header("Exportar Dados")
+    md = b["metadata"].get("market_date", "unknown")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        raw = load_result(spx_path)
+        if raw is not None:
+            st.download_button("Download RESULTS (CSV)", raw.to_csv(index=False), f"results_spx_{md}.csv", "text/csv")
+    with col2:
+        st.download_button("Download Forwards, r e q (CSV)", b["forwards"].to_csv(index=False),
+                           f"forwards_spx_{md}.csv", "text/csv")
+    with col3:
+        st.download_button("Download Superfície (CSV)", b["options"].to_csv(index=False),
+                           f"superficie_spx_{md}.csv", "text/csv")
 
 
 st.sidebar.header("Configurações")
@@ -355,11 +487,15 @@ st.sidebar.header("Configurações")
 # O instrumento vem primeiro: ele decide quais arquivos e abas aparecem. ?ativo=spx abre direto no S&P 500.
 st.sidebar.markdown("**Tipo de Instrumento**")
 ativos = [k for k, v in SUPPORTED_INSTRUMENTS.items() if v["status"] == "active"]
+# A URL só define o valor inicial (primeira carga da sessão). Não passar index= calculado a cada execução:
+# no Streamlit 1.38 (o do Databricks Apps) o index entra na identidade do widget, e um index tirado da URL
+# (que guarda a escolha anterior) recriava o combo a cada troca e o clique se perdia.
+if "instrumento" not in st.session_state:
+    st.session_state["instrumento"] = next(
+        (k for k in ativos if SUPPORTED_INSTRUMENTS[k]["slug"] == st.query_params.get("ativo")), ativos[0])
 instrument_choice = st.sidebar.selectbox(
     "Selecione o instrumento",
     options=ativos,
-    index=next((i for i, k in enumerate(ativos)
-                if SUPPORTED_INSTRUMENTS[k]["slug"] == st.query_params.get("ativo")), 0),
     format_func=lambda x: SUPPORTED_INSTRUMENTS[x]["label"],
     key="instrumento",
 )
@@ -411,26 +547,7 @@ st.success(f"Resultado carregado: **{selected_filename}**")
 latest_ts = ts_of(available_files[0])
 falta_sel = pipeline.motivo(ts_of(selected_file_path), exec_status)
 falta_ult = pipeline.motivo(latest_ts, exec_status) if latest_ts != ts_of(selected_file_path) else None
-rodada = st.session_state.get("rodada_pipeline")
-if falta_sel or falta_ult or rodada:
-    if falta_sel:
-        st.error(f"Informação incompleta. {falta_sel}")
-    elif falta_ult:
-        st.warning(f"A execução mais recente está incompleta e não foi aberta. {falta_ult}")
-    try:
-        prog_inicial = (pipeline.Pipeline(get_workspace_client(),
-                                          os.environ.get("PIPELINE_JOB_NAME", pipeline.JOB_PADRAO),
-                                          os.environ.get("PIPELINE_JOB_ID")).acompanhar(rodada)
-                        if rodada else None)
-    except Exception:
-        prog_inicial = None
-    if prog_inicial is not None and not prog_inicial.ativo:
-        st.session_state.pop("rodada_pipeline", None)
-        if prog_inicial.resultado == "SUCCESS":
-            st.success(f"Pipeline concluído (rodada {prog_inicial.run_id}): a execução nova já está na lista.")
-            prog_inicial = None
-    if falta_sel or falta_ult or (prog_inicial is not None and prog_inicial.ativo):
-        painel_pipeline(prog_inicial)
+aviso_execucao("ibov", falta_sel, falta_ult)
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
     ["Resumo do Gestor", "Superfície e Volatilidade", "Curvas de Mercado",
@@ -443,92 +560,19 @@ with tab1:
     pricing = extract_json_object(bundle, "pricing_result")
 
     if metadata and pricing:
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Data de Mercado", metadata.get("market_date", "—"))
-        col2.metric("Spot IBOV", f"{metadata.get('spot', 0):,.2f}")
-        col3.metric("Strike Alvo", f"{metadata.get('target_strike', 0):,.2f}")
-        col4.metric("Vol. Implícita", f"{metadata.get('target_iv', 0):.2%}")
-
-        col5, col6, col7, col8 = st.columns(4)
-        col5.metric("Preço Vanilla (BS)", f"{pricing.get('vanilla_price', 0):,.2f}")
-        col6.metric("Preço Down-and-Out", f"{pricing.get('barrier_price', 0):,.2f}")
-        col7.metric("Desconto Barreira", f"{pricing.get('barrier_discount_pct', 0):.2%}")
-        col8.metric("P(knock-out)", f"{pricing.get('knock_out_probability', 0):.2%}")
-
-        if "analytical_price"in pricing:
-            col9, col10 = st.columns(2)
-            col9.metric("Preço Analítico (Reiner-Rubinstein)", f"{pricing.get('analytical_price', 0):,.2f}")
-            col10.metric("Erro MC vs Analítico", f"{pricing.get('analytical_error_pct', 0):.4%}")
-
-        with st.expander("Ver parâmetros do contrato e mercado"):
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.markdown("**Contrato**")
-                st.json(pricing.get("contract", {}))
-            with col_b:
-                st.markdown("**Mercado**")
-                st.json(pricing.get("market", {}))
+        paineis.resumo_pricer(metadata, pricing, "Spot IBOV")
 
     st.markdown("---")
-    st.header("Risco & Gregas")
-
-    selected_ts = (
-        selected_file_path.split("/")[-1]
-        .replace("RESULTS_superficieVol_", "")
-        .replace(".csv", "")
-    )
+    selected_ts = ts_of(selected_file_path)
     risk_files = list_available_risk(RESULTS_BASE_PATH)
-    risk_match = next(
-        (p for p in risk_files if selected_ts in p.split("/")[-1]), None
+    risk_match = next((p for p in risk_files if selected_ts in p.split("/")[-1]), None)
+    paineis.risco(
+        load_risk_json(risk_match) if risk_match else None,
+        risk_match.split("/")[-1] if risk_match else None,
+        (pipeline.motivo(selected_ts, exec_status) or "Nenhum arquivo RISK correspondente a este RESULTS.")
+        + "\n\nUse o botão \"Rodar pipeline completo\" no topo da página, ou escolha na barra lateral "
+        "uma execução marcada como completa.",
     )
-
-    if risk_match is None:
-        st.error(
-            (pipeline.motivo(selected_ts, exec_status) or "Nenhum arquivo RISK correspondente a este RESULTS.")
-            + "\n\nUse o botão \"Rodar pipeline completo\" no topo da página, ou escolha na barra lateral "
-            "uma execução marcada como completa."
-        )
-    else:
-        risk = load_risk_json(risk_match)
-        if risk:
-            m = risk.get("metrics", {})
-
-            col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-            col_r1.metric("Preço (MC)", f"{m.get('price', 0):,.2f}")
-            col_r2.metric("Delta", f"{m.get('delta', 0):.4f}")
-            col_r3.metric("Gamma", f"{m.get('gamma', 0):.6f}")
-            col_r4.metric("Vega (1%)", f"{m.get('vega_1pct', 0):,.2f}")
-
-            col_r5, col_r6, col_r7, col_r8 = st.columns(4)
-            col_r5.metric("Theta (1d)", f"{m.get('theta_1day', 0):,.2f}")
-            col_r6.metric("Rho (1%)", f"{m.get('rho_1pct', 0):,.2f}")
-            col_r7.metric("DV01", f"{m.get('dv01', 0):.4f}")
-            col_r8.metric("Convexidade (1bp)", f"{m.get('rate_convexity_1bp', 0):.6f}")
-
-            st.markdown("---")
-            col_v1, col_v2, col_v3, col_v4 = st.columns(4)
-            col_v1.metric("VaR 99% (1d)", f"{m.get('var', 0):,.2f}")
-            col_v2.metric("Expected Shortfall", f"{m.get('expected_shortfall', 0):,.2f}")
-            col_v3.metric("PnL médio", f"{m.get('pnl_mean', 0):,.2f}")
-            col_v4.metric("PnL std", f"{m.get('pnl_std', 0):,.2f}")
-
-            st.caption(
-                f"VaR/ES: {m.get('confidence_level', 0.99):.0%} de confiança, horizonte de "
-                f"{m.get('horizon_days', 1)} dia(s), {m.get('scenarios', 0):,} cenários — "
-                f"{m.get('methodology', '—')}"
-            )
-
-            limitations = risk.get("limitations", [])
-            if limitations:
-                with st.expander("Limitações do cálculo de risco"):
-                    for lim in limitations:
-                        st.markdown(f"- {lim}")
-
-            st.caption(
-                f"Validação: {risk.get('validation_decision', '—')} "
-                f"({risk.get('validation_warn_count', 0)} ressalvas) | "
-                f"Fonte: `{risk_match.split('/')[-1]}`"
-            )
 
     st.markdown("---")
     st.header("Histórico de Execuções")
@@ -538,7 +582,7 @@ with tab1:
             "Comparar múltiplas execuções",
             options=available_files,
             default=available_files[:2],
-            format_func=lambda x: x.split("/")[-1].replace("RESULTS_superficieVol_", "").replace(".csv", ""),
+            format_func=lambda x: pipeline.data_hora(ts_of(x)),
         )
 
         if selected_hist:
@@ -551,34 +595,21 @@ with tab1:
                 price_hist = extract_json_object(bundle_hist, "pricing_result")
                 if meta_hist and price_hist:
                     comparison_data.append({
-                        "Arquivo": fpath.split("/")[-1],
+                        "_ts": ts_of(fpath),
+                        "Execução": pipeline.data_hora(ts_of(fpath)),
                         "Data": meta_hist.get("market_date", "—"),
                         "Spot": meta_hist.get("spot", 0),
                         "Vanilla": price_hist.get("vanilla_price", 0),
-                        "DAO": price_hist.get("barrier_price", 0),
-                        "Desconto %": price_hist.get("barrier_discount_pct", 0),
-                        "P(KO) %": price_hist.get("knock_out_probability", 0),
+                        "Down-and-Out": price_hist.get("barrier_price", 0),
+                        "Desconto": price_hist.get("barrier_discount_pct", 0),
+                        "P(knock-out)": price_hist.get("knock_out_probability", 0),
                     })
 
             if comparison_data:
-                comparison_df = pd.DataFrame(comparison_data)
-                st.dataframe(comparison_df, use_container_width=True)
-
-                if len(comparison_df) > 1:
-                    # eixo por execução (data e hora do arquivo): várias execuções no mesmo dia de
-                    # mercado ficavam empilhadas num eixo de datas com marcações em milissegundos
-                    stamps = comparison_df["Arquivo"].str.extract(r"(\d{8}_\d{6})")[0]
-                    comparison_df["Execução"] = pd.to_datetime(stamps, format="%Y%m%d_%H%M%S",
-                                                               errors="coerce").dt.strftime("%d/%m %H:%M")
-                    comparison_df = comparison_df.sort_values("Arquivo")
-                    fig_comp = px.line(
-                        comparison_df, x="Execução", y=["Vanilla", "DAO"],
-                        markers=True, title="Evolução de Preços",
-                        labels={"value": "Preço (pontos)", "variable": "Tipo"},
-                        hover_data=["Data"],
-                    )
-                    fig_comp.update_xaxes(type="category")
-                    st.plotly_chart(fig_comp, use_container_width=True)
+                # a mais antiga primeiro: o gráfico lê da esquerda para a direita
+                comparison_df = (pd.DataFrame(comparison_data).sort_values("_ts").drop(columns="_ts")
+                                 .reset_index(drop=True))
+                paineis.historico_precos(comparison_df, "pontos")
     else:
         st.info("Apenas 1 arquivo disponível.")
 
@@ -771,213 +802,13 @@ with tab3:
             )
 
 with tab4:
-    st.header("Diagnóstico da Simulação Monte Carlo")
-
-    sim_diag = extract_json_object(bundle, "simulation_diagnostics")
-    if sim_diag:
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Caminhos", f"{sim_diag.get('paths', 0):,}")
-        col2.metric("Passos", f"{sim_diag.get('steps', 0):,}")
-        col3.metric("Seed", sim_diag.get("seed", "—"))
-        col4.metric("Monitoramento", sim_diag.get("monitoring", "—"))
-
-        if pricing:
-            col5, col6, col7 = st.columns(3)
-            col5.metric("Erro-padrão", f"{pricing.get('standard_error', 0):,.4f}")
-            col6.metric("IC 95% (inf)", f"{pricing.get('ci_low_95', 0):,.2f}")
-            col7.metric("IC 95% (sup)", f"{pricing.get('ci_high_95', 0):,.2f}")
-
-    st.markdown("---")
-    st.subheader("Visualização da Simulação Monte Carlo")
-
-    if pricing and sim_diag:
-        try:
-            market_block = pricing.get("market", {})
-            contract_block = pricing.get("contract", {})
-
-            spot = float(market_block.get("spot", 0))
-            r = float(market_block.get("rate", 0))
-            q_val = float(market_block.get("dividend_yield", 0))
-            sigma = float(market_block.get("volatility", 0))
-            strike = float(contract_block.get("strike", 0))
-            barrier = float(contract_block.get("barrier", 0))
-            maturity = float(contract_block.get("maturity", 0.5))
-            seed = int(sim_diag.get("seed", 42))
-            monitoring = str(sim_diag.get("monitoring", "brownian_bridge"))
-
-            if spot > 0 and sigma > 0 and maturity > 0:
-                st.markdown("**Caminhos simulados (amostra de 50)**")
-
-                n_paths_plot = 50
-                n_steps_plot = int(sim_diag.get("steps", 126))
-                dt_plot = maturity / n_steps_plot
-
-                rng = np.random.default_rng(seed + 1)
-                z_plot = rng.standard_normal((n_paths_plot, n_steps_plot))
-                drift = (r - q_val - 0.5 * sigma ** 2) * dt_plot
-                diffusion = sigma * np.sqrt(dt_plot)
-                log_paths_plot = np.log(spot) + np.cumsum(drift + diffusion * z_plot, axis=1)
-                paths_plot = np.exp(log_paths_plot)
-                paths_with_t0 = np.concatenate(
-                    [np.full((n_paths_plot, 1), spot), paths_plot], axis=1
-                )
-                time_grid = np.linspace(0, maturity, n_steps_plot + 1)
-
-                fig_paths = go.Figure()
-                for i in range(n_paths_plot):
-                    fig_paths.add_trace(go.Scatter(
-                        x=time_grid, y=paths_with_t0[i], mode="lines",
-                        line=dict(color="rgba(31,119,180,0.3)", width=1),
-                        showlegend=False, hoverinfo="skip",
-                    ))
-                # rótulos dentro da área do gráfico (à direita eles saíam cortados); spot em branco,
-                # já que a linha preta sumia no fundo escuro
-                fig_paths.add_hline(y=spot, line_dash="solid", line_color="white",
-                                    annotation_text=f"Spot {spot:,.0f}", annotation_position="top left")
-                fig_paths.add_hline(y=strike, line_dash="dash", line_color="orange",
-                                    annotation_text=f"Strike {strike:,.0f}", annotation_position="top left")
-                fig_paths.add_hline(y=barrier, line_dash="dot", line_color="red",
-                                    annotation_text=f"Barreira {barrier:,.0f}", annotation_position="bottom left")
-                fig_paths.update_layout(
-                    title="Trajetórias do IBOV sob medida neutra ao risco",
-                    xaxis_title="Tempo (anos)", yaxis_title="Spot IBOV (pontos)",
-                    height=450, showlegend=False,
-                )
-                st.plotly_chart(fig_paths, use_container_width=True)
-
-                st.caption(
-                    f"Monitoramento: **{monitoring}** | "
-                    f"GBM com r={r:.2%}, q={q_val:.2%}, σ={sigma:.2%}"
-                )
-
-                col_conv, col_hist = st.columns(2)
-
-                with col_conv:
-                    st.markdown("**Convergência do preço MC**")
-                    n_paths_conv = 5000
-                    rng_conv = np.random.default_rng(seed)
-                    z_conv = rng_conv.standard_normal((n_paths_conv, n_steps_plot))
-                    uniforms_conv = rng_conv.random((n_paths_conv, n_steps_plot))
-
-                    drift_c = (r - q_val - 0.5 * sigma ** 2) * dt_plot
-                    diff_c = sigma * np.sqrt(dt_plot)
-                    log_paths_c = np.log(spot) + np.cumsum(drift_c + diff_c * z_conv, axis=1)
-
-                    prev = np.concatenate(
-                        (np.full((n_paths_conv, 1), np.log(spot)), log_paths_c[:, :-1]), axis=1
-                    )
-                    log_barrier = np.log(barrier)
-                    if monitoring == "discrete":
-                        alive_c = np.all(log_paths_c > log_barrier, axis=1)
-                    else:
-                        above = (prev > log_barrier) & (log_paths_c > log_barrier)
-                        cross_prob = np.ones_like(log_paths_c)
-                        cross_prob[above] = np.exp(
-                            -2.0 * (prev[above] - log_barrier) * (log_paths_c[above] - log_barrier)
-                            / (sigma ** 2 * dt_plot)
-                        )
-                        alive_c = np.all(above & (uniforms_conv > cross_prob), axis=1)
-
-                    terminal = np.exp(log_paths_c[:, -1])
-                    disc = np.exp(-r * maturity)
-                    payoffs = disc * np.maximum(terminal - strike, 0.0) * alive_c
-
-                    running_mean = np.cumsum(payoffs) / np.arange(1, n_paths_conv + 1)
-                    x_paths = np.arange(1, n_paths_conv + 1)
-
-                    fig_conv = go.Figure()
-                    fig_conv.add_trace(go.Scatter(
-                        x=x_paths, y=running_mean, mode="lines",
-                        line=dict(color="#1f77b4", width=2), name="Preço MC",
-                    ))
-                    fig_conv.add_hline(
-                        y=pricing.get("barrier_price", 0),
-                        line_dash="dash", line_color="green",
-                        annotation_text=f"Final {pricing.get('barrier_price', 0):,.2f}",
-                        annotation_position="right",
-                    )
-                    fig_conv.update_layout(
-                        xaxis_title="Nº de caminhos", yaxis_title="Preço estimado",
-                        height=380, showlegend=False,
-                        margin=dict(l=40, r=40, t=20, b=40),
-                    )
-                    st.plotly_chart(fig_conv, use_container_width=True)
-
-                with col_hist:
-                    st.markdown("**Distribuição de payoffs**")
-                    payoffs_ativos = payoffs[payoffs > 0]
-                    fig_hist = go.Figure()
-                    fig_hist.add_trace(go.Histogram(
-                        x=payoffs_ativos, nbinsx=50,
-                        marker_color="rgba(31,119,180,0.7)",
-                    ))
-                    fig_hist.add_vline(
-                        x=float(payoffs.mean()), line_dash="dash", line_color="red",
-                        annotation_text=f"Média {payoffs.mean():,.2f}",
-                        annotation_position="top",
-                    )
-                    fig_hist.update_layout(
-                        xaxis_title="Payoff descontado", yaxis_title="Frequência",
-                        height=380, showlegend=False,
-                        margin=dict(l=40, r=40, t=20, b=40),
-                    )
-                    st.plotly_chart(fig_hist, use_container_width=True)
-
-                col_mc1, col_mc2, col_mc3, col_mc4 = st.columns(4)
-                col_mc1.metric("Payoffs > 0", f"{(payoffs > 0).mean():.2%}")
-                col_mc2.metric("Payoff médio", f"{payoffs.mean():,.2f}")
-                col_mc3.metric("Payoff máx", f"{payoffs.max():,.2f}")
-                col_mc4.metric("Payoff std", f"{payoffs.std():,.2f}")
-        except Exception as e:
-            st.warning(f"Erro ao gerar visualização MC: {e}")
+    paineis.motor(pricing, extract_json_object(bundle, "simulation_diagnostics"), "IBOV")
 
 with tab5:
     st.header("Validação e Qualidade")
 
     if pricing:
-        market_block = pricing.get("market", {})
-        contract_block = pricing.get("contract", {})
-
-        forward_stored = market_block.get("forward", 0)
-        spot = market_block.get("spot", 0)
-        rate = market_block.get("rate", 0)
-        q_val = market_block.get("dividend_yield", 0)
-        maturity = contract_block.get("maturity", 1)
-
-        forward_recalc = spot * np.exp((rate - q_val) * maturity) if spot > 0 else 0
-        forward_ok = abs(forward_stored - forward_recalc) < 0.01
-
-        barrier_price = pricing.get("barrier_price", 0)
-        vanilla_price = pricing.get("vanilla_price", 0)
-        se = pricing.get("standard_error", 0)
-        ko = pricing.get("knock_out_probability", 0)
-        ci_low = pricing.get("ci_low_95", 0)
-        ci_high = pricing.get("ci_high_95", 0)
-
-        checks = {
-            "Preço não-negativo": barrier_price >= 0,
-            "Barreira Vanilla + 5×SE": barrier_price <= vanilla_price + (5.0 * se),
-            "P(knock-out) em [0; 1]": 0 <= ko <= 1,
-            "Erro-padrão não-negativo": se >= 0,
-            "IC contém preço": ci_low <= barrier_price <= ci_high,
-            "Forward reconstruído": forward_ok,
-            "Erro MC vs Analítico < 1%": pricing.get("analytical_error_pct", 0) < 0.01,
-        }
-
-        pass_count = fail_count = 0
-        for label, result in checks.items():
-            if result:
-                st.success(f"{label}")
-                pass_count += 1
-            else:
-                st.error(f"{label}")
-                fail_count += 1
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("PASS", pass_count)
-        col2.metric("FAIL", fail_count)
-        total = pass_count + fail_count
-        col3.metric("Taxa", f"{pass_count / total * 100:.1f}%"if total > 0 else "—")
+        paineis.controles_precificacao(pricing)
 
     st.markdown("---")
     st.header("Exportar Dados")

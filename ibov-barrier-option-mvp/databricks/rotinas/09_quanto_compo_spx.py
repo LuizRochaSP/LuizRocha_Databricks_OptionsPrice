@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # MAGIC %md
 # MAGIC # SPX pago em BRL: Quanto, Compo e Convertida (Fase 6)
 # MAGIC
@@ -93,13 +97,15 @@ dbutils.widgets.dropdown("janela_rho", "completo", ["completo", "52 semanas", "m
 dbutils.widgets.text("rho_manual", "", "rho manual (com janela = manual)")
 dbutils.widgets.text("r_brl_manual", "", "r BRL manual (% a.a. 252; vazio = curva)")
 dbutils.widgets.text("pasta_spx", f"{user_home}/spx_dados", "Pasta SPX (notebook 08)")
+dbutils.widgets.dropdown("fonte_spot", "paridade", ["paridade", "fornecedor"],
+                         "Spot: paridade (padrão do 07) ou fechamento")
 dbutils.widgets.text("pasta_b3", f"{user_home}/LuizRocha_Databricks_OptionsPrice/ibov-barrier-option-mvp/data",
                      "Pasta B3 (notebook 00)")
 
 W = {k: dbutils.widgets.get(k).strip() for k in ("data_mercado", "prazo_dias", "strike_pct", "barreira_pct",
                                                  "janela_rho", "rho_manual",
                                                   "anos_historico", "caminhos", "r_brl_manual", "pasta_spx",
-                                                  "pasta_b3")}
+                                                  "pasta_b3", "fonte_spot")}
 TARGET_T = float(W["prazo_dias"]) / 365.0
 STRIKE_PCT = float(W["strike_pct"]) / 100.0
 BARRIER_PCT = float(W["barreira_pct"]) / 100.0 if W["barreira_pct"] else None
@@ -183,11 +189,13 @@ else:
 day_dir = raw_dir / market_date.isoformat()
 if (day_dir / "meta.json").exists():
     meta = json.loads((day_dir / "meta.json").read_text())
+    # spot como no notebook 07: implícito pela paridade (padrão) ou fechamento oficial gravado no meta.json
     adapter = SPXAdapter(lambda root, _d: pd.read_parquet(day_dir / f"{root}.parquet"),
-                         spot_source=lambda _d: meta["spot"])
+                         spot_source=(lambda _d: meta["spot"]) if W["fonte_spot"] == "fornecedor" else None)
     chain_source = f"disco ({day_dir})"
 else:
-    adapter = SPXAdapter(theta().option_chain, spot_source=theta().index_close)
+    adapter = SPXAdapter(theta().option_chain,
+                         spot_source=theta().index_close if W["fonte_spot"] == "fornecedor" else None)
     chain_source = "ThetaData"
 snap = adapter.load_snapshot(market_date)
 print(f"Data SPX: {market_date} | cadeia: {chain_source} | spot {snap.spot:,.2f} | "
