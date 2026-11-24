@@ -205,6 +205,45 @@ def tabela_curvas(m: MercadoDia, vertices=VERTICES_PADRAO) -> pd.DataFrame:
     return out
 
 
+def curvas_para_grafico(m: MercadoDia, passo: int = 21) -> pd.DataFrame:
+    """Curvas para gráfico, só onde há títulos para sustentá-las.
+
+    - pré (bootstrap e NSS) até o último LTN/NTN-F; depois disso é extrapolação;
+    - real (bootstrap e NSS) entre a primeira e a última NTN-B: antes da primeira a NSS real fica
+      solta (chega a -5% em 1 mês) e a inflação implícita do curtíssimo prazo seria artefato;
+    - inflação implícita onde as duas curvas existem;
+    - termo de 1 ano pela NSS (suave) e pelo bootstrap (serrilhado por construção), só enquanto
+      o fim do período está dentro dos prefixados.
+    Fora dessas faixas os valores ficam NaN (o gráfico não desenha).
+    """
+    def faixa(nomes):
+        venc = m.df[m.df["titulo"].isin(nomes)]["vencimento"]
+        dus = [dias_uteis(m.ref, v) for v in venc]
+        return (min(dus), max(dus)) if dus else (None, None)
+
+    pre_min, pre_max = faixa(("LTN", "NTN-F"))
+    real_min, real_max = faixa(("NTN-B",))
+    fim = max(x for x in (pre_max, real_max) if x is not None)
+    tc = tabela_curvas(m, vertices=tuple(range(passo, fim + passo, passo)))
+    du = tc["du"]
+    for c in ("pre", "pre_nss"):
+        if c in tc:
+            tc.loc[du > pre_max, c] = np.nan
+    if real_max is not None:
+        fora_real = (du < real_min) | (du > real_max)
+        for c in ("real", "real_nss"):
+            if c in tc:
+                tc.loc[fora_real, c] = np.nan
+        if "inflacao_implicita" in tc:
+            tc.loc[fora_real | (du > pre_max), "inflacao_implicita"] = np.nan
+    dentro = du + 252 <= pre_max
+    tc.loc[~dentro, "termo_pre_1a"] = np.nan
+    tc["termo_pre_1a_nss"] = np.nan
+    if m.nss_pre is not None:
+        tc.loc[dentro, "termo_pre_1a_nss"] = [m.nss_pre.taxa_termo(d, d + 252) for d in du[dentro]]
+    return tc
+
+
 def comparar_di1(m: MercadoDia, ajustes: pd.DataFrame) -> pd.DataFrame:
     """Curva de ajustes de DI1 da B3 contra a curva pré dos títulos, contrato a contrato.
 

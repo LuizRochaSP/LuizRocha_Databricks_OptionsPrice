@@ -28,7 +28,7 @@ from renda_fixa.calendario import dias_uteis, proximo_dia_util
 from renda_fixa.dados import bcb
 from renda_fixa.dados.anbima import DadoIndisponivel, baixar_mercado_secundario, ultimo_disponivel
 from renda_fixa.derivativos import DI1, SwapDIIPCA, SwapDIPre, taxa_fra
-from renda_fixa.mercado import (VERTICES_PADRAO, comparar_di1, historico_curvas, montar_mercado, tabela_curvas,
+from renda_fixa.mercado import (VERTICES_PADRAO, comparar_di1, curvas_para_grafico, historico_curvas, montar_mercado, tabela_curvas,
                                 tabela_titulos, variacoes_diarias_bps)
 from renda_fixa.risco import Carteira, PosicaoDI1, PosicaoSwap, PosicaoTitulo, cenarios_padrao, contratos_hedge_di1
 from renda_fixa.titulos import criar_titulo
@@ -50,6 +50,23 @@ st.markdown(
 
 def plot(fig, chave: str):
     st.plotly_chart(fig, width="stretch", theme=None, config=G.config_barra(chave), key=chave)
+
+
+def tabela(df: pd.DataFrame, casas: int = 4):
+    """Tabela com colunas numéricas de verdade: null/None aparece como "—" e não como "None"."""
+    out = df.copy()
+    for c in out.columns:
+        if out[c].dtype == object:
+            num = pd.to_numeric(out[c], errors="coerce")
+            if num.notna().sum() == out[c].notna().sum():  # só números e vazios
+                out[c] = num
+    return out.style.format(precision=casas, na_rep="—")
+
+
+def eixo_x(fig, x_max: float):
+    """Eixo de prazo a partir de zero (o automático chegava a -20 anos)."""
+    fig.update_xaxes(range=[0, float(x_max) * 1.03])
+    return fig
 
 
 @st.cache_data(show_spinner="Baixando o arquivo da ANBIMA...", ttl=3600)
@@ -107,13 +124,15 @@ REF, PRE, REAL = m.ref, m.curva_pre, m.curva_real
 CURVAS = m.curvas
 tt = tabela_titulos(m)
 
-c = st.columns(6)
+# duas linhas de 3: com 6 lado a lado os valores cortavam em janelas estreitas
+c = st.columns(3)
 c[0].metric("Data", REF.strftime("%d/%m/%Y"))
 c[1].metric("Títulos", len(tt))
 c[2].metric("PU idêntico à ANBIMA", f"{int((tt['erro_pu'] == 0).sum())} de {len(tt)}")
-c[3].metric("VNA LFT", f"{m.vna_lft.vna:,.6f}")
-c[4].metric("VNA NTN-B", f"{m.vna_ntnb.vna:,.6f}")
-c[5].metric("VNA NTN-C", f"{m.vna_ntnc.vna:,.6f}" if m.vna_ntnc else "-")
+c = st.columns(3)
+c[0].metric("VNA LFT", f"{m.vna_lft.vna:,.6f}")
+c[1].metric("VNA NTN-B", f"{m.vna_ntnb.vna:,.6f}")
+c[2].metric("VNA NTN-C", f"{m.vna_ntnc.vna:,.6f}" if m.vna_ntnc else "-")
 
 aba = st.tabs(["Títulos do dia", "Curvas", "Calculadora", "DI1 e swaps", "Risco de carteira"])
 
@@ -133,27 +152,37 @@ with aba[0]:
 
 # ------------------------------------------------------------------ curvas
 with aba[1]:
-    tc = tabela_curvas(m, vertices=tuple(range(21, 9000, 21)))
+    tc = curvas_para_grafico(m)
     anos = tc["anos"]
     pts_pre = tt[tt["titulo"].isin(["LTN", "NTN-F"])]
     pts_real = tt[tt["titulo"] == "NTN-B"]
+    ate = lambda c_: anos[tc[c_].notna()].max()  # último prazo com valor na coluna
+    st.caption("Curvas desenhadas só na faixa coberta pelos títulos (sem extrapolação). "
+               "Pontos: taxa ANBIMA de cada título na sua duration.")
     col = st.columns(2)
     with col[0]:
-        plot(G.figura([G.linha(1, "Bootstrap", anos, tc["pre"], "lines"), G.linha(3, "NSS", anos, tc["pre_nss"], "lines"),
-                       G.linha(0, "LTN / NTN-F", pts_pre["duration_mac"], pts_pre["taxa_anbima"], "markers")],
-                      "Curva prefixada", "anos", "% a.a."), "curva_pre")
+        fig = G.figura([G.linha(1, "Bootstrap", anos, tc["pre"], "lines"), G.linha(3, "NSS", anos, tc["pre_nss"], "lines"),
+                        G.linha(0, "LTN / NTN-F", pts_pre["duration_mac"], pts_pre["taxa_anbima"], "markers")],
+                       "Curva prefixada", "anos", "% a.a.")
+        plot(eixo_x(fig, ate("pre")), "curva_pre")
     with col[1]:
-        plot(G.figura([G.linha(1, "Bootstrap", anos, tc["real"], "lines"), G.linha(3, "NSS", anos, tc["real_nss"], "lines"),
-                       G.linha(0, "NTN-B", pts_real["duration_mac"], pts_real["taxa_anbima"], "markers")],
-                      "Curva de juro real (IPCA)", "anos", "% a.a."), "curva_real")
+        fig = G.figura([G.linha(1, "Bootstrap", anos, tc["real"], "lines"), G.linha(3, "NSS", anos, tc["real_nss"], "lines"),
+                        G.linha(0, "NTN-B", pts_real["duration_mac"], pts_real["taxa_anbima"], "markers")],
+                       "Curva de juro real (IPCA)", "anos", "% a.a.")
+        plot(eixo_x(fig, ate("real")), "curva_real")
     col = st.columns(2)
     with col[0]:
-        plot(G.figura([G.linha(2, "Inflação implícita", anos, tc["inflacao_implicita"], "lines")],
-                      "Inflação implícita", "anos", "% a.a."), "breakeven")
+        fig = G.figura([G.linha(2, "Inflação implícita", anos, tc["inflacao_implicita"], "lines")],
+                       "Inflação implícita", "anos", "% a.a.")
+        plot(eixo_x(fig, ate("inflacao_implicita")), "breakeven")
     with col[1]:
-        plot(G.figura([G.linha(4, "Termo pré de 1 ano", anos, tc["termo_pre_1a"], "lines")],
-                      "Taxa a termo de 1 ano (pré)", "anos", "% a.a."), "termo")
-    st.dataframe(tabela_curvas(m).round(4), width="stretch", hide_index=True)
+        # a NSS dá a termo suave; a do bootstrap é serrilhada por construção (taxa constante entre títulos)
+        fig = G.figura([G.linha(4, "NSS", anos, tc["termo_pre_1a_nss"], "lines"),
+                        G.linha(1, "Bootstrap", anos, tc["termo_pre_1a"], "lines")],
+                       "Taxa a termo de 1 ano (pré)", "início do período (anos)", "% a.a.")
+        fig.data[1].update(opacity=0.45)
+        plot(eixo_x(fig, ate("termo_pre_1a")), "termo")
+    st.dataframe(tabela(tabela_curvas(m)), width="stretch", hide_index=True)
 
     st.subheader("Curva de ajustes de DI1 (B3) x curva pré dos títulos")
     aj = ajustes_b3(REF)
@@ -178,7 +207,7 @@ with aba[1]:
                           "Spread DI1 - títulos (+ = DI1 acima)", "", "bps"), "spread_di1")
         st.caption("Depois do último prefixado a curva dos títulos é extrapolada com taxa constante "
                    "(coluna extrapolado); esses contratos ficam fora do gráfico de spread.")
-        st.dataframe(cmp_di1.round(4), width="stretch", hide_index=True)
+        st.dataframe(tabela(cmp_di1), width="stretch", hide_index=True)
 
 # ------------------------------------------------------------------ calculadora
 with aba[2]:
@@ -232,7 +261,7 @@ with aba[3]:
     di = pd.DataFrame(linhas)
     di["fra_vs_anterior"] = [np.nan] + [taxa_fra(x.taxa, x.du, y.taxa, y.du) for x, y in
                                         zip(di.iloc[:-1].itertuples(), di.iloc[1:].itertuples())]
-    st.dataframe(di.round(4), width="stretch", hide_index=True)
+    st.dataframe(tabela(di), width="stretch", hide_index=True)
 
     st.subheader("Taxas par")
     par = []
@@ -241,7 +270,7 @@ with aba[3]:
         par.append({"prazo": f"{anos_}a", "vencimento": v, "DI x Pré (100% CDI)": SwapDIPre.taxa_par(PRE, REF, v),
                     "DI x Pré (CDI + 1%)": SwapDIPre.taxa_par(PRE, REF, v, spread_cdi_aa=1.0),
                     "DI x IPCA (cupom)": SwapDIIPCA.cupom_par(PRE, REAL, REF, v)})
-    st.dataframe(pd.DataFrame(par).round(4), width="stretch", hide_index=True)
+    st.dataframe(tabela(pd.DataFrame(par)), width="stretch", hide_index=True)
 
     st.subheader("Marcação a mercado de swap DI x Pré")
     col = st.columns(5)
@@ -253,6 +282,7 @@ with aba[3]:
     col = st.columns(2)
     pct = col[0].number_input("% do CDI", value=100.0)
     spread = col[1].number_input("Spread sobre o CDI (% a.a.)", value=0.0, format="%.4f")
+    sw = None
     try:
         fator = bcb.fator_cdi(cdi(ini, REF), ini, REF, pct) if ini < REF else 1.0
         sw = SwapDIPre(noc, ini, ven, kpre, ativo=lado, pct_cdi=pct, spread_cdi_aa=spread)
@@ -271,9 +301,12 @@ with aba[4]:
     st.subheader("Carteira")
     st.caption("Títulos a mercado (z-spread sobre a curva do dia). Quantidade em títulos; negativa = vendido.")
     base = pd.DataFrame([
-        {"titulo": "LTN", "vencimento": sorted(m.df[m.df.titulo == "LTN"].vencimento)[4], "quantidade": 20000},
+        # mesma carteira do notebook 03: LTN e NTN-B do meio da lista, NTN-F mais longa
+        {"titulo": "LTN", "vencimento": sorted(m.df[m.df.titulo == "LTN"].vencimento)[(m.df.titulo == "LTN").sum() // 2],
+         "quantidade": 20000},
         {"titulo": "NTN-F", "vencimento": m.df[m.df.titulo == "NTN-F"].vencimento.max(), "quantidade": 10000},
-        {"titulo": "NTN-B", "vencimento": sorted(m.df[m.df.titulo == "NTN-B"].vencimento)[7], "quantidade": 2000},
+        {"titulo": "NTN-B", "vencimento": sorted(m.df[m.df.titulo == "NTN-B"].vencimento)[(m.df.titulo == "NTN-B").sum() // 2],
+         "quantidade": 2000},
     ])
     opcoes = {t_: sorted(m.df[m.df.titulo == t_].vencimento) for t_ in ("LTN", "NTN-F", "NTN-B", "LFT")}
     ed = st.data_editor(
@@ -291,6 +324,9 @@ with aba[4]:
         tit = criar_titulo(r_.titulo, r_.vencimento)
         carteira.adicionar(PosicaoTitulo.a_mercado(tit, float(r_.quantidade), float(linha_mkt.pu.iloc[0]), REF, CURVAS,
                                                    vna=m.vna(r_.titulo)))
+    if sw is not None and st.checkbox("Incluir o swap DI x Pré da aba \"DI1 e swaps\" (como no notebook 03)",
+                                      value=True):
+        carteira.adicionar(PosicaoSwap(sw, REF, fator))
     if not carteira.posicoes:
         st.stop()
     dv_pre, dv_real = carteira.dv01(REF, CURVAS, "PRE"), carteira.dv01(REF, CURVAS, "IPCA")
