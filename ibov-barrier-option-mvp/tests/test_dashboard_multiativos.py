@@ -105,7 +105,7 @@ class FakeColumn:
     def __init__(self, log):
         self.log = log
 
-    def metric(self, label, value, delta=None):
+    def metric(self, label, value, delta=None, **kwargs):
         self.log.append(("metric", label, value))
 
 
@@ -128,6 +128,8 @@ class FakeStreamlit:
             self.log.append((name, args[0] if args else None))
             if name == "selectbox":
                 return kwargs["options"][0]
+            if name == "multiselect":
+                return kwargs["default"]
             if name == "columns":
                 return [FakeColumn(self.log) for _ in range(args[0])]
             if name == "expander":
@@ -214,14 +216,45 @@ class DashboardTabsTests(unittest.TestCase):
         fn(st, list(files), lambda _p: bundle)
         return st
 
-    def test_spx_tab(self):
-        st = self._render(self.m.render_spx, spx_objects())
-        self.assertEqual(len(st.charts()), 4)
+    def _spx_tabs(self, files=("/r/RESULTS_spx_superficie_20261122_214200.csv",)):
+        b = self._bundle(spx_objects())
+        st = FakeStreamlit()
+        self.m.render_spx_resumo(st, b, list(files), lambda _p: b)
+        self.m.render_spx_superficie(st, b, self.m.surface_grid(b["options"]))
+        self.m.render_spx_taxas(st, b)
+        return st
+
+    def test_spx_tabs(self):
+        st = self._spx_tabs()
+        # superfície 3D, smiles, vol ATM, arbitragem, taxas
+        self.assertEqual(len(st.charts()), 5)
         metrics = {e[1]: e[2] for e in st.log if e[0] == "metric"}
         self.assertEqual(metrics["Spot SPX"], "6,910.39")
-        self.assertEqual(metrics["Vol ATM 12m"], "21.00%")
+        # vol ATM 12m: ponto mais próximo de K = F no vencimento mais próximo de 1 ano (regra do resumo do 07)
+        opts = spx_objects()["options"]
+        venc = opts.loc[(opts["T"] - 1.0).abs().idxmin(), "expiration"]
+        atm = (opts.loc[opts["expiration"].eq(venc)].assign(d=lambda f: f["log_moneyness"].abs())
+               .sort_values("d", kind="stable"))  # call e put no mesmo strike: fica a primeira
+        self.assertEqual(metrics["Vol ATM 12m"], f"{atm['implied_vol'].iloc[0]:.2%}")
+        self.assertEqual(metrics["r 1 ano"], "4.500%")
+        self.assertIn(("info", "Apenas 1 execução do notebook 07 disponível."), st.log)
         for _, fig in st.charts():
             self.assertEqual(fig.layout.paper_bgcolor, self.m.BG)
+
+    def test_spx_history(self):
+        files = ["/r/RESULTS_spx_superficie_20261123_201211.csv", "/r/RESULTS_spx_superficie_20261122_214200.csv"]
+        st = self._spx_tabs(files)
+        self.assertEqual(len(st.charts()), 6)  # + vol ATM por execução
+        hist = self.m.spx_history(files, lambda _p: self._bundle(spx_objects()))
+        self.assertEqual(hist["Execução"].tolist(), ["22/11/2026 21:42:00", "23/11/2026 20:12:11"])  # mais antiga primeiro
+        self.assertAlmostEqual(hist["Spot"].iloc[0], 6910.39)
+
+    def test_surface_grid_inside_data(self):
+        ks, ts, z = self.m.surface_grid(spx_objects()["options"])
+        self.assertEqual(z.shape, (len(ts), len(ks)))
+        vals = z[np.isfinite(z)]
+        self.assertGreater(len(vals), 0.5 * z.size)
+        self.assertTrue(((vals > 0.1) & (vals < 0.4)).all())
 
     def test_quanto_tab(self):
         st = self._render(self.m.render_quanto, quanto_objects())
@@ -248,10 +281,16 @@ class DashboardTabsTests(unittest.TestCase):
         self.assertEqual(st.charts(), [])
 
     def test_empty_folder_shows_instructions(self):
-        for fn in (self.m.render_spx, self.m.render_quanto, self.m.render_local_vol):
+        for fn in (self.m.render_quanto, self.m.render_local_vol):
             st = self._render(fn, None, files=())
             self.assertTrue(any(e[0] == "info" for e in st.log))
             self.assertEqual(st.charts(), [])
+        st = FakeStreamlit()
+        self.m.render_spx_resumo(st, None, [], lambda _p: None)
+        self.m.render_spx_superficie(st, None)
+        self.m.render_spx_taxas(st, None)
+        self.assertEqual([e for e in st.log if e[0] == "info"], [("info", self.m.SEM_SPX)] * 3)
+        self.assertEqual(st.charts(), [])
 
     def test_captions_hide_workspace_user(self):
         objects = quanto_objects()

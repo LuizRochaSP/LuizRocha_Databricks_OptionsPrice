@@ -1,4 +1,4 @@
-"""Abas multiativos do dashboard: SPX, Quanto/Compo em BRL e Vol local.
+"""Abas do S&P 500 no dashboard: Resumo, Superfície e Smiles, Taxa e Dividendos, Quanto/Compo em BRL e Vol local.
 
 Lê os arquivos que os notebooks 07 (`RESULTS_spx_superficie_*.csv`) e 09 (`RESULTS_quanto_*.csv`) gravam em
 `ibov-barrier-results`, no mesmo formato do notebook 01 (uma linha por objeto: object_name, object_type,
@@ -14,7 +14,9 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from scipy.interpolate import griddata
 
+import mercado as mk
 from formato_br import br_texto
 
 SPX_PREFIX = "RESULTS_spx_superficie_"
@@ -210,6 +212,39 @@ def fig_spx_rates(forwards: pd.DataFrame, sofr: float | None, q_range=(0.0, 0.03
     return fig
 
 
+def surface_grid(options: pd.DataFrame, n_k: int = 70, n_t: int = 50):
+    """Grade da superfície 3D: interpolação linear em ln(K/F) x T, ln(K/F) entre os quantis 2% e 98%."""
+    pts = options[["log_moneyness", "T"]].to_numpy(dtype=float)
+    lo, hi = np.quantile(pts[:, 0], [0.02, 0.98])
+    ks = np.linspace(lo, hi, n_k)
+    ts = np.linspace(pts[:, 1].min(), pts[:, 1].max(), n_t)
+    kk, tt = np.meshgrid(ks, ts)
+    return ks, ts, griddata(pts, options["implied_vol"].to_numpy(dtype=float), (kk, tt), method="linear")
+
+
+def fig_spx_surface(ks, ts, z) -> go.Figure:
+    scale = [[i / (len(WARM) - 1), c] for i, c in enumerate(WARM)]
+    fig = go.Figure(go.Surface(
+        x=ks, y=ts, z=z * 100, colorscale=scale,
+        colorbar=dict(title=dict(text="vol (%)", font=dict(color="white")), tickfont=dict(color="white")),
+        hovertemplate="ln(K/F) %{x:+.3f}<br>T %{y:.2f} ano<br>vol %{z:.2f}%<extra></extra>"))
+    axis = dict(backgroundcolor=BG, gridcolor=GRID, zerolinecolor=GRID, color="white", showbackground=True)
+    fig.update_layout(scene=dict(xaxis=dict(title="ln(K/F)", **axis), yaxis=dict(title="prazo (anos)", **axis),
+                                 zaxis=dict(title="vol implícita (%)", **axis)))
+    return style(fig, "SPX: superfície de volatilidade implícita", height=600)
+
+
+def fig_spx_history(hist: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    for i, col in enumerate(("Vol ATM 1m", "Vol ATM 12m")):
+        fig.add_trace(go.Scatter(x=hist["Execução"], y=hist[col] * 100, mode="lines+markers", name=col,
+                                 line=_line(i + 1), marker=_marker(i + 1), customdata=hist["Data"],
+                                 hovertemplate="%{customdata}<br>%{y:.2f}%<extra>%{fullData.name}</extra>"))
+    fig.update_xaxes(title="execução", type="category")
+    fig.update_yaxes(title="vol ATM (%)")
+    return style(fig, "SPX: vol ATM por execução")
+
+
 def fig_spx_arb(arb: pd.DataFrame) -> go.Figure:
     frame = arb.groupby("expiration", as_index=False).agg(T=("T", "first"), antes=("antes", "sum"),
                                                           removidos=("removidos", "sum")).sort_values("T")
@@ -324,44 +359,111 @@ def _pick(st, files, prefix, key):
     return st.selectbox("Execução", options=files, format_func=lambda p: file_label(p, prefix), key=key)
 
 
-def render_spx(st, files, load):
-    st.header("S&P 500 (SPX): superfície D-1")
-    if not files:
-        st.info("Nenhum resultado do SPX ainda. Rode o notebook `07_spx_superficie_d1` "
-                "(ele grava `RESULTS_spx_superficie_*.csv`).")
-        return
-    b = load(_pick(st, files, SPX_PREFIX, "spx_file"))
+SEM_SPX = ("Nenhum resultado do SPX ainda. Rode o notebook `07_spx_superficie_d1` "
+           "(ele grava `RESULTS_spx_superficie_*.csv`).")
+
+
+def _fonte_spx(st, meta):
+    st.caption(short_path(f"Fonte: {meta.get('fonte', '—')} | executado em {meta.get('execution_timestamp', '—')}"))
+
+
+def spx_history(paths, load) -> pd.DataFrame:
+    """Uma linha por execução do 07: data, spot, vol ATM 1m/12m, r e q de 1 ano."""
+    rows = []
+    for p in paths:
+        b = load(p)
+        if b is None or "options" not in b or "forwards" not in b:
+            continue
+        r = mk.resumo_spx(b)
+        rows.append({"Execução": file_label(p, SPX_PREFIX), "Data": r["data"], "Spot": r["spot"],
+                     "Vol ATM 1m": r["vol ATM 1m"], "Vol ATM 12m": r["vol ATM 12m"], "r 1a": r["r 1a"],
+                     "q 1a": r["q 1a"], "_ordem": p.split("/")[-1]})
+    cols = ["Execução", "Data", "Spot", "Vol ATM 1m", "Vol ATM 12m", "r 1a", "q 1a"]
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    return pd.DataFrame(rows).sort_values("_ordem")[cols].reset_index(drop=True)
+
+
+def render_spx_resumo(st, b, files, load):
+    """Aba Resumo do Gestor do S&P 500: números do dia, avisos do pipeline e histórico de execuções."""
+    st.header("Resumo do S&P 500 (SPX)")
     if b is None:
+        st.info(SEM_SPX)
         return
     meta = b["metadata"]
+    r = mk.resumo_spx(b)
     c = st.columns(4)
-    c[0].metric("Data de mercado", str(meta.get("market_date", "—")))
-    c[1].metric("Spot SPX", f"{meta.get('spot', 0):,.2f}")
-    c[2].metric("Vencimentos", meta.get("vencimentos", "—"))
-    c[3].metric("Pontos na superfície", f"{meta.get('pontos', 0):,}")
-    summary = b.get("summary", {})
+    c[0].metric("Data de mercado", r["data"])
+    c[1].metric("Spot SPX", f"{r['spot']:,.2f}")
+    c[2].metric("Vencimentos", r["vencimentos"] if r["vencimentos"] is not None else "—")
+    c[3].metric("Pontos na superfície", f"{r['pontos']:,}" if r["pontos"] is not None else "—")
     c = st.columns(4)
-    c[0].metric("Vol ATM 1m", summary.get("vol ATM 1m", "—"))
-    c[1].metric("Vol ATM 12m", summary.get("vol ATM 12m", "—"))
-    c[2].metric("r 1 ano", summary.get("r 1a", "—"))
-    c[3].metric("q 1 ano", summary.get("q 1a", "—"))
+    c[0].metric("Vol ATM 1m", f"{r['vol ATM 1m']:.2%}")
+    c[1].metric("Vol ATM 12m", f"{r['vol ATM 12m']:.2%}")
+    c[2].metric("r 1 ano", f"{r['r 1a']:.3%}")
+    c[3].metric("q 1 ano", f"{r['q 1a']:.3%}")
+    if r["SOFR"] is not None:
+        st.caption(f"SOFR {r['SOFR']:.3%} | r 1 ano − SOFR: {(r['r 1a'] - r['SOFR']) * 1e4:+.0f} bps")
     if meta.get("cobertura"):
         st.warning(f"Cobertura: {meta['cobertura']}")
     for w in meta.get("avisos") or []:
         st.caption(f"Aviso do pipeline: {w}")
+    _fonte_spx(st, meta)
 
+    st.markdown("---")
+    st.header("Histórico de Execuções")
+    if len(files) < 2:
+        st.info("Apenas 1 execução do notebook 07 disponível.")
+        return
+    chosen = st.multiselect("Comparar execuções", options=files, default=files[:2],
+                            format_func=lambda p: file_label(p, SPX_PREFIX), key="spx_hist")
+    hist = spx_history(chosen, load)
+    if hist.empty:
+        return
+    fmt = {"Spot": "{:,.2f}", "Vol ATM 1m": "{:.2%}", "Vol ATM 12m": "{:.2%}", "r 1a": "{:.3%}", "q 1a": "{:.3%}"}
+    st.dataframe(sem_vazios(hist, fmt), use_container_width=True, hide_index=True)
+    if len(hist) > 1:
+        _chart(st, fig_spx_history(hist))
+
+
+def render_spx_superficie(st, b, grade=None):
+    """Aba Superfície e Smiles: superfície 3D, smiles nos prazos de referência, vol ATM e limpeza."""
+    st.header("Superfície de Volatilidade do S&P 500")
+    if b is None:
+        st.info(SEM_SPX)
+        return
     options = b["options"]
+    if grade is not None:
+        _chart(st, fig_spx_surface(*grade))
+    c = st.columns(3)
+    c[0].metric("Pontos na superfície", f"{len(options):,}")
+    c[1].metric("Vencimentos", f"{options['expiration'].nunique()}")
+    c[2].metric("Vol mín / máx", f"{options['implied_vol'].min():.2%} / {options['implied_vol'].max():.2%}")
+    st.markdown("---")
+    st.header("Smiles e Vol ATM por Prazo")
     _chart(st, fig_spx_smiles(options))
     _chart(st, fig_spx_atm(options))
-    _chart(st, fig_spx_rates(b["forwards"], meta.get("sofr"), tuple(meta.get("faixa q") or (0.0, 0.03))))
     if "arb" in b:
         _chart(st, fig_spx_arb(b["arb"]))
-    with st.expander("Forwards, r e q por vencimento"):
-        st.dataframe(sem_vazios(b["forwards"]), use_container_width=True, hide_index=True)
     if "funnel" in b:
         with st.expander("Funil de limpeza"):
             st.dataframe(b["funnel"], use_container_width=True, hide_index=True)
-    st.caption(short_path(f"Fonte: {meta.get('fonte', '—')} | executado em {meta.get('execution_timestamp', '—')}"))
+    _fonte_spx(st, b["metadata"])
+
+
+def render_spx_taxas(st, b):
+    """Aba Taxa e Dividendos: r(T) e q(T) implícitos da paridade put-call."""
+    st.header("Taxa e Dividendos Implícitos (paridade put-call)")
+    if b is None:
+        st.info(SEM_SPX)
+        return
+    meta = b["metadata"]
+    _chart(st, fig_spx_rates(b["forwards"], meta.get("sofr"), tuple(meta.get("faixa q") or (0.0, 0.03))))
+    st.caption("r(T) é ajustada nos vencimentos a partir de 3 meses (nos curtos a paridade é ruidosa e a curva "
+               "fica plana). q(T) é o carrego que fecha o forward da paridade com o spot do arquivo; o Structuring "
+               "Desk usa esses dois valores no prazo escolhido.")
+    st.dataframe(sem_vazios(b["forwards"]), use_container_width=True, hide_index=True)
+    _fonte_spx(st, meta)
 
 
 def _quanto_header(st, meta):
