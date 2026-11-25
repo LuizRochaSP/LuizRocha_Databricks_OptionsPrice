@@ -133,6 +133,11 @@ class CurvaDI:
     def deslocar_vertice(self, du: float, bp: float) -> "CurvaDI":
         return CurvaDI(self.curva.bump_key(du, bp))
 
+    @property
+    def vertices(self) -> tuple[float, ...]:
+        """Vértices da curva, em DU (`tenors_bd` da `DiscountCurve`)."""
+        return tuple(float(v) for v in self.curva.tenors_bd)
+
     def _tamanho(self) -> int:
         return 1
 

@@ -4,7 +4,8 @@
   - criada a partir do `main` em `c952c71`;
   - renomeada de `feature/tabelas-var-americano` em 25/11/2026.
 - **Data:** 25/11/2026
-- **Situação:** A1 (interface de produto e adaptadores) implementado em 25/11/2026. Próximo: A2 (perna de título).
+- **Situação:** A1 (interface de produto e adaptadores) e A2 (perna de título) implementados em 25/11/2026.
+  Próximo: A3 (termsheet e composição do COE).
   As decisões 1 e 6 da seção 8 foram tomadas em 25/11.
 - **Substitui:** a primeira versão deste plano (`PLANO_TABELAS_VAR_AMERICANO.md`, commit `73dbc8b`). Aquela versão
   tratava só das tabelas Delta, do VaR e do exercício americano.
@@ -152,6 +153,7 @@ src/ibov_barrier/
     adaptadores.py  Vanilla, CallSpread, Digital, BarreiraSimples, OneTouch, NoTouch, Quanto
     gregas.py       gregas por diferenças finitas sobre a interface
   coe/        termsheet, perna de título, composição, solver, catálogo de estruturas
+    titulo.py       Titulo, desconto do emissor, conversão entre % do CDI e spread (A2, pronto)
   hedge/      instrumentos listados, razões de hedge, simulação do hedge, reservas
   risco/      cenários, fatores, VaR/ES, explicação do P&L, livro
   tabelas.py  leitor do histórico dos arquivos (pandas puro)
@@ -200,7 +202,7 @@ O que foi decidido na implementação:
 - **Composição.** Produtos se somam e se multiplicam por número (`titulo + 0.8 * call_spread`), formando uma
   `Carteira`. Os produtos europeus expõem o `payoff`, que o teste de Monte Carlo do A3 usa.
 - **Gregas.** Delta e gamma com choque relativo de 1% no spot, vega por 1 p.p., DV01 por +1 bp em cada curva e
-  theta em `dt`. A grega do CS01 (spread do emissor) entra com o título, no A2.
+  theta em `dt`. O CS01 (spread do emissor) entrou com o título, no A2.
 - **Testes "mesmo número".** Vanilla e call spread contra o `black_scholes_call` (diferença de arredondamento,
   abaixo de 1e-9 do spot). Digital contra o `_bs_digital`. Barreiras simples (8 tipos, com e sem rebate), one-touch
   e no-touch dão exatamente o mesmo `PriceResult` do pricer. Quanto contra o `price_quanto_vanilla`. A barreira
@@ -225,7 +227,32 @@ Especificação original:
   Quanto.
 - **Testes:** cada adaptador reproduz o pricer original no mesmo número, e a avaliação vetorizada é igual à escalar.
 
-**A2. `coe/titulo.py`: perna de título**
+**A2. `coe/titulo.py`: perna de título** (pronto em 25/11/2026; 28 testes em `tests/test_coe_titulo.py`)
+
+O que foi decidido na implementação:
+- **Curva do emissor.** A taxa do emissor é a taxa DI pré do prazo mais o spread, somados na taxa efetiva anual:
+  DF = (1 + r_pré(T) + s)^(-T), com T = DU/252. O spread fica no estado de mercado (`spread_emissor_bp`), porque
+  muda todo dia e é choque de risco.
+- **% do CDI.** O CDI de cada dia útil é o forward diário da curva pré. Um título a p% do CDI acumula
+  (1 + p · CDI do dia). `spread_de_percentual_cdi` e `percentual_cdi_de_spread` convertem entre as duas formas no
+  prazo do título. O mesmo % do CDI vale spreads diferentes em prazos diferentes, por isso a conversão pede o
+  prazo.
+- **Fluxos.** Principal no vencimento e cupons fixos opcionais. Os fluxos anteriores ao `tempo` do estado saem
+  do valor.
+- **Risco.** As gregas ganharam o CS01, a variação para +1 bp de spread. Ele só é calculado quando o produto
+  depende do spread, ou seja, quando tem um título. Ganharam também `dv01_por_vertice`, que desloca um vértice
+  da curva DI por vez.
+- **Testes que passaram:**
+  - com spread zero, o título bate com o `ltn_price` na mesma curva;
+  - a soma dos DV01 por vértice bate com o paralelo, também na `DiscountCurve` real;
+  - o CS01 bate com a derivada analítica;
+  - em curva plana, DV01 = CS01;
+  - 100% do CDI = spread zero, e a conversão ida e volta fecha;
+  - título + participação num call spread: valor, gregas e payoff somam pelas pernas.
+- **Ambiente.** Os testes com a curva DI real e o `ltn_price` precisam de `exchange_calendars` e `lxml`. Sem
+  essas bibliotecas são pulados. Foram rodados num ambiente com elas.
+
+Especificação original:
 - Valor presente do principal protegido, e dos cupons fixos se houver, pela curva DI pré mais o spread do emissor.
 - O spread pode ser dado em pontos-base sobre a curva pré ou em percentual do CDI, com a conversão entre os dois.
 - Convenção brasileira: dias úteis/252, capitalização exponencial.

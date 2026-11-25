@@ -145,6 +145,11 @@ class Carteira(Composicao):
     def vencimento(self) -> float:
         return max(float(getattr(p, "vencimento", 0.0)) for _, p in self.pernas)
 
+    @property
+    def depende_do_spread(self) -> bool:
+        """True se alguma perna depende do spread do emissor (o título): as gregas calculam o CS01."""
+        return any(getattr(p, "depende_do_spread", False) for _, p in self.pernas)
+
     def subjacentes(self) -> tuple[str, ...]:
         vistos: dict[str, None] = {}
         for _, p in self.pernas:

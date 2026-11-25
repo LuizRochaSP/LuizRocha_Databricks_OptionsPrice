@@ -15,7 +15,7 @@ from ibov_barrier.produtos.adaptadores import (
     digital_cash,
 )
 from ibov_barrier.produtos.base import Carteira, Composicao, Fluxo, Observacao, Produto
-from ibov_barrier.produtos.gregas import Gregas, gregas
+from ibov_barrier.produtos.gregas import Gregas, dv01_por_vertice, gregas
 from ibov_barrier.produtos.mercado import (
     Curva,
     CurvaDI,
@@ -28,5 +28,5 @@ from ibov_barrier.produtos.mercado import (
 __all__ = [
     "BarreiraSimples", "CallSpread", "Carteira", "Composicao", "Curva", "CurvaDI", "CurvaPlana", "Digital",
     "EstadoMercado", "Fluxo", "Gregas", "MercadoAtivo", "MercadoCambio", "NoTouch", "Observacao", "OneTouch",
-    "Produto", "Quanto", "Vanilla", "black_scholes", "digital_cash", "gregas",
+    "Produto", "Quanto", "Vanilla", "black_scholes", "digital_cash", "dv01_por_vertice", "gregas",
 ]
