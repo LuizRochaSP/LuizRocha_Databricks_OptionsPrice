@@ -290,8 +290,12 @@ Em 24/11/2026: **309 testes, todos verdes**. Os testes de calendário, de curva 
 `exchange-calendars` e `lxml`, que estão no `pyproject.toml`. Os do dashboard precisam de Streamlit e Plotly
 (`dashboard/requirements.txt`). Quando falta uma dessas bibliotecas, esses testes são pulados ou não carregam.
 
+Na branch `feature/coe-pricing-risco` há mais 57 testes, em `test_produtos.py` (interface de produtos do COE).
+O total vai a 366.
+
 | Módulo de teste | Testes | O que cobre |
 | :--- | ---: | :--- |
+| `test_produtos.py` | 57 | interface de produtos do COE: adaptadores no mesmo número dos pricers, cenários vetoriais, carteira, Quanto e gregas por diferenças finitas |
 | `test_pricing.py` | 40 | motor Monte Carlo, validação das entradas, reprodutibilidade, gregas |
 | `test_markets_spx.py` | 30 | adaptador do S&P 500: normalização da ThetaData, prazos AM/PM, núcleo de vol idêntico ao do notebook 01, paridade, limpeza com problemas injetados |
 | `test_extensions.py` | 23 | rebate, binários Down, estruturas Knock-In, Range Accrual, Double Touch |

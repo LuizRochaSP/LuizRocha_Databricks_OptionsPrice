@@ -4,7 +4,8 @@
   - criada a partir do `main` em `c952c71`;
   - renomeada de `feature/tabelas-var-americano` em 25/11/2026.
 - **Data:** 25/11/2026
-- **Situação:** plano. Nada foi implementado ainda.
+- **Situação:** A1 (interface de produto e adaptadores) implementado em 25/11/2026. Próximo: A2 (perna de título).
+  As decisões 1 e 6 da seção 8 foram tomadas em 25/11.
 - **Substitui:** a primeira versão deste plano (`PLANO_TABELAS_VAR_AMERICANO.md`, commit `73dbc8b`). Aquela versão
   tratava só das tabelas Delta, do VaR e do exercício americano.
 
@@ -145,7 +146,11 @@ $$
 
 ```text
 src/ibov_barrier/
-  produtos/   interface Produto, EstadoMercado, adaptadores dos pricers atuais
+  produtos/   interface Produto, EstadoMercado, adaptadores dos pricers atuais (A1, pronto)
+    mercado.py      EstadoMercado, MercadoAtivo, MercadoCambio, CurvaPlana, CurvaDI
+    base.py         protocolo Produto, Fluxo, Observacao, Carteira (soma e peso de produtos)
+    adaptadores.py  Vanilla, CallSpread, Digital, BarreiraSimples, OneTouch, NoTouch, Quanto
+    gregas.py       gregas por diferenças finitas sobre a interface
   coe/        termsheet, perna de título, composição, solver, catálogo de estruturas
   hedge/      instrumentos listados, razões de hedge, simulação do hedge, reservas
   risco/      cenários, fatores, VaR/ES, explicação do P&L, livro
@@ -162,7 +167,8 @@ dashboard/
 ```
 
 - **Tudo fica no pacote `ibov_barrier`.** O COE usa os mesmos pricers, curvas e superfícies, e um pacote separado
-  duplicaria o motor. Isso substitui a ideia de 24/11 de uma pasta irmã `estruturados/` (decisão 6 da seção 8).
+  duplicaria o motor. Isso substitui a ideia de 24/11 de uma pasta irmã `estruturados/` (decisão 6 da seção 8,
+  confirmada em 25/11).
 - **`produtos/` é a peça central.** VaR, simulação de hedge, solver e Desk só conversam com a interface. Assim, cada
   estrutura nova ganha risco e hedge sem código extra.
 
@@ -174,7 +180,35 @@ dashboard/
 
 **Objetivo:** validar a arquitetura com o COE real mais simples antes de investir em risco e hedge.
 
-**A1. `produtos/base.py`**
+**A1. `produtos/`: interface de produto** (pronto em 25/11/2026; 57 testes em `tests/test_produtos.py`)
+
+O que foi decidido na implementação:
+- **Prazo.** Cada produto tem `vencimento` em anos a partir da data de referência, na convenção do ativo (DU/252 no
+  IBOV, ACT/365 no SPX). O estado tem `tempo`, o tempo já decorrido. O prazo restante é a diferença, e o theta é
+  `avancar(dt)`.
+- **Juros por moeda.** O estado guarda uma curva por moeda. A `CurvaDI` lê a `DiscountCurve` e converte a taxa
+  efetiva em contínua pela regra do notebook 01, r = ln(1 + taxa). A `CurvaPlana` é o `MarketData` de hoje. Assim, o
+  mesmo choque na curva DI move o título e as opções em BRL.
+- **Vol.** Pode ser um número ou uma função do strike e do prazo, com deslocamento aditivo por ativo. A leitura é
+  "sticky strike": o choque de spot não move a superfície. Opções com strike usam a vol no strike, e os toques usam a
+  vol na barreira. O Desk usa a vol ATM nas estruturas sem strike.
+- **Quanto.** Vale para qualquer adaptador via `quanto=Quanto(par, cambio_fixo)`. A conta é a mesma do
+  `quanto_market_data`: drift com -rho sigma_S sigma_X e desconto em BRL. Payoffs em pontos (vanilla, barreira,
+  rebate) são convertidos pelo câmbio fixo. Pagamentos em dinheiro (digital, toques) já estão em BRL.
+- **Cenários vetoriais.** Spot, deslocamento de vol, câmbio, spread e `CurvaPlana` aceitam vetores. A fórmula fechada
+  avalia tudo de uma vez pelo numpy. O Monte Carlo avalia um cenário por vez, sempre com a mesma semente.
+- **Composição.** Produtos se somam e se multiplicam por número (`titulo + 0.8 * call_spread`), formando uma
+  `Carteira`. Os produtos europeus expõem o `payoff`, que o teste de Monte Carlo do A3 usa.
+- **Gregas.** Delta e gamma com choque relativo de 1% no spot, vega por 1 p.p., DV01 por +1 bp em cada curva e
+  theta em `dt`. A grega do CS01 (spread do emissor) entra com o título, no A2.
+- **Testes "mesmo número".** Vanilla e call spread contra o `black_scholes_call` (diferença de arredondamento,
+  abaixo de 1e-9 do spot). Digital contra o `_bs_digital`. Barreiras simples (8 tipos, com e sem rebate), one-touch
+  e no-touch dão exatamente o mesmo `PriceResult` do pricer. Quanto contra o `price_quanto_vanilla`. A barreira
+  Quanto contra a conta do Desk.
+- **Testes de referência independente.** Digital contra um call spread estreito. Delta da DOC em Monte Carlo
+  contra Reiner-Rubinstein. Gregas da call contra as fórmulas fechadas.
+
+Especificação original:
 - `EstadoMercado` reúne:
   - spot por subjacente;
   - deslocamento de vol;
@@ -473,13 +507,13 @@ M3 pode andar em paralelo com M4. M6 pode andar em paralelo com M4 e M5.
 
 ## 8. Decisões pendentes
 
-1. **Primeiro caso real.** Proposta: capital protegido de 100% com participação no Ibovespa e cap, num prazo dentro
-   da superfície confiável. Depois, o mesmo produto no S&P 500 em reais.
+1. **Primeiro caso real.** Decidido em 25/11: capital protegido de 100% com participação no Ibovespa e cap, num prazo
+   dentro da superfície confiável. Depois, o mesmo produto no S&P 500 em reais.
 2. **Spread de funding do emissor.** Começar com entrada manual. Mais tarde, uma curva de CDB ou LF do emissor.
 3. **Custos de distribuição e política de reservas.**
 4. **Instrumentos de hedge permitidos** (seção D1).
 5. **Medida real da simulação do hedge:** drift, vol e modelo de juros.
-6. **Onde fica o código do COE.** Recomendação: subpacotes dentro do `ibov_barrier` (seção 5).
+6. **Onde fica o código do COE.** Decidido em 25/11: subpacotes dentro do `ibov_barrier` (seção 5).
 7. **Catálogo, schema e SQL warehouse** da fase F, e a unificação dos jobs do Ibovespa.
 8. **Quando trocar o padrão do VaR** do notebook 03 para a reprecificação.
 
