@@ -430,5 +430,5 @@ Ele não importa nada deste pacote. O app de opções e o de renda fixa continua
 | [`ARQUITETURA_MULTIATIVOS.md`](ARQUITETURA_MULTIATIVOS.md) | contrato entre mercados, regras do S&P 500, limpeza, Quanto e vol local |
 | [`dashboard/README.md`](dashboard/README.md) | abas, Structuring Desk, pipeline pelo app e deploy |
 | [`WORKING_PAPER.md`](WORKING_PAPER.md) | texto acadêmico do projeto (versão de 18/11/2026) |
-| [`PLANO_TABELAS_VAR_AMERICANO.md`](PLANO_TABELAS_VAR_AMERICANO.md) | passo a passo de tabelas Delta, VaR com reprecificação e exercício americano (branch `feature/tabelas-var-americano`) |
+| [`PLANO_COE_PRICING_RISCO.md`](PLANO_COE_PRICING_RISCO.md) | plano da ferramenta de precificação, estruturação e risco de COE, na visão do estruturador (branch `feature/coe-pricing-risco`) |
 | `databricks/cadernos/` | equações de barreiras, curvas e risco |
