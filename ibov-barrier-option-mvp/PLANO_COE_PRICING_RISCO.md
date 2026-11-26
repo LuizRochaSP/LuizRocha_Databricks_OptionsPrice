@@ -4,8 +4,8 @@
   - criada a partir do `main` em `c952c71`;
   - renomeada de `feature/tabelas-var-americano` em 25/11/2026.
 - **Data:** 25/11/2026
-- **Situação:** A1 (interface de produto e adaptadores) e A2 (perna de título) implementados em 25/11/2026.
-  Próximo: A3 (termsheet e composição do COE).
+- **Situação:** A1 (interface de produto e adaptadores), A2 (perna de título) e A3 (termsheet, COE e decomposição
+  do preço de emissão) implementados em 25/11/2026. Próximo: A4 (solver da margem alvo).
   As decisões 1 e 6 da seção 8 foram tomadas em 25/11.
 - **Substitui:** a primeira versão deste plano (`PLANO_TABELAS_VAR_AMERICANO.md`, commit `73dbc8b`). Aquela versão
   tratava só das tabelas Delta, do VaR e do exercício americano.
@@ -154,6 +154,7 @@ src/ibov_barrier/
     gregas.py       gregas por diferenças finitas sobre a interface
   coe/        termsheet, perna de título, composição, solver, catálogo de estruturas
     titulo.py       Titulo, desconto do emissor, conversão entre % do CDI e spread (A2, pronto)
+    estrutura.py    TermsheetBase, Participacao, COE, Decomposicao (A3, pronto)
   hedge/      instrumentos listados, razões de hedge, simulação do hedge, reservas
   risco/      cenários, fatores, VaR/ES, explicação do P&L, livro
   tabelas.py  leitor do histórico dos arquivos (pandas puro)
@@ -250,7 +251,8 @@ O que foi decidido na implementação:
   - 100% do CDI = spread zero, e a conversão ida e volta fecha;
   - título + participação num call spread: valor, gregas e payoff somam pelas pernas.
 - **Ambiente.** Os testes com a curva DI real e o `ltn_price` precisam de `exchange_calendars` e `lxml`. Sem
-  essas bibliotecas são pulados. Foram rodados num ambiente com elas.
+  essas bibliotecas são pulados. Desde 25/11 as duas estão no Python da máquina, com o `exchange_calendars` na
+  versão 4.13.2 exigida pelo projeto, e a suíte completa roda sem pular nada.
 
 Especificação original:
 - Valor presente do principal protegido, e dos cupons fixos se houver, pela curva DI pré mais o spread do emissor.
@@ -261,7 +263,45 @@ Especificação original:
   - o valor cai quando o spread sobe;
   - a soma dos DV01 por vértice (`bump_key`) bate com o DV01 paralelo.
 
-**A3. `coe/estrutura.py`: o COE como composição**
+**A3. `coe/estrutura.py`: o COE como composição** (pronto em 25/11/2026; 30 testes em `tests/test_coe_estrutura.py`)
+
+O que foi decidido na implementação:
+- **Termsheet por estrutura.** `TermsheetBase` tem os campos comuns: subjacente, nível inicial (S_0), prazo,
+  nominal, proteção, moeda e datas. Cada estrutura é uma subclasse que define o pacote de opções (`opcoes`) e o
+  payoff dele (`payoff_opcoes`). A primeira é `Participacao`: participação na alta ou na baixa, com cap opcional e
+  strike em fração de S_0. Os campos de barreira, cupom e datas de observação entram com as estruturas da fase C,
+  como novas subclasses sobre a mesma classe `COE`.
+- **Percentuais em fração** (100% = 1.0). A validação recusa `protecao=100`, que seria 10.000%.
+- **Prazo** em anos DU/252 desde a emissão. `Participacao.por_datas(...)` conta os dias úteis da B3. O S&P 500 em
+  reais vai precisar de dois prazos, ACT/365 na opção e DU/252 no título, e entra no A6.
+- **COE.** `COE(termsheet)` é um `Produto`: título com principal nominal × proteção, mais o pacote de opções com
+  quantidade nominal × participação / S_0. Soma com outros COEs numa `Carteira` (o livro) e tem gregas pela
+  interface, com o CS01 vindo só do título.
+- **Payoff explícito.** `COE.payoff` é escrito direto do termsheet, sem os adaptadores. Com R = S_T / S_0 e k o
+  strike, na alta: proteção + participação × min(max(R − k, 0), 1 + cap − k).
+- **Desconto.** O título é descontado na curva do emissor (DI pré + spread). As opções valem o preço de mercado do
+  hedge, na curva livre de risco. É a visão do estruturador: o título é funding, e as opções são compradas no
+  mercado.
+- **Decomposição.** `COE.decompor(estado, preco_emissao, custo_distribuicao, custo_operacional, reservas)` devolve
+  título, opções, custos, reservas e margem, em R$ e em fração do nominal, além da taxa do emissor. A margem é o
+  que sobra, e `viavel` diz se ela ficou positiva. Custos e reservas são entradas manuais até as decisões 2 e 3 e a
+  etapa D4.
+- **Testes que passaram:**
+  - payoff do termsheet igual ao payoff das pernas, em 6 variantes (alta e baixa, com e sem cap, strike de 105%,
+    proteção de 95%);
+  - soma das pernas igual ao valor do COE, com smile, curva DI inclinada e spread;
+  - Monte Carlo independente do S_T log-normal, que usa só o payoff e os dados de mercado: bate com o valor nas
+    6 variantes, em curva plana e em curva DI com spread de 125 bp, dentro de 4 erros-padrão (no máximo 1,3 na
+    rodada);
+  - o spread só move o título, na conta fechada;
+  - a cascata fecha (preço de emissão = título + opções + custos + reservas + margem), em R$ e em %;
+  - a margem sobe com o spread e cai com a participação na medida exata do call spread;
+  - o vetorial é igual ao escalar, o valor é linear no nominal e o COE vencido vale o payoff.
+- **Primeira leitura dos números** (não é o caso real do A6): IBOV, 1 ano, DI 14%, spread de 100 bp, vol 22% e
+  dividendos de 4%. O título custa 86,96% do nominal. Com participação de 100% e cap de 20%, as opções custam
+  7,93%, e a margem fica em 1,1% depois de 4% de custos e reservas. Sem cap, a margem fica negativa (−3,9%).
+
+Especificação original:
 - `Termsheet` com os campos da seção 1 e validação de datas, níveis e percentuais.
 - `COE` = nominal × (proteção × título + pacote de opções).
 - O payoff no vencimento fica explícito. Ele é usado nos testes e, mais tarde, na visão do investidor.
