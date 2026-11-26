@@ -31,7 +31,8 @@ compradas no mercado.
     preço de emissão = título + opções + custos + reservas + margem
 
 Os custos e as reservas são entradas manuais até as decisões 2 e 3 da seção 8 e a etapa D4. A margem é o que sobra.
-O solver da etapa A4 inverte a conta: fixa a margem e resolve a participação ou o cap.
+O solver da etapa A4 (`coe/solver.py`) inverte a conta: fixa a margem e resolve um dos `parametros_livres()` do
+termsheet (participação, proteção, cap ou strike, na `Participacao`).
 """
 from __future__ import annotations
 
@@ -69,6 +70,37 @@ def _finito_positivo(nome: str, valor: float) -> None:
 def _fracao(nome: str, valor: float, minimo: float, maximo: float) -> None:
     if not np.isfinite(valor) or not minimo <= valor <= maximo:
         raise ValueError(f"{nome} = {valor} fora de [{minimo:g}, {maximo:g}] (percentuais em fração: 100% = 1.0)")
+
+
+# Distância das pontas abertas dos intervalos dos parâmetros livres (o cap não pode encostar no strike).
+_FOLGA_PONTA = 1e-6
+
+
+@dataclass(frozen=True)
+class ParametroLivre:
+    """Parâmetro do termsheet que o solver da etapa A4 pode resolver para uma margem alvo.
+
+    - `nome`: campo do termsheet; `rotulo`: nome nas mensagens.
+    - `minimo`, `maximo`: intervalo válido (em fração, como o campo).
+    - `linear`: a margem é afim no parâmetro, e o solver resolve direto (duas avaliações). Senão, busca de raiz.
+    - `escala`: grade da busca de raiz, "linear" ou "geometrica" (pontos concentrados perto do mínimo, onde o
+      valor do cap mais varia).
+    - `nota_maximo`: o que o máximo representa, para as mensagens (", na prática sem cap").
+    """
+
+    nome: str
+    rotulo: str
+    minimo: float
+    maximo: float
+    linear: bool = False
+    escala: str = "linear"
+    nota_maximo: str = ""
+
+    def __post_init__(self):
+        if not (np.isfinite(self.minimo) and np.isfinite(self.maximo) and self.minimo < self.maximo):
+            raise ValueError(f"intervalo de {self.nome} inválido: [{self.minimo}, {self.maximo}]")
+        if self.escala not in ("linear", "geometrica"):
+            raise ValueError("escala deve ser 'linear' ou 'geometrica'")
 
 
 # ----------------------------------------------------------------------------------------------- termsheet
@@ -135,6 +167,14 @@ class TermsheetBase:
     def nivel_observado(self) -> float | None:
         """Nível que a observação do vencimento registra (o strike, nas estruturas com strike)."""
         return None
+
+    def parametros_livres(self) -> dict[str, ParametroLivre]:
+        """Parâmetros que o solver (A4) pode resolver, com o intervalo válido dado o resto do termsheet.
+
+        Cada estrutura declara os seus: a base não declara nenhum, porque a linearidade da margem num parâmetro
+        (a proteção, por exemplo) depende de como o pacote de opções usa os outros campos.
+        """
+        return {}
 
     def descricao(self) -> str:
         return f"COE {self.ativo}: proteção {_pct(self.protecao)}, {self.dias_uteis} DU"
@@ -221,6 +261,31 @@ class Participacao(TermsheetBase):
 
     def nivel_observado(self) -> float:
         return self.nivel_strike
+
+    def parametros_livres(self) -> dict[str, ParametroLivre]:
+        """Participação e proteção (margem afim: solução direta), cap e strike (busca de raiz).
+
+        - A participação só escala o pacote de opções; a proteção só escala o título.
+        - O cap vai do strike (pacote sem valor) ao máximo (na alta, 1000%: na prática, sem cap; na baixa, o piso
+          no zero, que é a put sem cap).
+        - O strike vai de 1% (na alta) ou do piso da queda (na baixa) até o cap (na alta) ou 300% (na baixa).
+        """
+        livres = {
+            "participacao": ParametroLivre("participacao", "participação", 0.0, _PARTICIPACAO_MAX, linear=True),
+            "protecao": ParametroLivre("protecao", "proteção", 0.0, _PROTECAO_MAX, linear=True),
+        }
+        if self.direcao == "alta":
+            livres["cap"] = ParametroLivre("cap", "cap", max(self.strike - 1.0, 0.0) + _FOLGA_PONTA, _CAP_MAX,
+                                           escala="geometrica", nota_maximo=", na prática sem cap")
+            teto = _STRIKE_MAX if self.cap is None else min(_STRIKE_MAX, 1.0 + self.cap - _FOLGA_PONTA)
+            livres["strike"] = ParametroLivre("strike", "strike", 0.01, teto)
+        else:
+            livres["cap"] = ParametroLivre("cap", "cap", max(1.0 - self.strike, 0.0) + _FOLGA_PONTA,
+                                           1.0 - _FOLGA_PONTA, escala="geometrica",
+                                           nota_maximo=", piso no zero, na prática sem cap")
+            piso = 0.01 if self.cap is None else 1.0 - self.cap + _FOLGA_PONTA
+            livres["strike"] = ParametroLivre("strike", "strike", piso, _STRIKE_MAX)
+        return livres
 
     def descricao(self) -> str:
         partes = [f"COE {self.ativo}: proteção {_pct(self.protecao)}",

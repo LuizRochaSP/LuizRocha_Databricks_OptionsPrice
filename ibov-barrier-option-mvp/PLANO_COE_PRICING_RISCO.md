@@ -5,7 +5,8 @@
   - renomeada de `feature/tabelas-var-americano` em 25/11/2026.
 - **Data:** 25/11/2026
 - **Situação:** A1 (interface de produto e adaptadores), A2 (perna de título) e A3 (termsheet, COE e decomposição
-  do preço de emissão) implementados em 25/11/2026. Próximo: A4 (solver da margem alvo).
+  do preço de emissão) implementados em 25/11/2026; A4 (solver da margem alvo) em 26/11/2026. Próximo: A5
+  (notebook 12).
   As decisões 1 e 6 da seção 8 foram tomadas em 25/11.
 - **Substitui:** a primeira versão deste plano (`PLANO_TABELAS_VAR_AMERICANO.md`, commit `73dbc8b`). Aquela versão
   tratava só das tabelas Delta, do VaR e do exercício americano.
@@ -154,7 +155,8 @@ src/ibov_barrier/
     gregas.py       gregas por diferenças finitas sobre a interface
   coe/        termsheet, perna de título, composição, solver, catálogo de estruturas
     titulo.py       Titulo, desconto do emissor, conversão entre % do CDI e spread (A2, pronto)
-    estrutura.py    TermsheetBase, Participacao, COE, Decomposicao (A3, pronto)
+    estrutura.py    TermsheetBase, Participacao, COE, Decomposicao, ParametroLivre (A3, pronto)
+    solver.py       resolver, Solucao: parâmetro livre para a margem alvo (A4, pronto)
   hedge/      instrumentos listados, razões de hedge, simulação do hedge, reservas
   risco/      cenários, fatores, VaR/ES, explicação do P&L, livro
   tabelas.py  leitor do histórico dos arquivos (pandas puro)
@@ -310,7 +312,54 @@ Especificação original:
   - a soma das pernas é igual ao valor do COE;
   - o payoff simulado no vencimento, descontado, bate com o valor (Monte Carlo independente).
 
-**A4. `coe/solver.py`: margem alvo**
+**A4. `coe/solver.py`: margem alvo** (pronto em 26/11/2026; 23 testes em `tests/test_coe_solver.py`)
+
+O que foi decidido na implementação:
+- **O termsheet declara os parâmetros livres.** `parametros_livres()` devolve um `ParametroLivre` para cada
+  parâmetro que o solver pode resolver: o intervalo válido, dado o resto do termsheet, e se a margem é afim nele.
+  - Na `Participacao`, participação e proteção são afins, e cap e strike vão por busca de raiz.
+  - As estruturas da fase C declaram os delas (cupom, barreira) sem mexer no solver. A base não declara nenhum.
+- **Solução direta nos afins.** Duas avaliações nas pontas do intervalo dão a solução, e uma terceira confere a
+  margem. Se um parâmetro declarado linear não for afim, o solver acusa.
+- **Busca de raiz (Brent) nos outros.** Antes, o solver avalia a margem numa grade de 61 pontos e verifica que ela
+  é monotônica. No cap, a grade é geométrica, concentrada perto do strike. Se a margem não for monotônica, o
+  solver recusa e pede um intervalo menor (`intervalo=`).
+- **A verificação de monotonicidade pega arbitragem no smile.** Num smile em que a vol explode perto do strike
+  zero, a put de strike baixo passa a valer mais que a de strike alto, e a margem deixa de cair com o cap. O
+  solver recusa esse caso. A superfície do pipeline não tem o problema, porque a vol fica plana fora dos dados.
+- **Fora do alcance não é erro.** `resolver(...)` devolve uma `Solucao`, e a `situacao` é uma de três:
+  - "resolvido": o parâmetro dá a margem alvo;
+  - "inviavel": o alvo está acima da maior margem possível, e a mensagem diz quanto custam o título, as opções
+    e os custos nesse extremo;
+  - "folga": o alvo está abaixo da menor margem possível (por exemplo, nem sem cap a margem cai ao alvo), e sobra
+    espaço para melhorar outro parâmetro.
+
+  Fora do alcance, a solução traz o termsheet e a decomposição do extremo mais próximo do alvo, para a tela
+  mostrar o mais perto que dá.
+- **Testes que passaram:**
+  - ida e volta (parâmetro → margem → parâmetro) nos 4 parâmetros livres das 6 variantes do A3, com vol plana e
+    com smile, curva DI inclinada e spread, a menos de 1e-8;
+  - participação e proteção iguais à conta fechada com o call spread e o fator de desconto do emissor;
+  - margem monotônica no sentido esperado em cada parâmetro: cai com a participação, a proteção e o cap; com o
+    strike, sobe na alta e cai na baixa;
+  - estrutura não monotônica (straddle no strike) recusada, e resolvida com o intervalo restrito;
+  - parâmetro declarado linear que não é linear, pego;
+  - smile com arbitragem recusado, e resolvido com o intervalo restrito;
+  - o caso inviável do plano, e folga na alta e na baixa;
+  - a solução não depende do nominal.
+- **Primeira leitura dos números.** O mercado é o mesmo do A3: IBOV, 1 ano, DI 14%, spread de 100 bp, vol 22% e
+  dividendos de 4%. Custos e reservas somam 4%, e a margem alvo é de 2%. Partindo de proteção de 100%,
+  participação de 100% e cap de 20%, e resolvendo um parâmetro por vez:
+  - participação de 88,77%;
+  - ou cap de 16,84%;
+  - ou strike de 101,68%;
+  - ou proteção de 98,97%.
+
+  Com DI de 4,5%, spread de 50 bp e prazo de 6 meses, o título sozinho custa 97,59% do nominal. A maior margem
+  possível é −1,59%, e o solver avisa que a margem de 1% é inviável em participação, cap e strike. A saída é a
+  proteção: com 92,06%, a margem fica em 1%.
+
+Especificação original:
 - Fixada a margem, o solver resolve o parâmetro livre:
   - a participação, que é linear e tem solução direta;
   - cap, cupom ou barreira, por busca de raiz, depois de verificar que o parâmetro é monotônico.

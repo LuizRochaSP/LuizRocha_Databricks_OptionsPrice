@@ -290,14 +290,15 @@ Em 24/11/2026: **309 testes, todos verdes**. Os testes de calendário, de curva 
 `exchange-calendars` e `lxml`, que estão no `pyproject.toml`. Os do dashboard precisam de Streamlit e Plotly
 (`dashboard/requirements.txt`). Quando falta uma dessas bibliotecas, esses testes são pulados ou não carregam.
 
-Na branch `feature/coe-pricing-risco` há mais 115 testes do COE: 57 em `test_produtos.py`, 28 em
-`test_coe_titulo.py` e 30 em `test_coe_estrutura.py`. O total vai a 424.
+Na branch `feature/coe-pricing-risco` há mais 138 testes do COE: 57 em `test_produtos.py`, 28 em
+`test_coe_titulo.py`, 30 em `test_coe_estrutura.py` e 23 em `test_coe_solver.py`. O total vai a 447.
 
 | Módulo de teste | Testes | O que cobre |
 | :--- | ---: | :--- |
 | `test_produtos.py` | 57 | interface de produtos do COE: adaptadores no mesmo número dos pricers, cenários vetoriais, carteira, Quanto e gregas por diferenças finitas |
 | `test_coe_titulo.py` | 28 | perna de título do COE: LTN com spread zero, CS01, DV01 por vértice, conversão entre % do CDI e spread |
 | `test_coe_estrutura.py` | 30 | COE como composição: termsheet e validação, payoff igual ao das pernas, Monte Carlo independente do payoff, decomposição do preço de emissão |
+| `test_coe_solver.py` | 23 | solver da margem alvo: ida e volta em cada parâmetro livre, conta fechada da participação e da proteção, monotonicidade, casos inviável e de folga |
 | `test_pricing.py` | 40 | motor Monte Carlo, validação das entradas, reprodutibilidade, gregas |
 | `test_markets_spx.py` | 30 | adaptador do S&P 500: normalização da ThetaData, prazos AM/PM, núcleo de vol idêntico ao do notebook 01, paridade, limpeza com problemas injetados |
 | `test_extensions.py` | 23 | rebate, binários Down, estruturas Knock-In, Range Accrual, Double Touch |
