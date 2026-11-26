@@ -96,6 +96,7 @@ falha. As tarefas do S&P 500 têm timeout de 90 minutos.
 | `09_quanto_compo_spx` | S&P 500 pago em R$: Quanto, Compo e Convertida, com e sem barreira, e vol local de Dupire. Usa r BRL da DI1 (ou da ANBIMA), PTAX e vol do câmbio e correlação semanais | `RESULTS_quanto_*` | job do S&P 500 |
 | `10_validacao_adaptador_ibov` | Confere item a item que o adaptador IBOV do motor multiativos reproduz o 01 (só leitura) | — | manual |
 | `11_spx_validacao` | O 02 do S&P 500: integridade, superfície, forwards e carry, preço (Monte Carlo × Reiner-Rubinstein e replay) | `VALIDATION_spx_superficie_*` (só sem FAIL) | job do S&P 500 |
+| `12_coe_estruturacao` | COE na visão do estruturador, sobre a última rodada aprovada do IBOV (SHA-256 conferido): decomposição do preço de emissão, solver da margem alvo, gregas iniciais e relatório | `COE_estruturacao_*.json` | manual; só na branch `feature/coe-pricing-risco` |
 
 Os notebooks de `databricks/cadernos/` explicam as equações (barreiras, curvas e risco) e não fazem parte da rodada
 diária. `FX__Charts.ipynb` e `test_fixed_income.py` são auxiliares.
@@ -290,8 +291,9 @@ Em 24/11/2026: **309 testes, todos verdes**. Os testes de calendário, de curva 
 `exchange-calendars` e `lxml`, que estão no `pyproject.toml`. Os do dashboard precisam de Streamlit e Plotly
 (`dashboard/requirements.txt`). Quando falta uma dessas bibliotecas, esses testes são pulados ou não carregam.
 
-Na branch `feature/coe-pricing-risco` há mais 138 testes do COE: 57 em `test_produtos.py`, 28 em
-`test_coe_titulo.py`, 30 em `test_coe_estrutura.py` e 23 em `test_coe_solver.py`. O total vai a 447.
+Na branch `feature/coe-pricing-risco` há mais 166 testes do COE: 57 em `test_produtos.py`, 28 em
+`test_coe_titulo.py`, 30 em `test_coe_estrutura.py`, 23 em `test_coe_solver.py`, 15 em `test_produtos_rodada.py`
+e 13 em `test_coe_estruturacao.py`. O total vai a 475.
 
 | Módulo de teste | Testes | O que cobre |
 | :--- | ---: | :--- |
@@ -299,6 +301,8 @@ Na branch `feature/coe-pricing-risco` há mais 138 testes do COE: 57 em `test_pr
 | `test_coe_titulo.py` | 28 | perna de título do COE: LTN com spread zero, CS01, DV01 por vértice, conversão entre % do CDI e spread |
 | `test_coe_estrutura.py` | 30 | COE como composição: termsheet e validação, payoff igual ao das pernas, Monte Carlo independente do payoff, decomposição do preço de emissão |
 | `test_coe_solver.py` | 23 | solver da margem alvo: ida e volta em cada parâmetro livre, conta fechada da participação e da proteção, monotonicidade, casos inviável e de folga |
+| `test_produtos_rodada.py` | 15 | rodada aprovada (validação, SHA-256, backfill, falhas de integridade) e estado de mercado do IBOV pelas regras do 01 |
+| `test_coe_estruturacao.py` | 13 | estruturação do notebook 12: decomposição, solver, gregas por perna, avisos, relatório, JSON e estrutura do notebook |
 | `test_pricing.py` | 40 | motor Monte Carlo, validação das entradas, reprodutibilidade, gregas |
 | `test_markets_spx.py` | 30 | adaptador do S&P 500: normalização da ThetaData, prazos AM/PM, núcleo de vol idêntico ao do notebook 01, paridade, limpeza com problemas injetados |
 | `test_extensions.py` | 23 | rebate, binários Down, estruturas Knock-In, Range Accrual, Double Touch |

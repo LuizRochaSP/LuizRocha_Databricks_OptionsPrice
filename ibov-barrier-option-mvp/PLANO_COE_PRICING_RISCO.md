@@ -5,8 +5,8 @@
   - renomeada de `feature/tabelas-var-americano` em 25/11/2026.
 - **Data:** 25/11/2026
 - **Situação:** A1 (interface de produto e adaptadores), A2 (perna de título) e A3 (termsheet, COE e decomposição
-  do preço de emissão) implementados em 25/11/2026; A4 (solver da margem alvo) em 26/11/2026. Próximo: A5
-  (notebook 12).
+  do preço de emissão) implementados em 25/11/2026; A4 (solver da margem alvo) e A5 (notebook 12) em 26/11/2026.
+  Próximo: A6 (primeiro caso real, com o notebook 12 na rodada aprovada do Databricks).
   As decisões 1 e 6 da seção 8 foram tomadas em 25/11.
 - **Substitui:** a primeira versão deste plano (`PLANO_TABELAS_VAR_AMERICANO.md`, commit `73dbc8b`). Aquela versão
   tratava só das tabelas Delta, do VaR e do exercício americano.
@@ -153,16 +153,18 @@ src/ibov_barrier/
     base.py         protocolo Produto, Fluxo, Observacao, Carteira (soma e peso de produtos)
     adaptadores.py  Vanilla, CallSpread, Digital, BarreiraSimples, OneTouch, NoTouch, Quanto
     gregas.py       gregas por diferenças finitas sobre a interface
+    rodada.py       última rodada aprovada e o EstadoMercado do IBOV com as regras do 01 (A5, pronto)
   coe/        termsheet, perna de título, composição, solver, catálogo de estruturas
     titulo.py       Titulo, desconto do emissor, conversão entre % do CDI e spread (A2, pronto)
     estrutura.py    TermsheetBase, Participacao, COE, Decomposicao, ParametroLivre (A3, pronto)
     solver.py       resolver, Solucao: parâmetro livre para a margem alvo (A4, pronto)
+    estruturacao.py estruturar, Estruturacao: relatório e JSON do notebook 12 (A5, pronto)
   hedge/      instrumentos listados, razões de hedge, simulação do hedge, reservas
   risco/      cenários, fatores, VaR/ES, explicação do P&L, livro
   tabelas.py  leitor do histórico dos arquivos (pandas puro)
 
 databricks/rotinas/
-  12_coe_estruturacao.py     termsheet -> decomposição, margem, solver, hedge inicial
+  12_coe_estruturacao.py     termsheet -> decomposição, margem, solver, gregas (A5, pronto; hedge na fase D)
   13_coe_simulacao_hedge.py  simulação do hedge ao longo da vida do produto
   14_coe_livro_risco.py      marcação, gregas, VaR e explicação do P&L do livro (diário)
   15_carga_tabelas.py        carga das tabelas Delta (fase F)
@@ -366,7 +368,60 @@ Especificação original:
 - Avisa quando a margem é inviável. Exemplo: proteção de 100% com juro baixo e prazo curto.
 - **Testes:** ida e volta (parâmetro → margem → parâmetro), monotonicidade e caso inviável.
 
-**A5. Notebook `12_coe_estruturacao.py`**
+**A5. Notebook `12_coe_estruturacao.py`** (pronto em 26/11/2026; 28 testes em `tests/test_produtos_rodada.py` e
+`tests/test_coe_estruturacao.py`)
+
+O que foi decidido na implementação:
+- **Notebook fino.** A lógica fica em `src` e é testada aqui. O notebook só lê os widgets, chama e mostra:
+  - `produtos/rodada.py`: `ultima_rodada_aprovada` e `estado_ibov`;
+  - `coe/estruturacao.py`: `estruturar`, que junta decomposição, solver, gregas, vols e avisos, com `texto()` (o
+    relatório) e `como_dict()` (o JSON).
+- **Rodada aprovada.** As exigências são as do notebook 03:
+  - schema 1, FAIL = 0 e decisão aprovada;
+  - SHA-256 do RESULTS igual ao da validação;
+  - a mesma data de mercado nos dois arquivos, e o RESULTS no schema 2.
+
+  Uma evidência não aprovada é pulada e listada. Uma falha de integridade para o notebook. A rodada não precisa ser
+  de hoje: o 12 avisa quando a data de mercado é anterior ao D-1 da B3. O widget `validacao` escolhe uma rodada
+  antiga (backfill).
+- **O mercado é o do 01.**
+  - Curva DI pré: os vértices do RESULTS voltam à taxa efetiva e viram a mesma `DiscountCurve` flat-forward do 01.
+  - q(T): linear em DU sobre os vértices da curva, como no Desk. O 01 interpola o q nos vencimentos do IND, que o
+    RESULTS não guarda, então pode haver uma diferença pequena entre os vértices.
+  - Vol: linear em (ln(K/F), T), com o vizinho mais próximo fora do casco, como o `griddata` do 01. A superfície
+    é sticky strike.
+  - A conferência com o 01 mostra r, q e vol no contrato de referência do pricer. O notebook avisa se a diferença
+    passar de 0,01 bp no r, 1 bp no q ou 0,1 ponto de vol.
+- **Widgets em %** (100 = 100%), com vírgula aceita. O prazo vem em DU ou pela data de vencimento (DU da B3 desde
+  a data de mercado). O spread do emissor é digitado. O parâmetro a resolver é um destes: nenhum, participação,
+  proteção, cap ou strike.
+- **Saída.**
+  - O relatório em texto: rodada, mercado, vol em cada nível, custos, cascata digitada, solver e cascata
+    resolvida, gregas por perna, DV01 nos maiores vértices e avisos.
+  - O `COE_estruturacao_<carimbo>.json`, gravado de forma atômica.
+- **Gregas no sinal do investidor**, do COE final: o resolvido, quando o solver resolve; senão, o digitado. São o
+  delta por +1% do IBOV, o P&L de 2ª ordem para ±1%, o vega por ponto de vol, o DV01 paralelo e por vértice, o
+  CS01 e o theta por DU.
+- **Avisos:**
+  - prazo além do último vencimento da superfície (a vol sai do vizinho mais próximo, sem estrutura a termo) ou
+    além do último vértice DI;
+  - vol de um nível fora do casco dos dados;
+  - margem fora do alcance do solver;
+  - rodada defasada e ressalvas herdadas da validação.
+- **Testes que passaram:**
+  - a escolha da rodada (a mais recente aprovada, pulando a não aprovada, e o backfill) e cada falha de
+    integridade (SHA-256, data, schema, RESULTS ausente);
+  - curva, q e vol iguais às contas do 01 escritas no teste (flat-forward à mão e `griddata`), dentro e fora do
+    casco;
+  - o call spread do COE sobre a rodada igual a Black-Scholes com a vol de cada strike;
+  - as gregas do COE iguais à soma das pernas, e o DV01 por vértice somando o paralelo;
+  - relatório, JSON e avisos;
+  - o notebook compila, instala as bibliotecas na primeira célula e reinicia o Python.
+
+  O notebook também rodou inteiro aqui, com um `dbutils` falso sobre uma rodada sintética.
+- **Ainda não rodou no Databricks.** O primeiro uso com a rodada real é o A6.
+
+Especificação original:
 - Widgets do termsheet.
 - Lê a superfície e as curvas da última rodada aprovada (RESULTS e VALIDATION, com conferência do SHA-256).
 - Relatório em texto com a decomposição, o parâmetro resolvido e as gregas iniciais.

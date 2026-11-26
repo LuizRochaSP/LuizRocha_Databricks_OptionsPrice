@@ -8,6 +8,7 @@ Usa a interface de `ibov_barrier.produtos`: a perna de título é um `Produto` e
     coe.decompor(estado, custo_distribuicao=0.03).linhas()
     resolver(ts, estado, "participacao", margem_alvo=0.02, custo_distribuicao=0.03).valor
 """
+from ibov_barrier.coe.estruturacao import Estruturacao, estruturar
 from ibov_barrier.coe.estrutura import COE, Decomposicao, ParametroLivre, Participacao, TermsheetBase
 from ibov_barrier.coe.solver import Solucao, resolver
 from ibov_barrier.coe.titulo import (
@@ -19,7 +20,7 @@ from ibov_barrier.coe.titulo import (
 )
 
 __all__ = [
-    "COE", "Decomposicao", "ParametroLivre", "Participacao", "Solucao", "TermsheetBase", "Titulo",
-    "fator_desconto_emissor", "fator_desconto_percentual_cdi", "percentual_cdi_de_spread", "resolver",
-    "spread_de_percentual_cdi",
+    "COE", "Decomposicao", "Estruturacao", "ParametroLivre", "Participacao", "Solucao", "TermsheetBase", "Titulo",
+    "fator_desconto_emissor", "fator_desconto_percentual_cdi", "estruturar", "percentual_cdi_de_spread",
+    "resolver", "spread_de_percentual_cdi",
 ]
